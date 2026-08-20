@@ -55,9 +55,8 @@ code {
 .side-top { display: flex; align-items: center; gap: 6px; padding: 4px 6px 10px; }
 /* Mark in brand colour, wordmark in ink — the way Claude's own sidebar reads,
    and it keeps 14px semibold text off a 3.7:1 value. */
-.brand { display: flex; text-decoration: none; align-items: center; gap: 9px; color: var(--ink); min-width: 0; }
+.brand { display: flex; align-items: center; gap: 9px; color: var(--ink); min-width: 0; }
 .brand svg { color: var(--accent); flex-shrink: 0; }
-.brand:hover span { color: var(--accent-ink); }
 .brand span {
   font-family: var(--serif); font-size: 15.5px; color: var(--ink);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
