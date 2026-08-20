@@ -819,9 +819,31 @@ button.cell:hover { transform: translateY(-1px); filter: brightness(1.06); }
           background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
 .u-role.admin { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
 
-.u-budget { min-width: 168px; }
+.u-budget { min-width: 268px; }
+.u-win { display: grid; grid-template-columns: 40px minmax(48px, 1fr) 52px 78px;
+         align-items: center; gap: 8px; margin-bottom: 6px; }
+.u-win:last-child { margin-bottom: 0; }
+.u-win-name { font-family: var(--mono); font-size: 9.5px; letter-spacing: .05em;
+              text-transform: uppercase; color: var(--ink-3); }
+.u-win-num { font-family: var(--mono); font-size: 10.5px; color: var(--ink-2);
+             font-variant-numeric: tabular-nums; text-align: right; }
+.u-nobar { font-size: 11px; color: var(--ink-3); }
+
+.u-costcell { min-width: 110px; }
+.u-cost { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums;
+          display: block; margin-bottom: 2px; }
+
+.u-lim { width: 78px; font-family: var(--mono); font-size: 11.5px; padding: 3px 6px;
+         border: 1px solid var(--border); border-radius: 6px;
+         background: var(--surface); color: var(--ink);
+         font-variant-numeric: tabular-nums; }
+
+.u-rates { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 14px;
+           font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.u-rates b { color: var(--ink-2); font-weight: 500; }
+
 .u-bar { height: 6px; border-radius: 999px; background: var(--surface-2);
-         border: 1px solid var(--border); overflow: hidden; margin-bottom: 5px; }
+         border: 1px solid var(--border); overflow: hidden; }
 .u-bar i { display: block; height: 100%; background: var(--pass); }
 .u-bar.near i { background: var(--flag); }
 .u-bar.over i { background: var(--block); }

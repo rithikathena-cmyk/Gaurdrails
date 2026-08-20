@@ -64,34 +64,44 @@ def samples() -> dict[str, Any]:
     return {"samples": SAMPLES}
 
 
-def tokens_in(trace: dict[str, Any]) -> int:
-    """What the model actually reported for this request.
+def usage_in(trace: dict[str, Any]) -> list[tuple[str, int, int]]:
+    """What each model call actually cost, as (model, input, output).
 
-    Summed from `llm.call` rails rather than estimated from the prompt, because
-    an estimate drifts from the bill — and a budget that disagrees with the
-    invoice is worse than no budget.
+    Read from the trace rather than estimated from the prompt, because an
+    estimate drifts from the bill — and a budget that disagrees with the
+    invoice is worse than no budget. Input and output stay separate because
+    they are priced separately; collapsing them to one number would make the
+    cost wrong by roughly the ratio between the two rates.
     """
-    total = 0
+    calls: list[tuple[str, int, int]] = []
     for stage in trace.get("stages", []):
         for rail in stage.get("rails", []):
             meta = rail.get("meta") or {}
-            total += int(meta.get("input_tokens", 0)) + int(meta.get("output_tokens", 0))
-    return total
+            i, o = int(meta.get("input_tokens", 0)), int(meta.get("output_tokens", 0))
+            if i or o:
+                calls.append((str(meta.get("model", "")), i, o))
+    return calls
 
 
 def check_budget(user: User) -> None:
     """Refuse before spending, not after.
 
     429 rather than 403: the request is well-formed and the caller is
-    authorised — they have simply used their allowance.
+    authorised — they have simply used their allowance. The message names
+    which allowance, because "over budget" without saying which one leaves
+    an operator guessing what to raise.
     """
-    if user.over_budget:
-        raise HTTPException(429, detail={
-            "kind": "budget",
-            "message": (f"{user.display or user.name} has used "
-                        f"{user.tokens_used:,} of {user.token_limit:,} tokens. "
-                        "An operator can raise the limit or reset the count."),
-        })
+    breach = user.breached_window()
+    if breach is None:
+        return
+    window, used, limit = breach
+    raise HTTPException(429, detail={
+        "kind": "budget",
+        "window": window,
+        "message": (f"{user.display or user.name} has used {used:,} of "
+                    f"{limit:,} tokens on their {window} allowance. "
+                    "An operator can raise the limit or reset the count."),
+    })
 
 
 @router.post("/chat")
@@ -112,7 +122,7 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> dict[str, Any]
 
     trace = result.trace.to_dict()
     state.record(trace)
-    directory.spend(user.name, tokens_in(trace))
+    directory.spend(user.name, usage_in(trace))
 
     return {
         "reply": result.reply,

@@ -42,6 +42,51 @@ PBKDF2_ROUNDS = 240_000
 # but not edit thresholds.
 log = logging.getLogger("guardrails.server")
 
+#: What a million tokens costs, per model, input and output separately.
+#:
+#: These are defaults, not gospel — confirm them against your own contract and
+#: override with GUARDRAIL_PRICING, a JSON object of
+#: {"model-prefix": {"in": <usd per Mtok>, "out": <usd per Mtok>}}. Cost is
+#: computed and stored in micro-dollars (integers), because accumulating a
+#: float per request drifts, and a budget that drifts is an argument later.
+_DEFAULT_PRICING: dict[str, dict[str, float]] = {
+    "claude-opus":   {"in": 15.0, "out": 75.0},
+    "claude-sonnet": {"in": 3.0,  "out": 15.0},
+    "claude-haiku":  {"in": 1.0,  "out": 5.0},
+}
+
+
+def _pricing() -> dict[str, dict[str, float]]:
+    raw = os.getenv("GUARDRAIL_PRICING", "")
+    if not raw:
+        return dict(_DEFAULT_PRICING)
+    try:
+        return {k: {"in": float(v["in"]), "out": float(v["out"])}
+                for k, v in json.loads(raw).items()}
+    except (json.JSONDecodeError, KeyError, TypeError, ValueError):
+        log.warning("GUARDRAIL_PRICING unreadable — using built-in rates")
+        return dict(_DEFAULT_PRICING)
+
+
+PRICING = _pricing()
+
+
+def rate_for(model: str) -> dict[str, float]:
+    """Longest matching prefix wins, so a dated model id resolves to its family."""
+    best: dict[str, float] | None = None
+    best_len = -1
+    for prefix, rates in PRICING.items():
+        if (model or "").startswith(prefix) and len(prefix) > best_len:
+            best, best_len = rates, len(prefix)
+    return best or {"in": 0.0, "out": 0.0}
+
+
+def cost_micros(model: str, tokens_in: int, tokens_out: int) -> int:
+    """Micro-dollars for one call. Integer arithmetic end to end."""
+    r = rate_for(model)
+    return round((tokens_in * r["in"] + tokens_out * r["out"]))
+
+
 #: Models an operator may assign to a person. "" means the deployment default,
 #: so an unset account follows the server rather than pinning a version forever.
 ASSIGNABLE_MODELS: list[dict[str, str]] = [
@@ -113,12 +158,39 @@ class User:
     role: str
     password_hash: str
     display: str = ""
-    #: Total model tokens this person may spend. 0 means no ceiling — an
-    #: explicit choice, not an unset field, so it reads the same in the API.
-    token_limit: int = 0
-    tokens_used: int = 0
+    #: Ceilings on model tokens, per window. 0 means no ceiling — an explicit
+    #: choice, not an unset field, so it reads the same in the API.
+    token_limit: int = 0        # all time
+    daily_limit: int = 0
+    monthly_limit: int = 0
+
+    tokens_used: int = 0        # all time
+    day_tokens: int = 0
+    month_tokens: int = 0
+
+    #: Micro-dollars, integer. A float accumulated per request drifts, and a
+    #: number that drifts is an argument with finance later.
+    cost_micros: int = 0
+    day_cost_micros: int = 0
+    month_cost_micros: int = 0
+
+    #: Which day and month the counters above belong to. Rollover is lazy —
+    #: checked when the counter is read or written — because a scheduler that
+    #: has to fire at midnight is a second thing that can fail.
+    day_stamp: str = ""
+    month_stamp: str = ""
     #: "" follows the deployment default rather than pinning a model.
     model: str = ""
+
+    # -- windows ---------------------------------------------------
+    def roll(self, today: str = "", month: str = "") -> None:
+        """Zero a window's counters when its period has turned over."""
+        today = today or time.strftime("%Y-%m-%d")
+        month = month or today[:7]
+        if self.day_stamp != today:
+            self.day_stamp, self.day_tokens, self.day_cost_micros = today, 0, 0
+        if self.month_stamp != month:
+            self.month_stamp, self.month_tokens, self.month_cost_micros = month, 0, 0
 
     @property
     def unlimited(self) -> bool:
@@ -129,9 +201,28 @@ class User:
         """None when there is no ceiling — not 0, which would read as spent."""
         return None if self.unlimited else max(0, self.token_limit - self.tokens_used)
 
+    def windows(self) -> list[tuple[str, int, int]]:
+        """(name, used, limit) for each window that has a ceiling."""
+        self.roll()
+        pairs = [("total", self.tokens_used, self.token_limit),
+                 ("daily", self.day_tokens, self.daily_limit),
+                 ("monthly", self.month_tokens, self.monthly_limit)]
+        return [w for w in pairs if w[2] > 0]
+
+    def breached_window(self) -> tuple[str, int, int] | None:
+        """The first ceiling this person has reached, or None.
+
+        Daily first: it is the one most likely to be a mistake rather than a
+        policy, and the one an operator can clear most safely.
+        """
+        order = {"daily": 0, "monthly": 1, "total": 2}
+        hit = [w for w in self.windows() if w[1] >= w[2]]
+        hit.sort(key=lambda w: order.get(w[0], 9))
+        return hit[0] if hit else None
+
     @property
     def over_budget(self) -> bool:
-        return not self.unlimited and self.tokens_used >= self.token_limit
+        return self.breached_window() is not None
 
     @property
     def permissions(self) -> list[str]:
@@ -149,8 +240,17 @@ class User:
             "permissions": self.permissions,
             "views": [v for v, p in VIEW_PERMISSION.items() if self.can(p)],
             "token_limit": self.token_limit,
+            "daily_limit": self.daily_limit,
+            "monthly_limit": self.monthly_limit,
             "tokens_used": self.tokens_used,
+            "day_tokens": self.day_tokens,
+            "month_tokens": self.month_tokens,
             "tokens_left": self.tokens_left,
+            "cost_usd": round(self.cost_micros / 1e6, 6),
+            "day_cost_usd": round(self.day_cost_micros / 1e6, 6),
+            "month_cost_usd": round(self.month_cost_micros / 1e6, 6),
+            "windows": [{"name": n, "used": u, "limit": l} for n, u, l in self.windows()],
+            "breached": (self.breached_window() or (None,))[0],
             "over_budget": self.over_budget,
             "model": self.model,
             "model_label": next(
@@ -234,7 +334,16 @@ class Directory:
                 password_hash=entry.get("password_hash", ""),
                 display=entry.get("display", ""),
                 token_limit=int(entry.get("token_limit", 0)),
+                daily_limit=int(entry.get("daily_limit", 0)),
+                monthly_limit=int(entry.get("monthly_limit", 0)),
                 tokens_used=int(entry.get("tokens_used", 0)),
+                day_tokens=int(entry.get("day_tokens", 0)),
+                month_tokens=int(entry.get("month_tokens", 0)),
+                cost_micros=int(entry.get("cost_micros", 0)),
+                day_cost_micros=int(entry.get("day_cost_micros", 0)),
+                month_cost_micros=int(entry.get("month_cost_micros", 0)),
+                day_stamp=entry.get("day_stamp", ""),
+                month_stamp=entry.get("month_stamp", ""),
                 model=entry.get("model", ""),
             )
 
@@ -244,7 +353,13 @@ class Directory:
         payload = {"version": 1, "users": [
             {"name": u.name, "role": u.role, "password_hash": u.password_hash,
              "display": u.display, "token_limit": u.token_limit,
-             "tokens_used": u.tokens_used, "model": u.model}
+             "daily_limit": u.daily_limit, "monthly_limit": u.monthly_limit,
+             "tokens_used": u.tokens_used, "day_tokens": u.day_tokens,
+             "month_tokens": u.month_tokens, "cost_micros": u.cost_micros,
+             "day_cost_micros": u.day_cost_micros,
+             "month_cost_micros": u.month_cost_micros,
+             "day_stamp": u.day_stamp, "month_stamp": u.month_stamp,
+             "model": u.model}
             for u in self.users.values()
         ]}
         tmp = USERS_PATH.with_suffix(".tmp")
@@ -253,7 +368,8 @@ class Directory:
 
     # ---- administration ------------------------------------------
     def add_user(self, name: str, password: str, role: str, display: str = "",
-                 token_limit: int = 0, model: str = "") -> User:
+                 token_limit: int = 0, model: str = "", daily_limit: int = 0,
+                 monthly_limit: int = 0) -> User:
         name = (name or "").strip().lower()
         if not name:
             raise ValueError("a username is required")
@@ -270,7 +386,9 @@ class Directory:
                 raise ValueError(f"{name} already exists")
             user = User(name=name, role=role, password_hash=hash_password(password),
                         display=(display or "").strip(),
-                        token_limit=max(0, int(token_limit)), model=model)
+                        token_limit=max(0, int(token_limit)), model=model,
+                        daily_limit=max(0, int(daily_limit)),
+                        monthly_limit=max(0, int(monthly_limit)))
             self.users[name] = user
             self._save()
         return user
@@ -288,12 +406,19 @@ class Directory:
             self._save()
         return True
 
-    def set_token_limit(self, name: str, limit: int) -> User | None:
+    def set_limits(self, name: str, *, total: int | None = None,
+                   daily: int | None = None, monthly: int | None = None) -> User | None:
+        """Set any of the three ceilings. Absent windows are left alone."""
         with self._lock:
             user = self.users.get((name or "").strip().lower())
             if user is None:
                 return None
-            user.token_limit = max(0, int(limit))
+            if total is not None:
+                user.token_limit = max(0, int(total))
+            if daily is not None:
+                user.daily_limit = max(0, int(daily))
+            if monthly is not None:
+                user.monthly_limit = max(0, int(monthly))
             self._save()
         return user
 
@@ -308,24 +433,46 @@ class Directory:
             self._save()
         return user
 
-    def reset_usage(self, name: str) -> User | None:
+    def reset_usage(self, name: str, window: str = "all") -> User | None:
+        """Zero one window's counters.
+
+        Per window on purpose: clearing a year of accumulated history to
+        unblock somebody for the afternoon is not what an operator meant by
+        "reset", and it destroys the only record of what was spent.
+        """
         with self._lock:
             user = self.users.get((name or "").strip().lower())
             if user is None:
                 return None
-            user.tokens_used = 0
+            user.roll()
+            if window in ("all", "total"):
+                user.tokens_used = user.cost_micros = 0
+            if window in ("all", "daily"):
+                user.day_tokens = user.day_cost_micros = 0
+            if window in ("all", "monthly"):
+                user.month_tokens = user.month_cost_micros = 0
             self._save()
         return user
 
-    def spend(self, name: str, tokens: int) -> None:
-        """Record what a request cost. Never refuses — the check happens first."""
-        if tokens <= 0:
+    def spend(self, name: str, calls: list[tuple[str, int, int]]) -> None:
+        """Record what a request cost, per window. Never refuses — the check
+        happens before the request runs, not after it has been paid for."""
+        if not calls:
             return
         with self._lock:
             user = self.users.get((name or "").strip().lower())
             if user is None:
                 return
-            user.tokens_used += int(tokens)
+            user.roll()
+            for model, tin, tout in calls:
+                tokens = tin + tout
+                micros = cost_micros(model or "", tin, tout)
+                user.tokens_used += tokens
+                user.day_tokens += tokens
+                user.month_tokens += tokens
+                user.cost_micros += micros
+                user.day_cost_micros += micros
+                user.month_cost_micros += micros
             self._save()
 
     # ---- authentication ------------------------------------------

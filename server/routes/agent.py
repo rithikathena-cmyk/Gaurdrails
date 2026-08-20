@@ -20,7 +20,7 @@ from guardrails import AgentRunner, LLMError
 from guardrails.agent import TOOLS
 
 from ..auth import User, current_user, directory
-from .chat import check_budget, tokens_in
+from .chat import check_budget, usage_in
 from ..state import state
 
 router = APIRouter()
@@ -135,7 +135,7 @@ def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[st
     if not result.blocked and result.approval is None:
         state.remember(req.session_id, req.message, result.reply)
     body = _payload(result)
-    directory.spend(user.name, tokens_in(body.get("trace") or {}))
+    directory.spend(user.name, usage_in(body.get("trace") or {}))
     return body
 
 
@@ -159,5 +159,5 @@ def approve(req: ApprovalRequest, user: User = Depends(current_user)) -> dict[st
     body = _payload(result)
     body["approved"] = req.approved
     body["resumed_from"] = pending.origin_request_id
-    directory.spend(user.name, tokens_in(body.get("trace") or {}))
+    directory.spend(user.name, usage_in(body.get("trace") or {}))
     return body

@@ -22,7 +22,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from ..auth import ASSIGNABLE_MODELS, ROLES, User, current_user, directory, require
+from ..auth import (ASSIGNABLE_MODELS, PRICING, ROLES, User, current_user,
+                    directory, require)
 
 router = APIRouter()
 
@@ -33,11 +34,15 @@ class NewUser(BaseModel):
     role: str = "user"
     display: str = Field(default="", max_length=48)
     token_limit: int = Field(default=0, ge=0, le=1_000_000_000)
+    daily_limit: int = Field(default=0, ge=0, le=1_000_000_000)
+    monthly_limit: int = Field(default=0, ge=0, le=1_000_000_000)
     model: str = ""
 
 
 class LimitPatch(BaseModel):
     token_limit: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    daily_limit: int | None = Field(default=None, ge=0, le=1_000_000_000)
+    monthly_limit: int | None = Field(default=None, ge=0, le=1_000_000_000)
     model: str | None = None
 
 
@@ -63,7 +68,13 @@ def _snapshot() -> dict[str, Any]:
             for k, v in ROLES.items()
         ],
         "tokens_spent": sum(r["tokens_used"] for r in users),
-        "capped": sum(1 for r in users if r["token_limit"] > 0),
+        "cost_usd": round(sum(r["cost_usd"] for r in users), 4),
+        "day_cost_usd": round(sum(r["day_cost_usd"] for r in users), 4),
+        "month_cost_usd": round(sum(r["month_cost_usd"] for r in users), 4),
+        "pricing": [{"model": k, "input_per_mtok": v["in"], "output_per_mtok": v["out"]}
+                    for k, v in PRICING.items()],
+        "capped": sum(1 for r in users
+                      if r["token_limit"] or r["daily_limit"] or r["monthly_limit"]),
         "over_budget": sum(1 for r in users if r["over_budget"]),
     }
 
@@ -79,6 +90,7 @@ def create_user(body: NewUser) -> dict[str, Any]:
         user = directory.add_user(
             name=body.name, password=body.password, role=body.role,
             display=body.display, token_limit=body.token_limit, model=body.model,
+            daily_limit=body.daily_limit, monthly_limit=body.monthly_limit,
         )
     except ValueError as exc:
         raise HTTPException(422, detail={"kind": "invalid", "message": str(exc)}) from exc
@@ -89,8 +101,9 @@ def create_user(body: NewUser) -> dict[str, Any]:
 def update_user(name: str, body: LimitPatch) -> dict[str, Any]:
     """Set the budget, the model, or both. Absent fields are left alone."""
     user = None
-    if body.token_limit is not None:
-        user = directory.set_token_limit(name, body.token_limit)
+    if any(v is not None for v in (body.token_limit, body.daily_limit, body.monthly_limit)):
+        user = directory.set_limits(name, total=body.token_limit,
+                                    daily=body.daily_limit, monthly=body.monthly_limit)
     if body.model is not None:
         try:
             user = directory.set_model(name, body.model)
@@ -102,8 +115,12 @@ def update_user(name: str, body: LimitPatch) -> dict[str, Any]:
 
 
 @router.post("/users/{name}/reset-usage", dependencies=[Depends(require("users"))])
-def reset_usage(name: str) -> dict[str, Any]:
-    user = directory.reset_usage(name)
+def reset_usage(name: str, window: str = "all") -> dict[str, Any]:
+    """`window` is all | total | daily | monthly."""
+    if window not in ("all", "total", "daily", "monthly"):
+        raise HTTPException(422, detail={"kind": "invalid",
+                                         "message": f"unknown window {window!r}"})
+    user = directory.reset_usage(name, window)
     if user is None:
         raise HTTPException(404, detail={"kind": "missing", "message": f"no user {name!r}"})
     return {"ok": True, "user": _row(user), **_snapshot()}

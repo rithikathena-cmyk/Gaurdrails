@@ -305,18 +305,22 @@
           <div class="u-stat"><b id="u-admins">0</b><span>operators</span></div>
           <div class="u-stat"><b id="u-citizens">0</b><span>citizens</span></div>
           <div class="u-stat"><b id="u-spent">0</b><span>tokens spent</span></div>
+          <div class="u-stat"><b id="u-cost">$0.00</b><span>cost, all time</span></div>
+          <div class="u-stat"><b id="u-month-cost">$0.00</b><span>this month</span></div>
           <div class="u-stat"><b id="u-capped">0</b><span>with a ceiling</span></div>
           <span class="u-over" id="u-over" hidden></span>
         </div>
 
         <div class="u-msg" id="u-msg" role="status" hidden></div>
 
+        <div class="u-rates" id="u-rates" title="Rates used to price usage"></div>
+
         <div class="card u-table-card">
           <div class="u-scroll">
             <table class="u-table">
               <thead>
                 <tr><th>Person</th><th>Role</th><th>Model</th>
-                    <th>Budget</th><th>Limit and actions</th></tr>
+                    <th>Usage and limits</th><th>Cost</th><th>Actions</th></tr>
               </thead>
               <tbody id="u-rows"></tbody>
             </table>
@@ -337,9 +341,12 @@
                      autocomplete="new-password"></label>
             <label>Role <select id="nu-role"></select></label>
             <label>Model <select id="nu-model"></select></label>
-            <label>Token limit
-              <input id="nu-limit" type="number" min="0" step="1000" value="0"
-                     placeholder="0"></label>
+            <label>Daily token limit
+              <input id="nu-daily" type="number" min="0" step="1000" value="0"></label>
+            <label>Monthly token limit
+              <input id="nu-monthly" type="number" min="0" step="10000" value="0"></label>
+            <label>Total token limit
+              <input id="nu-limit" type="number" min="0" step="10000" value="0"></label>
           </div>
           <div class="u-new-foot">
             <button class="u-btn primary" type="submit">Add person</button>
