@@ -34,8 +34,6 @@ a { color: var(--accent-ink); }
 }
 .start:hover { background: var(--accent-2); }
 
-.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
-.dot.ok { background: var(--pass); } .dot.warn { background: var(--flag); } .dot.err { background: var(--block); }
 
 /* ── entry cards ──────────────────────────────────────────── */
 .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 12px; margin-bottom: 40px; }
@@ -58,7 +56,8 @@ a { color: var(--accent-ink); }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
   padding: 12px 16px 6px; box-shadow: var(--shadow); overflow-x: auto;
 }
-.page-tools { display: flex; justify-content: flex-end; padding: 18px 0 6px; }
+.page-tools { display: flex; justify-content: flex-end; align-items: center;
+              gap: 10px; padding: 18px 0 6px; }
 svg.flow { width: 100%; height: auto; min-width: 940px; display: block; }
 
 /* node shells */
@@ -174,6 +173,12 @@ footer code { font-family: var(--mono); }
 <div class="wrap">
 
   <div class="page-tools">
+    <a class="start" href="/console">Open the console
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M3 8h9m0 0-3.5-3.5M12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.6"
+              stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+    </a>
     <button class="icon-btn" id="theme" title="Toggle theme" aria-label="Toggle theme">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"
