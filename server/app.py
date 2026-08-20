@@ -29,7 +29,12 @@ def create_app() -> FastAPI:
     app.include_router(api)
 
     @app.get("/login", include_in_schema=False)
-    def login_page() -> FileResponse:
+    def login_page(gc_session: str | None = Cookie(default=None)):
+        """Signing in while already signed in is a dead end — "Start app" on the
+        home page points here, and somebody who has a session means "take me in",
+        not "show me the form again". Sign out first to switch accounts."""
+        if directory.resolve(gc_session) is not None:
+            return RedirectResponse("/console", status_code=303)
         return FileResponse(WEB / "login.html")
 
     def _gate(cookie: str | None, target: str, permission: str = ""):
@@ -46,15 +51,15 @@ def create_app() -> FastAPI:
         return None
 
     @app.get("/", include_in_schema=False)
-    def home(gc_session: str | None = Cookie(default=None)):
-        """The landing page: what the stack is, drawn as one pipeline.
+    def home():
+        """The front door, and public.
 
-        Signed in, and nothing more. It once gated on the scenarios permission
-        because it advertised four screens a citizen cannot open; those are
-        gone, and what is left — the pipeline, the scenario reference, a link
-        to the console — is the same for everybody who works here.
+        What the stack is, drawn as one pipeline, with the scenarios it is
+        checked against. Nothing on it is anybody's data — the cards that once
+        led to the control surface are gone — so there is nothing here to sign
+        in for.
         """
-        return _gate(gc_session, "/") or FileResponse(WEB / "home.html")
+        return FileResponse(WEB / "home.html")
 
     @app.get("/console", include_in_schema=False)
     def console(gc_session: str | None = Cookie(default=None)):
