@@ -1,0 +1,159 @@
+/* ═══════════════════════════════════════════════════════════════════
+   Design tokens — palette, type, spacing.
+   Light is the bare :root. Dark is redefined twice: once behind
+   prefers-color-scheme (guarded so an explicit light choice wins) and
+   once behind the data-theme stamp (so the toggle wins both ways).
+   No colour is ever declared only inside a media or [data-theme] block.
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  /* surfaces — warm oat neutrals, not grey. The whole palette is built on
+     a paper ground rather than white, so a white card reads as raised. */
+  --bg:          #FAF9F5;
+  --side:        #F0EEE6;
+  --surface:     #FFFFFF;
+  --surface-2:   #F5F3ED;
+  --hover:       #EAE7DC;
+  --border:      #E4E1D7;
+  --border-2:    #D3CFC2;
+
+  /* ink */
+  --ink:         #1A1A18;
+  --ink-2:       #57564F;
+  --ink-3:       #8A887E;
+
+  /* accent — terracotta. Three tokens rather than one, because the same
+     hue cannot do all three jobs at one lightness:
+
+       --accent      fills, borders, icons, the brand mark
+       --accent-2    hover and pressed states
+       --accent-ink  the accent used as *small text*, where the brand
+                     value only reaches 3.7:1 on this ground and this
+                     one reaches 5.4:1
+
+     A warm accent sits closer to the verdict colours than the violet it
+     replaces, so the rule is now positional rather than chromatic: the
+     accent is chrome — buttons, focus, active nav, the live path in the
+     diagrams — and never a verdict. Verdicts are always a labelled chip
+     or a semantic border, and `mask` moved to teal below so that nothing
+     in the warm range means anything but "brand" or "stop". */
+  --accent:      #C15F3C;
+  --accent-2:    #A94E2E;
+  --accent-ink:  #A2482A;
+  --accent-soft: #F8EBE4;
+  --on-accent:   #FFFFFF;
+
+  /* semantic — verdicts and severity, each a distinct hue so colour still
+     carries the signal: green pass · gold flag · teal mask · red block. */
+  --pass:        #3F7D58;
+  --pass-soft:   #E7F0EA;
+  --flag:        #8A6A18;
+  --flag-soft:   #F6EEDA;
+  --mask:        #2F6C78;
+  --mask-soft:   #E2EEF1;
+  --block:       #A63A29;
+  --block-soft:  #F9E7E3;
+
+  /* severity ramp — its own scale. "How strict is this cell" and "what did
+     this rail decide" are different questions that used to share tokens, so
+     retuning a verdict colour silently retuned the matrix. Severity is one
+     heat ramp, strict → loose; verdicts are four distinct hues. */
+  --sev-high:      #A63A29;
+  --sev-high-soft: #F9E7E3;
+  --sev-med:       #9A5A22;
+  --sev-med-soft:  #F7EADD;
+  --sev-low:       #8A6A18;
+  --sev-low-soft:  #F6EEDA;
+
+  /* type */
+  --sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --mono:  ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+
+  /* geometry */
+  --r:      10px;
+  --r-lg:   16px;
+  --side-w: 258px;
+
+  --shadow: 0 1px 2px rgba(26, 21, 15, .04), 0 12px 32px -16px rgba(26, 21, 15, .20);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg:          #262624;
+    --side:        #1F1E1D;
+    --surface:     #30302E;
+    --surface-2:   #2B2B29;
+    --hover:       #3A3A37;
+    --border:      #3C3B38;
+    --border-2:    #4E4D49;
+
+    --ink:         #F2F1EC;
+    --ink-2:       #B4B2AA;
+    --ink-3:       #8B8981;
+
+    /* The same terracotta, lifted for a dark ground. `--on-accent` goes
+       dark here: white on a light terracotta fill is ~2.7:1 and fails. */
+    --accent:      #E08A6A;
+    --accent-2:    #EDA184;
+    --accent-ink:  #E8A184;
+    --accent-soft: #3A2A21;
+    --on-accent:   #2A160E;
+
+    --pass:        #6FC79A;
+    --pass-soft:   #1D3329;
+    --flag:        #D9BE72;
+    --flag-soft:   #332D18;
+    --mask:        #6FB6C2;
+    --mask-soft:   #16303A;
+    --block:       #E9836C;
+    --block-soft:  #3B211C;
+
+    --sev-high:      #E9836C;
+    --sev-high-soft: #3B211C;
+    --sev-med:       #DFA06A;
+    --sev-med-soft:  #33251A;
+    --sev-low:       #D9BE72;
+    --sev-low-soft:  #332D18;
+
+    --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px -16px rgba(0, 0, 0, .7);
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg:          #262624;
+  --side:        #1F1E1D;
+  --surface:     #30302E;
+  --surface-2:   #2B2B29;
+  --hover:       #3A3A37;
+  --border:      #3C3B38;
+  --border-2:    #4E4D49;
+
+  --ink:         #F2F1EC;
+  --ink-2:       #B4B2AA;
+  --ink-3:       #8B8981;
+
+  --accent:      #E08A6A;
+  --accent-2:    #EDA184;
+  --accent-ink:  #E8A184;
+  --accent-soft: #3A2A21;
+  --on-accent:   #2A160E;
+
+  --pass:        #6FC79A;
+  --pass-soft:   #1D3329;
+  --flag:        #D9BE72;
+  --flag-soft:   #332D18;
+  --mask:        #6FB6C2;
+  --mask-soft:   #16303A;
+  --block:       #E9836C;
+  --block-soft:  #3B211C;
+
+  --sev-high:      #E9836C;
+  --sev-high-soft: #3B211C;
+  --sev-med:       #DFA06A;
+  --sev-med-soft:  #33251A;
+  --sev-low:       #D9BE72;
+  --sev-low-soft:  #332D18;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, .3), 0 12px 32px -16px rgba(0, 0, 0, .7);
+}

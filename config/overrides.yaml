@@ -1,0 +1,13 @@
+# GENERATED FILE — written by the Guardrail Console.
+#
+# Only parameters that differ from config/policy.yaml appear here, so this file
+# is the diff between your baseline and what is running right now.
+#
+# Safe to delete: removing it reverts every parameter to the baseline. Safe to
+# commit: it is the record of what a deployment actually changed.
+
+updated_at: 2026-08-20T09:32:53+0530
+values:
+  pii.custom_regex:
+  - CLM-\d{8}
+  - (?<![\d+])(?:\+91[\s-]?(?:\d[\s-]?){9}\d|0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}|[6-9]\d{4}[\s-]?\d{5})(?!\d)

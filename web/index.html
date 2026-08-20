@@ -1,0 +1,298 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Guardrail Console</title>
+<link rel="stylesheet" href="/styles/tokens.css">
+<link rel="stylesheet" href="/styles/app.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
+</head>
+<body>
+
+<div class="shell">
+
+  <!-- ══════════════════ SIDEBAR ══════════════════ -->
+  <aside class="sidebar">
+    <div class="side-top">
+      <a class="brand" href="/" title="Back to the overview">
+        <svg width="20" height="22" viewBox="0 0 18 20" fill="none" aria-hidden="true">
+          <path d="M9 1L16.5 4V9.5C16.5 14 13.3 17.8 9 19C4.7 17.8 1.5 14 1.5 9.5V4L9 1Z"
+                stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M5.6 9.8L8 12.2L12.4 7.6" stroke="currentColor" stroke-width="1.5"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        <span>Guardrail Console</span>
+      </a>
+      <button class="icon-btn" id="collapse" title="Collapse sidebar" aria-label="Collapse sidebar">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/>
+          <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+      </button>
+    </div>
+
+    <button class="new-chat" id="new-chat">
+      <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+        <path d="M8 3.5v9M3.5 8h9" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"/>
+      </svg>
+      New chat
+    </button>
+
+    <nav class="side-nav" role="tablist">
+      <button class="nav-item active" role="tab" data-view="chat" aria-selected="true">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M14 7.5c0 2.9-2.7 5.3-6 5.3-.8 0-1.6-.1-2.3-.4L2 13.5l1.2-2.8A5.1 5.1 0 0 1 2 7.5C2 4.6 4.7 2.2 8 2.2s6 2.4 6 5.3Z"
+                stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+        Chat
+      </button>
+      <button class="nav-item" role="tab" data-view="trace" aria-selected="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2 12.5h12M2 4h6M2 8.25h9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+          <circle cx="11.5" cy="4" r="1.6" stroke="currentColor" stroke-width="1.4"/>
+        </svg>
+        Request trace
+      </button>
+      <button class="nav-item" role="tab" data-view="docs" aria-selected="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M4 2h5l3 3v9H4V2Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M9 2v3h3M6 8.5h4M6 11h2.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        Documents
+      </button>
+      <button class="nav-item" role="tab" data-view="params" aria-selected="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M8 1.8v2M8 12.2v2M14.2 8h-2M3.8 8h-2M12.4 3.6l-1.4 1.4M5 11l-1.4 1.4M12.4 12.4 11 11M5 5 3.6 3.6"
+                stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        Parameters
+      </button>
+
+      <div class="nav-rule"></div>
+
+      <a class="nav-item nav-link" href="/">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M2.6 6.9 8 2.6l5.4 4.3V13a.9.9 0 0 1-.9.9h-9a.9.9 0 0 1-.9-.9V6.9Z"
+                stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+          <path d="M6.5 13.9V9.6h3v4.3" stroke="currentColor" stroke-width="1.4"
+                stroke-linejoin="round"/>
+        </svg>
+        Home
+      </a>
+      <a class="nav-item nav-link" href="/demo" data-perm="scenarios">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <rect x="2" y="2.5" width="5" height="4.5" rx="1.2" stroke="currentColor" stroke-width="1.4"/>
+          <rect x="9" y="9" width="5" height="4.5" rx="1.2" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M7 4.75h2.4a1 1 0 0 1 1 1V9" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round"/>
+        </svg>
+        Where the rails sit
+      </a>
+    </nav>
+
+    <div class="side-section" id="recent-section" hidden>
+      <div class="side-label">Recent requests</div>
+      <div class="recent" id="recent"></div>
+    </div>
+
+    <div class="side-user" id="side-user" hidden>
+      <span class="who-avatar" id="who-avatar"></span>
+      <span class="who-text">
+        <b id="who-name"></b>
+        <span id="who-role"></span>
+      </span>
+      <button class="icon-btn" id="sign-out" title="Sign out" aria-label="Sign out">
+        <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" stroke="currentColor"
+                stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+
+    <div class="side-foot">
+      <div class="status">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">connecting…</span>
+      </div>
+      <button class="icon-btn" id="theme" title="Toggle theme" aria-label="Toggle theme">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"
+                stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
+  </aside>
+
+  <!-- ══════════════════ MAIN ══════════════════ -->
+  <main class="main">
+
+    <!-- ── CHAT ── -->
+    <section class="view active" id="view-chat">
+      <div class="conversation" id="conversation">
+        <div class="greeting" id="greeting">
+          <section class="hero">
+            <span class="hero-mark">
+              <svg width="26" height="29" viewBox="0 0 18 20" fill="none" aria-hidden="true">
+                <path d="M9 1L16.5 4V9.5C16.5 14 13.3 17.8 9 19C4.7 17.8 1.5 14 1.5 9.5V4L9 1Z"
+                      stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+                <path d="M5.6 9.8L8 12.2L12.4 7.6" stroke="currentColor" stroke-width="1.5"
+                      stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </span>
+            <p class="hero-eyebrow" id="hero-eyebrow">Public services</p>
+            <h1>Ask anything.<br>Every answer is checked.</h1>
+            <p class="hero-lede" id="hero-lede">Rails run on the way in and again on the way
+              out, and the whole decision is written down.</p>
+          </section>
+          <p class="pick">Or start with one of these</p>
+          <div class="suggestions" id="suggestions"></div>
+        </div>
+        <div id="messages"></div>
+      </div>
+
+      <div class="composer-wrap">
+        <form class="composer" id="composer">
+          <textarea id="input" rows="1" placeholder="Ask about licences, grants, records…"
+                    autocomplete="off"></textarea>
+          <div class="composer-bar">
+            <div class="seg mode" id="chat-mode" role="group" aria-label="Pipeline mode">
+              <button type="button" data-mode="chat" aria-pressed="true">Chat</button>
+              <button type="button" data-mode="agent" aria-pressed="false">Agent</button>
+            </div>
+            <span class="composer-hint" id="composer-hint">Rails evaluate before dispatch</span>
+            <button type="submit" class="send" id="send" aria-label="Send">
+              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+                <path d="M8 13V3M8 3 3.8 7.2M8 3l4.2 4.2" stroke="currentColor"
+                      stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+              </svg>
+            </button>
+          </div>
+        </form>
+        <p class="composer-foot" id="foot-note"></p>
+      </div>
+    </section>
+
+    <!-- ── TRACE ── -->
+    <section class="view" id="view-trace">
+      <div class="page">
+        <header class="page-head">
+          <h1>Request trace</h1>
+          <p>Every rail is timed by the tracer, not by itself — a rail cannot forget to
+             report, and cannot report a number it made up.</p>
+        </header>
+        <div id="trace-body"></div>
+      </div>
+    </section>
+
+    <!-- ── DOCUMENTS ── -->
+    <section class="view" id="view-docs">
+      <div class="page">
+        <header class="page-head">
+          <h1>Documents</h1>
+          <p>What the assistant is allowed to answer from. An uploaded document is
+             attacker-supplied text that the model will later be asked to answer
+             <em>from</em>, so it crosses a rail on the way in — masked before it is
+             indexed, and quarantined rather than flagged if it fails.</p>
+        </header>
+
+        <div class="d-toolbar">
+          <div class="d-stats" id="d-stats"></div>
+          <span class="spacer"></span>
+          <button class="btn ghost" id="d-reset">Reset to the built-in corpus</button>
+        </div>
+
+        <section class="card d-add">
+          <div class="card-head">
+            <h3>Add a document</h3>
+            <span class="eyebrow">extract → ingest rails → chunk → index</span>
+          </div>
+          <div class="d-body">
+            <div class="d-row">
+              <input id="d-title" placeholder="Title" maxlength="160" aria-label="Document title">
+              <label class="btn ghost file">
+                Choose a file…
+                <input type="file" id="d-file" accept=".txt,.md,.csv,.json,.pdf,.xlsx,.xlsm,.png,.jpg,.jpeg,.webp" hidden>
+              </label>
+              <button class="btn" id="d-ingest">Ingest</button>
+            </div>
+            <textarea id="d-text" rows="5"
+                      placeholder="Paste the text — or choose a file above (spreadsheets are parsed; scans and images are transcribed)"></textarea>
+            <div class="d-samples" id="d-samples"></div>
+            <div class="d-note" id="d-note"></div>
+          </div>
+        </section>
+
+        <div id="d-report"></div>
+
+        <section class="card">
+          <div class="card-head">
+            <h3>In the knowledge base</h3>
+            <span class="eyebrow" id="d-count"></span>
+          </div>
+          <div id="d-list"></div>
+        </section>
+
+        <div class="note">
+          <b>Quarantine is not a flag.</b> A document that fails an ingest rail is stored
+          for review and indexed nowhere — <code>ingest.quarantine_on_block</code> is
+          locked, because indexing it with a warning would make retrieval safety a matter
+          of remembering to check the warning, on every query, forever.
+        </div>
+      </div>
+    </section>
+
+    <!-- ── PARAMETERS ── -->
+    <section class="view" id="view-params">
+      <div class="page">
+        <header class="page-head">
+          <h1>Parameters</h1>
+          <p>The full control surface, grouped by guardrail family. Adjustable parameters
+             are live — change one and the engine reloads. What matters is <em>why</em> a
+             parameter is fixed: a limit inherited from a model is a different conversation
+             than a safety invariant that exists specifically so it can't be tuned away.</p>
+        </header>
+
+        <div class="p-toolbar">
+          <div class="seg" id="p-filters" role="group" aria-label="Filter parameters">
+            <button data-filter="all" aria-pressed="true">All</button>
+            <button data-filter="adj" aria-pressed="false">Adjustable</button>
+            <button data-filter="locked" aria-pressed="false">Fixed</button>
+          </div>
+          <div class="search">
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+              <circle cx="7" cy="7" r="4.5" stroke="currentColor" stroke-width="1.4"/>
+              <path d="m10.5 10.5 3 3" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+            </svg>
+            <input id="p-search" type="search" placeholder="Search parameters…"
+                   aria-label="Search parameters">
+          </div>
+          <span class="showing" id="p-showing"></span>
+          <button class="btn ghost" id="p-reset" disabled>Reset to baseline</button>
+        </div>
+
+        <div class="p-meta" id="p-meta"></div>
+        <div class="lock-key" id="lock-key"></div>
+        <div id="matrix-block"></div>
+        <div id="params-body"></div>
+        <div class="card hide" id="p-empty"><div class="empty">
+          No parameters match that filter.</div></div>
+
+        <div class="note">
+          <b>Editing here is not a runtime override.</b> <code>policy.runtime_override</code>
+          stays locked — no request parameter changes a rail. What this page does is write a
+          validated change to <code>config/overrides.yaml</code>, record it in
+          <code>config-changes.log</code> with an author and a diff, and reload the engine.
+          <code>config/policy.yaml</code> is never machine-written, so your baseline and its
+          comments survive intact and “what did we change” stays a one-file diff.
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script type="module" src="/scripts/main.js"></script>
+</body>
+</html>

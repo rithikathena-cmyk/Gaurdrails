@@ -1,0 +1,27 @@
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime records — local to a deployment, and they conflict on every merge.
+audit.log
+config-changes.log
+eval/report.json
+
+# NOT ignored, on purpose:
+#   config/overrides.yaml — the diff between your baseline and what is running.
+#   Commit it. It is the record of what a deployment actually changed.
+data/
+
+# Local tooling and scratch — not part of the project.
+.claude/
+.playwright-mcp/
+.server.log
+.audit-*.log
+.cookies.txt
+.ck
+*.png
+!web/**/*.png
+!docs/**/*.png

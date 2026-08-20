@@ -1,0 +1,635 @@
+# Guardrail policy.
+
+#
+
+# Every key here is validated against guardrails/registry.py at startup.
+
+#   - An unknown key is a startup error. A typo'd threshold that silently does
+
+#     nothing is worse than a crash, because the rail looks configured.
+
+#   - A locked parameter is a startup error, and the message tells you why it
+
+#     is locked. Locked parameters are not listed in this file at all.
+
+#
+
+# Run `python run.py --check` to validate without starting the server.
+
+
+
+# ---------------------------------------------------------------------------
+
+# Severity matrix — the grid from the architecture diagram.
+
+#
+
+# Rows are guardrail families, columns are surfaces. Each cell scales that
+
+# family's thresholds on that surface:
+
+#
+
+#   high    stricter  (thresholds × 0.70)
+
+#   medium  baseline  (× 1.00)
+
+#   low     looser    (× 1.30)
+
+#   off     family does not run on that surface at all
+
+#
+
+# This is the single place to reason about posture. Changing one cell moves
+
+# every threshold in that family on that surface at once.
+
+# ---------------------------------------------------------------------------
+
+severity_matrix:
+
+  content:
+
+    user.prompt:     high
+
+    user.feedback:   medium
+
+    ingest.document: medium   # a document is attacker-supplied text
+
+    retrieval:       off      # what we already ingested and cleared; we own the index
+
+    llm.response:    high
+
+    llm.ask_user:    medium
+
+    agent.tool:      medium
+
+    agent.data:      high     # a tool result is the classic indirect-injection carrier
+
+  words:
+
+    user.prompt:     medium
+
+    user.feedback:   medium
+
+    ingest.document: medium
+
+    retrieval:       low
+
+    llm.response:    high
+
+    llm.ask_user:    medium
+
+    agent.tool:      low
+
+    agent.data:      medium
+
+  pii:
+
+    user.prompt:     high
+
+    user.feedback:   high
+
+    ingest.document: high     # the index must never hold a raw identifier
+
+    retrieval:       high
+
+    llm.response:    high
+
+    llm.ask_user:    high
+
+    agent.tool:      high
+
+    agent.data:      high
+
+  grounding:
+
+    user.prompt:     off      # nothing to ground on the way in
+
+    user.feedback:   off
+
+    ingest.document: off
+
+    retrieval:       off
+
+    llm.response:    high
+
+    llm.ask_user:    low
+
+    agent.tool:      off
+
+    agent.data:      off
+
+  scope:
+
+    user.prompt:     medium   # is this a question this desk answers at all?
+
+    user.feedback:   medium
+
+    ingest.document: off      # a document is not a question
+
+    retrieval:       off
+
+    llm.response:    off
+
+    llm.ask_user:    off
+
+    agent.tool:      off
+
+    agent.data:      off
+
+  policy:
+
+    user.prompt:     high
+
+    user.feedback:   medium
+
+    ingest.document: high
+
+    retrieval:       medium
+
+    llm.response:    high
+
+    llm.ask_user:    medium
+
+    agent.tool:      high     # a policy rule is exactly how you stop a tool argument
+
+    agent.data:      medium
+
+
+
+# ---------------------------------------------------------------------------
+
+content:
+
+  hate:       {threshold: 0.70}
+
+  violence:   {threshold: 0.65}
+
+  insults:    {threshold: 0.75}
+
+  misconduct: {threshold: 0.70}
+
+  self_harm:  {threshold: 0.40}   # low on purpose — a miss costs far more than a false positive
+
+  sexual:     {threshold: 0.60}
+
+  action:
+
+    user_prompt:  block
+
+    llm_response: regenerate
+
+  judge_model: claude-opus-5
+
+  enabled_categories: [hate, violence, insults, misconduct, self_harm, sexual]
+
+
+
+prompt_attack:
+
+  threshold: 0.85
+
+  action: block
+
+
+
+# ---------------------------------------------------------------------------
+
+words:
+
+  profanity:
+
+    enabled: true
+
+  match_mode: word          # exact | word | substring
+
+  case_sensitive: false
+
+  action: mask
+
+  custom_terms: []
+
+  custom_phrases: []
+
+  allowlist: []
+
+
+
+# ---------------------------------------------------------------------------
+
+pii:
+
+  entities:
+
+    - EMAIL_ADDRESS
+
+    - PHONE_NUMBER
+
+    - US_SSN
+
+    - CREDIT_CARD
+
+    - IP_ADDRESS
+
+    - DATE_OF_BIRTH
+
+    - AADHAAR
+
+    - PAN
+
+    - IBAN
+
+  confidence_threshold: 0.50
+
+  # Named entities a model finds that a pattern cannot: people, addresses,
+
+  # private employers. Same vault, same masking strategy, same egress unmask.
+
+  entity_kinds: [PERSON, ADDRESS, ORGANISATION]
+
+  entity_confidence: 0.60
+
+  mask_strategy: vault-token    # redact | replace | hash | partial | vault-token
+
+  partial_reveal: 4
+
+  reversible: true
+
+  custom_regex:
+
+    - 'CLM-\d{8}'               # claim reference numbers
+
+
+
+  # Published contacts. These are printed on notice boards and on every letter
+
+  # the department sends; masking them means the assistant cannot answer "who do
+
+  # I write to", which is most of what a public-services desk is for. A citizen's
+
+  # own address matches none of these and is still masked.
+
+  #
+
+  # Detection still happens — an exempt value is found, counted, and audited. It
+
+  # is only the rewrite that is skipped.
+
+  allowlist:
+
+    - '[a-z0-9._%+-]+@[a-z0-9.-]*municipal\.gov\.in'   # any departmental address
+
+    - '[a-z0-9._%+-]+@[a-z0-9.-]*nic\.in'               # national informatics centre
+
+    - '\b1800[\s-]?\d{3}[\s-]?\d{4}\b'   # published toll-free helplines
+  action:
+
+    user_prompt:  mask
+
+    retrieval:    mask
+
+    llm_response: mask
+
+    ingest:       mask        # masked before the chunk is written, never after
+
+    agent_tool:   flag        # args are already masked; flag if something slipped through
+
+    agent_data:   mask
+
+
+
+# ---------------------------------------------------------------------------
+
+grounding:
+
+  consistency:
+
+    threshold: 0.50
+
+  relevance:
+
+    threshold: 0.35
+
+  context_window: 4
+
+  action_on_fail: regenerate    # regenerate | flag | human_review | block
+
+  max_regenerations: 2
+
+  require_citations: false
+
+
+
+# ---------------------------------------------------------------------------
+
+# Scope. The vocabulary below settles the ordinary case in microseconds; only a
+
+# question that matches none of it is worth a model call. Add the words your
+
+# service is actually about — that list is what keeps the semantic check cheap.
+
+# ---------------------------------------------------------------------------
+
+scope:
+
+  threshold: 0.40
+
+  action: flag              # block | flag | pass
+
+  domain_terms:
+
+    - licence
+
+    - license
+
+    - permit
+
+    - renew
+
+    - registration
+
+    - certificate
+
+    - birth
+
+    - death
+
+    - marriage
+
+    - grant
+
+    - benefit
+
+    - subsidy
+
+    - housing
+
+    - tenancy
+
+    - eviction
+
+    - property
+
+    - tax
+
+    - assessment
+
+    - levy
+
+    - fee
+
+    - payment
+
+    - refund
+
+    - claim
+
+    - application
+
+    - form
+
+    - document
+
+    - grievance
+
+    - complaint
+
+    - appeal
+
+    - council
+
+    - municipal
+
+    - corporation
+
+    - ward
+
+    - zone
+
+    - office
+
+    - registrar
+
+    - officer
+
+    - deadline
+
+    - eligibility
+
+    - income
+
+
+
+# ---------------------------------------------------------------------------
+
+# Document ingestion. Uploaded documents are a trust boundary of their own:
+
+# attacker-supplied text that the model will later be asked to answer from.
+
+# They are scanned once, on the way in, and masked before anything is indexed.
+
+# ---------------------------------------------------------------------------
+
+ingest:
+
+  chunk_size: 700
+
+  chunk_overlap: 80
+
+  max_document_chars: 200000
+
+  # Spreadsheets are parsed into markdown tables. Images and scanned pages have
+
+  # no text layer, so they are transcribed by a model — which is why the
+
+  # transcriber is isolated and its output crosses the same rails.
+
+  allowed_types: [txt, md, csv, json, pdf, xlsx, xlsm, png, jpg, jpeg, webp]
+
+  ocr_model: claude-sonnet-5
+
+  ocr_max_pages: 20
+
+  # A document is not a prompt. The content judge reads the whole upload, so it
+
+  # needs far more than policy.latency_budget_ms — that budget timing out is how
+
+  # a long, perfectly ordinary circular gets quarantined.
+
+  latency_budget_ms: 60000
+
+  min_chunk_score: 0.15
+
+
+
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+
+# Adjudication. Not a rail — a review of what the rails decided, and only when
+
+# one of them landed within `margin` of its own threshold. On a score nowhere
+
+# near its line, nothing here runs and nothing here costs anything.
+
+#
+
+# It may raise a verdict freely. It may lower one only for the rail that
+
+# triggered it, only above `min_confidence`, and never below `flag` — a lowered
+
+# verdict still leaves a record.
+
+# ---------------------------------------------------------------------------
+
+adjudicator:
+
+  enabled: true
+
+  margin: 0.08
+
+  min_confidence: 0.6
+
+  rails:
+
+    - content.safety
+
+    - prompt_attack
+
+    - scope.domain
+
+    - grounding.consistency
+
+
+
+# The agent. Tools are declared in code; this list is the filter over them.
+
+# Read tools run freely (their arguments and their results still cross rails).
+
+# Write tools stop and ask a person — that is locked, not configured.
+
+# ---------------------------------------------------------------------------
+
+agent:
+
+  max_steps: 6
+
+  max_tool_calls: 10
+
+  tool_timeout_ms: 5000
+
+  tools_enabled:
+
+    - search_documents
+
+    - lookup_fee
+
+    - check_claim_status
+
+    - file_grievance
+
+
+
+# ---------------------------------------------------------------------------
+
+policy:
+
+  # Bounds the SLOWEST rail, not their sum — they run concurrently. Three
+
+  # model-backed rails now share this surface (content, injection judge, scope,
+
+  # entities) and a judge routinely takes 4-7s, so 8000 sat inside the normal
+
+  # variance of the thing it was timing and tripped on ordinary traffic. This is
+
+  # a "something is stuck" tripwire, not a response-time target.
+
+  latency_budget_ms: 20000
+
+  fail_mode: fail_closed        # what a rail that ERRORS does. A rail that times
+
+                                # out always fails closed regardless — locked.
+
+
+
+  # repeat failures | any block | any mask | sampled 5% | none
+
+  human_review:
+
+    trigger: repeat failures
+
+
+
+  # ---------------------------------------------------------------------------
+
+  # Custom rule sets. Each rule is `regex => block|mask|flag`.
+
+  # Omit the action and the rule flags — the least destructive default, so a
+
+  # half-written rule cannot start refusing traffic.
+
+  #
+
+  # The four sets are evaluated identically; they exist so findings carry the
+
+  # policy they came from into the trace and the audit log.
+
+  # ---------------------------------------------------------------------------
+
+  # Secrets. A credential pasted into a prompt has already left the place it was
+
+  # meant to live, so these block rather than mask — masking would hide the
+
+  # incident from the person who needs to rotate the key.
+
+  security_rules:
+
+    - 'password\s*[:=]\s*\S+ => block'
+
+    - 'api[_-]?key\s*[:=]\s*\S+ => block'
+
+    - '\b(?:sk|pk)-[A-Za-z0-9]{16,}\b => block'
+
+    - '\bghp_[A-Za-z0-9]{20,}\b => block'
+
+    - '\bAKIA[0-9A-Z]{16}\b => block'
+
+    - '\bBEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY\b => block'
+
+    - '\bbearer\s+[A-Za-z0-9._-]{20,}\b => block'
+
+
+
+  privacy_rules: []
+
+    # - 'medical (record|history) => flag'
+
+
+
+  compliance_rules: []
+
+    # - '\b(guarantee|guaranteed) (approval|acceptance)\b => block'
+
+    # - '\bno (credit|background) check\b => flag'
+
+
+
+  # Destructive intent. The content judge scores this semantically under
+
+  # `misconduct`; these patterns catch the literal cases for nothing, and keep
+
+  # working on a deployment with no API key.
+
+  use_case_rules:
+
+    - '\b(?:drop|truncate)\s+(?:the\s+)?(?:table|database)\b => block'
+
+    - '\bdelete\s+from\s+\w+ => block'
+
+    - '\bdelete\s+(?:all|every)\s+(?:the\s+)?(?:record|row|file|licence|license|claim|applicant)s?\b => block'
+
+    - '\brm\s+-rf\b => block'
+
+    - '\bwipe\s+(?:the\s+)?(?:database|records|corpus|index)\b => block'
+

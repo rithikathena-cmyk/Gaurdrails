@@ -1,0 +1,11 @@
+# Exemptions. Evaluated AFTER the blocklist — a locked precedence, so an entry
+# here can only exempt something the blocklist already caught. It can never
+# introduce a term the blocklist doesn't know about.
+#
+# Every entry should have a reason. An allowlist without reasons becomes the
+# place where blocked terms quietly go to be un-blocked.
+
+# "vermin control" is a real municipal service
+vermin control
+# a legitimate grievance category
+looked the other way when I reported
