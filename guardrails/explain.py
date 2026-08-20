@@ -263,6 +263,32 @@ def _adjudicator(r: RailResult, level: int) -> Violation | None:
     )
 
 
+def _scope(r: RailResult, level: int) -> Violation | None:
+    """An off-topic question is not an incident, and must not read like one.
+
+    Without this the scope rail fell through to the generic refusal — "that
+    request was stopped before it reached the model" — which tells somebody
+    asking about prime numbers that they have done something wrong. They have
+    not; they are in the wrong place, and the useful thing is to say which
+    place is the right one.
+    """
+    if r.verdict is not Verdict.BLOCK:
+        return None
+    detail = ("This desk handles council services — benefits, licensing, housing, "
+              "tax, civil records, and the paperwork around them. Ask about one of "
+              "those and it can look the answer up.")
+    items: list[str] = []
+    if level >= _rank("detailed"):
+        topic = str(r.meta.get("topic") or "").strip()
+        if topic:
+            items = [f"read as: {topic}"]
+    return Violation(
+        family="scope", rail=r.rail, verdict=r.verdict.value,
+        title="That is outside what this service covers",
+        detail=detail, items=items, action_required=False,
+    )
+
+
 _BUILDERS = {
     "pii.detect": _pii,
     "words.lexicon": _words,
@@ -271,6 +297,7 @@ _BUILDERS = {
     "policy.rules": _policy,
     "grounding.consistency": _grounding,
     "adjudicator.review": _adjudicator,
+    "scope.domain": _scope,
 }
 
 
