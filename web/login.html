@@ -352,7 +352,8 @@ $("#hint").addEventListener("click", () => {
     + "deployment change rather than an email.");
 });
 
-const next = new URLSearchParams(location.search).get("next") || "/console";
+// Default home, not the console: sign in, see what the stack is, then go in.
+const next = new URLSearchParams(location.search).get("next") || "/";
 
 function say(kind, html) {
   const box = $("#note");

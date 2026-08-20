@@ -30,11 +30,11 @@ def create_app() -> FastAPI:
 
     @app.get("/login", include_in_schema=False)
     def login_page(gc_session: str | None = Cookie(default=None)):
-        """Signing in while already signed in is a dead end — "Start app" on the
-        home page points here, and somebody who has a session means "take me in",
-        not "show me the form again". Sign out first to switch accounts."""
+        """Signing in while already signed in is a dead end. Somebody who has a
+        session gets sent where signing in would have sent them — the home
+        page. Sign out first to switch accounts."""
         if directory.resolve(gc_session) is not None:
-            return RedirectResponse("/console", status_code=303)
+            return RedirectResponse("/", status_code=303)
         return FileResponse(WEB / "login.html")
 
     def _gate(cookie: str | None, target: str, permission: str = ""):
@@ -51,15 +51,15 @@ def create_app() -> FastAPI:
         return None
 
     @app.get("/", include_in_schema=False)
-    def home():
-        """The front door, and public.
+    def home(gc_session: str | None = Cookie(default=None)):
+        """Where signing in lands you.
 
-        What the stack is, drawn as one pipeline, with the scenarios it is
-        checked against. Nothing on it is anybody's data — the cards that once
-        led to the control surface are gone — so there is nothing here to sign
-        in for.
+        Sign-in is the front door; this is the room behind it. What the stack
+        is, drawn as one pipeline, with the scenarios it is checked against —
+        and one way on, into the console. A session is all it asks for: every
+        role sees the same page.
         """
-        return FileResponse(WEB / "home.html")
+        return _gate(gc_session, "/") or FileResponse(WEB / "home.html")
 
     @app.get("/console", include_in_schema=False)
     def console(gc_session: str | None = Cookie(default=None)):
