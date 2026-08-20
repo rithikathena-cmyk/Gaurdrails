@@ -91,6 +91,24 @@ _ALREADY_MASKED = re.compile(r"<[A-Z_0-9]+:[0-9a-f]{12}(?:\s…[^>]*)?>")
 KINDS = {"PERSON", "ADDRESS", "ORGANISATION", "LOCATION"}
 
 
+def _spans_of(items: list[dict], text: str) -> list[tuple[int, int]]:
+    """Resolve verbatim findings to offsets, skipping any that are not present.
+
+    A model asked for verbatim substrings occasionally returns a near-miss. Such
+    a finding cannot corroborate anything, because there is no place in the text
+    it agrees about.
+    """
+    out: list[tuple[int, int]] = []
+    for item in items:
+        raw = str(item.get("text", "")).strip()
+        if not raw:
+            continue
+        start = text.find(raw)
+        if start >= 0:
+            out.append((start, start + len(raw)))
+    return out
+
+
 class EntityRail:
     """Model-backed PII, feeding the same vault as the regex recognizers."""
 
@@ -98,7 +116,8 @@ class EntityRail:
     engine = "claude judge · named entities"
 
     def __init__(self, llm, vault, confidence_threshold: float, mask_strategy: str,
-                 kinds: list[str] | None = None, engine_mode: str = "presidio+judge") -> None:
+                 kinds: list[str] | None = None, engine_mode: str = "presidio+judge",
+                 allowlist: list[str] | None = None) -> None:
         self.llm = llm
         self.vault = vault
         self.min_conf = confidence_threshold
@@ -108,7 +127,30 @@ class EntityRail:
         #: does not spend on an API call, so it goes first where it is enabled.
         self.engine_mode = engine_mode
 
-    def _replacement(self, kind: str, raw: str) -> str:
+        # The same published contacts `pii.detect` exempts. This rail used not
+        # to receive them at all, so `pii.allowlist` — documented as "published
+        # contacts that are exempt from masking" — held against the regex
+        # recognizers and not against NER. A department address the operator
+        # deliberately published could still be masked here, by a different
+        # rail, for the same text.
+        self.allow: list[re.Pattern[str]] = []
+        for i, pat in enumerate(allowlist or []):
+            try:
+                self.allow.append(re.compile(pat, re.I))
+            except re.error as exc:
+                raise ValueError(f"pii.allowlist[{i}] is not a valid regex: {exc}") from exc
+
+    def _allowed_spans(self, text: str) -> list[tuple[int, int]]:
+        """Where the published contacts sit. Matched against the whole text for
+        the same reason `PIIRail` does it: a detector slices a span to its own
+        boundaries, so asking "is this detected value allowlisted" misses a
+        fragment of one."""
+        spans: list[tuple[int, int]] = []
+        for a in self.allow:
+            spans.extend((m.start(), m.end()) for m in a.finditer(text))
+        return spans
+
+    def _replacement(self, kind: str, raw: str, owner: str) -> str:
         if self.strategy == "redact":
             return "[REDACTED]"
         if self.strategy == "replace":
@@ -119,10 +161,10 @@ class EntityRail:
             return f"<{kind}:{hashlib.sha256(raw.encode()).hexdigest()[:8]}>"
         if self.strategy == "partial":
             return raw[0] + "*" * max(0, len(raw) - 1)
-        return f"<{kind}:{self.vault.store(kind, raw)}>"
+        return f"<{kind}:{self.vault.store(kind, raw, owner)}>"
 
     def evaluate(self, text: str, action: str, result: RailResult,
-                 prior: list[Detection] | None = None) -> RailResult:
+                 prior: list[Detection] | None = None, owner: str = "") -> RailResult:
         """`prior` is what the deterministic rail already claimed, so NER cannot
         return a worse guess over the same characters."""
         prior = prior or []
@@ -148,21 +190,50 @@ class EntityRail:
             return result
 
         # Local NER first. It costs about a second of CPU rather than several
-        # of network, and on the ordinary case it finds the name and the judge
-        # is never asked.
+        # of network, and it is the layer that finds the ordinary name.
+        proposed: list[dict] = []
+        if use_presidio:
+            proposed = presidio_ner.find(text, self.kinds, self.min_conf,
+                                         taken=[(d.start, d.end) for d in prior])
+
         items: list[dict] = []
         layer = ""
-        if use_presidio:
-            items = presidio_ner.find(text, self.kinds, self.min_conf,
-                                      taken=[(d.start, d.end) for d in prior])
-            if items:
-                layer = "presidio"
+        corroborated = rejected = 0
 
-        # The judge is the fallback, not the default: asked only when the cheap
-        # layer found nothing and there is still a candidate in the text.
-        # Presidio never returns ORGANISATION, so a text whose only identifier is
-        # one still has to reach the judge.
-        if not items and use_judge:
+        if use_judge and self.engine_mode == "presidio+judge":
+            # Presidio proposes; the judge decides. It used to be asked *only*
+            # when Presidio found nothing, which meant a Presidio hit was never
+            # reviewed — and Presidio hits things that are not people. On this
+            # service's own reply it read "Birth", in "Birth and death records",
+            # as a person's name at 0.85 and masked it, leaving the line as
+            # "<PERSON:…> and death records". Nobody saw it only because egress
+            # unmasks for the token's owner; a different reader gets the mangled
+            # sentence.
+            #
+            # `ENTITY_SYSTEM` already tells the judge not to return scheme, form
+            # or programme names, or public offices — exactly the class Presidio
+            # gets wrong — so it is the right arbiter for this.
+            judged = list((self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
+                           .get("entities") or [])[:40])
+            judged_spans = _spans_of(judged, text)
+            for item in proposed:
+                start, end = int(item.get("start", -1)), int(item.get("end", -1))
+                if any(start < b and a < end for a, b in judged_spans):
+                    corroborated += 1
+                    items.append(item)
+                else:
+                    rejected += 1
+            # The judge's own findings are kept whatever Presidio thought: it
+            # returns ORGANISATION, which Presidio never does, so dropping them
+            # would lose a kind entirely.
+            items.extend(judged)
+            # Label what actually ran. With nothing proposed there was no
+            # Presidio finding to corroborate, and calling that "presidio+judge"
+            # would overstate what the cheap layer contributed.
+            layer = "presidio+judge" if proposed else "judge"
+        elif proposed:
+            items, layer = proposed, "presidio"
+        elif use_judge:
             found = self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
             items = list((found.get("entities") or [])[:40])
             layer = "judge"
@@ -185,6 +256,14 @@ class EntityRail:
                 continue
             spans.append((start, start + len(raw), kind, raw, conf))
 
+        # Published contacts are exempt, exactly as they are for `pii.detect`.
+        # Dropped after detection rather than before, so the count still reflects
+        # what was found — an exemption that made the match invisible would look
+        # the same as the detector failing.
+        allowed = self._allowed_spans(text)
+        exempt = [s for s in spans if any(a <= s[0] and s[1] <= b for a, b in allowed)]
+        spans = [s for s in spans if s not in exempt]
+
         # Longest match wins on overlap, same rule the regex recognizers use.
         spans.sort(key=lambda s: (s[0], -(s[1] - s[0])))
         kept: list[tuple[int, int, str, str, float]] = []
@@ -202,7 +281,12 @@ class EntityRail:
         ]
         result.meta.update(layer=layer or "none",
                            by_type=sorted({k for _, _, k, _, _ in kept}),
-                           unverifiable_spans=dropped)
+                           unverifiable_spans=dropped,
+                           allowlisted=len(exempt))
+        if layer == "presidio+judge":
+            result.meta.update(presidio_proposed=len(proposed),
+                               presidio_corroborated=corroborated,
+                               presidio_rejected=rejected)
 
         if not kept:
             result.verdict = Verdict.PASS
@@ -212,6 +296,6 @@ class EntityRail:
         if result.verdict is Verdict.MASK:
             out = text
             for start, end, kind, raw, _ in sorted(kept, reverse=True):
-                out = out[:start] + self._replacement(kind, raw) + out[end:]
+                out = out[:start] + self._replacement(kind, raw, owner) + out[end:]
             result.text_out = out
         return result

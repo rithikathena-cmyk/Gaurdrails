@@ -37,15 +37,25 @@ class ToolContext:
 
     engine: Engine
     session_id: str = ""
+    #: The authenticated principal this run belongs to. Vault tokens resolve
+    #: only for the identity that minted them, so a tool entitled to unmask
+    #: still cannot reach another user's value.
+    principal: str = ""
     chunks: list[str] = field(default_factory=list)   # what search actually returned
     filed: list[dict[str, Any]] = field(default_factory=list)
     min_score: float = 0.15
     k: int = 4
 
     def unmask(self, value: str) -> str:
-        """Resolve vault tokens in a tool argument. Tool-scoped, never model-driven."""
+        """Resolve vault tokens in a tool argument. Tool-scoped, never model-driven.
+
+        Two independent gates have to agree before a raw value appears here:
+        the tool must declare the argument in `unmask_args` (entitlement), and
+        the run's principal must own the token (authorization). Neither is
+        model-chosen.
+        """
         def _reveal(m: re.Match[str]) -> str:
-            raw = self.engine.vault.reveal(m.group(2))
+            raw = self.engine.vault.reveal(m.group(2), self.principal)
             return raw if raw is not None else m.group(0)
 
         return MASK_TOKEN.sub(_reveal, value)

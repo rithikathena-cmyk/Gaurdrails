@@ -16,6 +16,7 @@ import re
 
 from ..prompts import judge_prompt
 
+from . import deberta_injection_check, toxicity_check
 from ..types import Detection, RailResult, Verdict, action_verdict
 
 CATEGORIES = ["hate", "violence", "insults", "misconduct", "self_harm", "sexual"]
@@ -110,10 +111,15 @@ class PromptAttackRail:
     name = "prompt_attack"
     engine = "pattern set + claude judge"
 
-    def __init__(self, llm, threshold: float, use_judge: bool = True) -> None:
+    def __init__(self, llm, threshold: float, use_judge: bool = True,
+                 engine_mode: str = "judge", local_block_threshold: float = 0.90) -> None:
         self.llm = llm
         self.threshold = threshold
         self.use_judge = use_judge
+        #: local+judge | local | judge | off — chooses what happens *after* the
+        #: pattern layer, which runs either way.
+        self.engine_mode = engine_mode
+        self.local_block_threshold = local_block_threshold
 
     def evaluate(self, text: str, action: str, result: RailResult) -> RailResult:
         result.threshold = self.threshold
@@ -134,24 +140,61 @@ class PromptAttackRail:
             result.verdict = action_verdict(action)
             return result
 
-        if not self.use_judge or self.llm is None:
-            result.score = best_score
-            result.meta = {
-                "layer": "pattern",
+        use_local = self.engine_mode in ("local", "local+judge")
+        use_judge = (self.engine_mode in ("judge", "local+judge")
+                     and self.use_judge and self.llm is not None)
+
+        # --- the local layer ------------------------------------------
+        # Blocks on a confident hit; a low score is never a verdict on its own.
+        # This model reports injection on text that merely discusses prompts —
+        # including a citizen asking why they were refused — so the bar to end
+        # the request here is higher than the rail's own threshold.
+        local = deberta_injection_check.score(text) if use_local else None
+        if local is not None:
+            result.meta["local_score"] = round(local, 3)
+            bar = max(self.local_block_threshold, self.threshold)
+            # A question about the service is the one shape this model is known
+            # to get wrong. Hand those to the judge rather than to the local
+            # verdict — an escalation, never a bypass.
+            meta_q = deberta_injection_check.looks_like_a_meta_question(text)
+            if meta_q:
+                result.meta["local_deferred"] = "meta_question"
+            if local >= bar and not meta_q:
+                result.score = max(best_score, local)
+                result.meta.update({
+                    "layer": "local",
+                    "engine_mode": self.engine_mode,
+                    "technique": best_kind,
+                    "judge_skipped": True,
+                    "local_block_threshold": round(bar, 3),
+                    "rationale": f"local classifier scored {local:.2f}",
+                })
+                result.verdict = action_verdict(action)
+                return result
+
+        if not use_judge:
+            # The pattern layer found nothing and no semantic layer ran. That is
+            # a pass on what was checked, recorded as such — `local_score` above
+            # says whether anything looked at the wording at all.
+            result.score = max(best_score, local or 0.0)
+            result.meta.update({
+                "layer": "local" if local is not None else "pattern",
+                "engine_mode": self.engine_mode,
                 "technique": best_kind,
                 "judge_available": self.llm is not None,
-            }
+            })
             result.verdict = Verdict.PASS
             return result
 
         verdict = self.llm.judge(INJECTION_SYSTEM, text, INJECTION_SCHEMA)
         score = max(best_score, min(1.0, max(0.0, float(verdict.get("injection", 0.0)))))
         result.score = score
-        result.meta = {
+        result.meta.update({
             "layer": "judge",
+            "engine_mode": self.engine_mode,
             "technique": verdict.get("technique", best_kind),
             "rationale": verdict.get("rationale", ""),
-        }
+        })
         result.verdict = action_verdict(action) if score >= self.threshold else Verdict.PASS
         return result
 
@@ -160,15 +203,93 @@ class ContentRail:
     name = "content.safety"
     engine = "claude judge · structured output"
 
-    def __init__(self, llm, thresholds: dict[str, float], enabled: list[str]) -> None:
+    def __init__(self, llm, thresholds: dict[str, float], enabled: list[str],
+                 engine_mode: str = "judge", local_block_threshold: float = 0.90) -> None:
         self.llm = llm
         self.thresholds = thresholds
         self.enabled = [c for c in enabled if c in CATEGORIES]
+        #: local+judge | local | judge | off
+        self.engine_mode = engine_mode
+        self.local_block_threshold = local_block_threshold
+
+    # -- the cheap layer ------------------------------------------------
+    def _local(self, text: str, action: str, result: RailResult) -> RailResult | None:
+        """Score locally and block on a confident hit. Never clears the text.
+
+        Returns a finished result only when the local model is confident enough
+        to end the request, which it may do in one direction only. A clean local
+        score returns None so the caller escalates: "this model found nothing it
+        was trained to find" and "there is nothing here" are different claims,
+        and `content.local_short_circuit_scope` is locked because only one of
+        them is safe to act on.
+        """
+        scores = toxicity_check.score(text)
+        if scores is None:
+            return None
+
+        # Only categories the operator enabled *and* this model can actually
+        # speak to. `misconduct` and `self_harm` are excluded by the lock even
+        # if a label were somehow present for them.
+        scored = {c: v for c, v in scores.items()
+                  if c in self.enabled and c in toxicity_check.COVERED}
+        result.meta["local_scores"] = {c: round(v, 3) for c, v in sorted(scored.items())}
+        result.meta["local_uncovered"] = sorted(
+            c for c in self.enabled if c in toxicity_check.UNCOVERED
+        )
+
+        breached = [c for c, v in scored.items()
+                    if v >= max(self.local_block_threshold, self.thresholds.get(c, 1.0))]
+        if not breached:
+            return None
+
+        worst = max(breached, key=lambda c: scored[c])
+        result.score = scored[worst]
+        result.threshold = self.thresholds.get(worst, 1.0)
+        result.detections = [
+            Detection(kind=c, value="", start=0, end=0, confidence=scored[c],
+                      note="local classifier")
+            for c in breached
+        ]
+        result.meta.update({
+            "layer": "local",
+            "engine_mode": self.engine_mode,
+            "breached": sorted(breached),
+            "worst_category": worst,
+            "judge_skipped": True,
+            "rationale": f"local classifier scored {worst} at {scored[worst]:.2f}",
+        })
+        result.verdict = action_verdict(action)
+        return result
 
     def evaluate(self, text: str, action: str, result: RailResult) -> RailResult:
         if not self.enabled or not text.strip():
             result.verdict = Verdict.PASS
             result.meta = {"skipped": "no categories enabled" if not self.enabled else "empty text"}
+            return result
+
+        use_local = self.engine_mode in ("local", "local+judge")
+        use_judge = self.engine_mode in ("judge", "local+judge") and self.llm is not None
+
+        if use_local:
+            settled = self._local(text, action, result)
+            if settled is not None:
+                return settled
+
+        if not use_judge:
+            # Nothing semantic ran. Whatever the local layer saw, the two
+            # categories it cannot cover were never evaluated — say so rather
+            # than reporting a pass that reads as "checked and clean".
+            unevaluated = sorted(
+                c for c in self.enabled
+                if not use_local or c in toxicity_check.UNCOVERED
+            )
+            result.meta.update({
+                "layer": "local" if use_local else "none",
+                "engine_mode": self.engine_mode,
+                "judge_available": self.llm is not None,
+                "unevaluated": unevaluated,
+            })
+            result.verdict = Verdict.PASS
             return result
 
         scores = self.llm.judge(CONTENT_SYSTEM, text, CONTENT_SCHEMA)
@@ -193,12 +314,14 @@ class ContentRail:
 
         result.score = worst_score
         result.threshold = self.thresholds.get(worst_cat, 1.0) if worst_cat else 1.0
-        result.meta = {
+        result.meta.update({
+            "layer": "judge",
+            "engine_mode": self.engine_mode,
             "scores": clean,
             "thresholds": {c: round(self.thresholds.get(c, 1.0), 3) for c in self.enabled},
             "breached": breached,
             "worst_category": worst_cat,
             "rationale": str(scores.get("rationale", ""))[:200],
-        }
+        })
         result.verdict = action_verdict(action) if breached else Verdict.PASS
         return result

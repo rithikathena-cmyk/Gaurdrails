@@ -62,7 +62,12 @@ asking the assistant to become a different product.
 
 Being rude, distressed, mistaken, or badly worded does not put a question out of \
 scope. Only its subject matter does. A question is not out of scope for being one the \
-desk will answer unhelpfully — that is a retrieval problem, not a scope one.""")
+desk will answer unhelpfully — that is a retrieval problem, not a scope one.
+
+A question about this service itself is in scope: what it can do, which documents it \
+holds, how to reach a person, or why an earlier message was refused. Score those 1.0. \
+A citizen who cannot ask why they were turned away has no way to appeal it, and a \
+refusal nobody can question is not a safer service — it is an unaccountable one.""")
 
 
 class ScopeRail:

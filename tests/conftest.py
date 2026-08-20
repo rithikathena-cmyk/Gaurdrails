@@ -14,8 +14,32 @@ import pytest
 from fastapi.testclient import TestClient
 
 from guardrails import AuditLog, Engine, load
+from guardrails.rails import (
+    deberta_injection_check,
+    groundedness_check,
+    toxicity_check,
+)
 
 REPO = Path(__file__).resolve().parent.parent
+
+
+@pytest.fixture(autouse=True)
+def no_local_models(monkeypatch):
+    """Run the suite as a base install: `requirements.txt` and nothing else.
+
+    The engine defaults to `local+judge`, so without this every test that
+    touches a content, injection, or grounding rail would download and load
+    real weights — turning a 90-second hermetic suite into a slow one whose
+    results depend on a model cache. Patching the loader to None puts each rail
+    on its documented fallback path (escalate to the judge), which is what a
+    deployment that skipped `requirements-local.txt` actually does.
+
+    Tests that exercise the local layer stub `score()` directly — see
+    `test_local_rails.py`. Nothing in the suite loads a model.
+    """
+    for module in (toxicity_check, deberta_injection_check, groundedness_check):
+        monkeypatch.setattr(module, "classifier", lambda: None)
+    yield
 
 
 @pytest.fixture

@@ -24,6 +24,7 @@ from .knowledge import Corpus, Document, chunk_text, new_document_id
 from .knowledge import retrieve
 from .llm import Claude, LLMError, Refusal
 from .rails.adjudicator import Adjudicator
+from .rails import toxicity_check
 from .rails.content import CATEGORIES, ContentRail, PromptAttackRail
 from .rails.entities import EntityRail
 from .rails.scope import ScopeRail
@@ -177,6 +178,8 @@ class Engine:
             self.llm,
             threshold=float(p.get("prompt_attack.threshold")),
             use_judge=self.llm is not None,
+            engine_mode=str(p.get("prompt_attack.engine")),
+            local_block_threshold=float(p.get("prompt_attack.local_block_threshold")),
         )
         # Scope is two-layer like the injection rail: the vocabulary pass is
         # deterministic and runs with or without a key; only the semantic
@@ -195,6 +198,7 @@ class Engine:
             mask_strategy=str(p.get("pii.mask_strategy")),
             kinds=list(p.get("pii.entity_kinds") or []),
             engine_mode=str(p.get("pii.entity_engine")),
+            allowlist=list(p.get("pii.allowlist") or []),
         )
         # The adjudicator is not a rail: it reviews what the rails decided,
         # and only when one of them landed within a margin of its threshold.
@@ -214,20 +218,34 @@ class Engine:
                 relevance_threshold=float(p.get("grounding.relevance.threshold")),
                 context_window=int(p.get("grounding.context_window")),
                 require_citations=bool(p.get("grounding.require_citations")),
+                engine_mode=str(p.get("grounding.engine")),
             )
-            if self.llm is not None
+            if (self.llm is not None
+                or str(p.get("grounding.engine")) in ("local", "local+judge"))
             else None
         )
 
     def _content_rail(self, surface: str) -> ContentRail | None:
-        if self.llm is None:
-            return None
         p = self.policy
+        mode = str(p.get("content.engine"))
+        if mode == "off":
+            return None
+        # The rail used to exist only when a key did. It now runs whenever
+        # *either* layer can: with a local classifier and no key the four
+        # categories it covers are still checked, which is the difference
+        # between an unkeyed deployment being unguarded and being partly
+        # guarded. What it cannot cover is reported as unevaluated, not passed.
+        has_judge = self.llm is not None and mode in ("judge", "local+judge")
+        has_local = mode in ("local", "local+judge") and toxicity_check.available()
+        if not (has_judge or has_local):
+            return None
         thresholds = {
             c: p.threshold(f"content.{c}.threshold", "content", surface) for c in CATEGORIES
         }
         return ContentRail(
-            self.llm, thresholds, list(p.get("content.enabled_categories") or CATEGORIES)
+            self.llm, thresholds, list(p.get("content.enabled_categories") or CATEGORIES),
+            engine_mode=mode,
+            local_block_threshold=float(p.get("content.local_block_threshold")),
         )
 
     # -----------------------------------------------------------------
@@ -273,8 +291,15 @@ class Engine:
             return []
 
     def evaluate(self, text: str, surface: Surface, tracer: Tracer,
-                 stage_name: str, subtitle: str = "") -> EvaluationResult:
-        """Run every rail configured for one surface, concurrently."""
+                 stage_name: str, subtitle: str = "",
+                 owner: str = "") -> EvaluationResult:
+        """Run every rail configured for one surface, concurrently.
+
+        `owner` is the authenticated principal any vault token minted on this
+        surface belongs to. It is threaded in rather than read from the tracer
+        because masking authorization must not depend on an observability
+        object — a trace can be swapped or omitted; the owner cannot.
+        """
         p = self.policy
         s = surface.value
         began = time.perf_counter()
@@ -293,7 +318,7 @@ class Engine:
                 action = str(p.get(PII_ACTION_KEY[surface]))
                 jobs.append((
                     self.pii_rail.name, self.pii_rail.engine,
-                    lambda r, t, a=action: self.pii_rail.evaluate(t, a, r),
+                    lambda r, t, a=action: self.pii_rail.evaluate(t, a, r, owner),
                 ))
 
             if p.enabled("scope", s) and self.scope_rail and surface in SCOPE_SURFACES:
@@ -308,7 +333,7 @@ class Engine:
                 jobs.append((
                     self.entity_rail.name, self.entity_rail.engine,
                     lambda r, t, a=action: self.entity_rail.evaluate(
-                        t, a, r, prior=self._pii_spans(t)),
+                        t, a, r, prior=self._pii_spans(t), owner=owner),
                 ))
 
             if p.enabled("policy", s) and self.policy_rail:
@@ -524,15 +549,23 @@ class Engine:
 
     # -----------------------------------------------------------------
     def converse(self, question: str, history: list[dict[str, Any]] | None = None,
-                 session_id: str = "", *, model: str | None = None) -> ConversationResult:
+                 session_id: str = "", *, model: str | None = None,
+                 principal: str = "") -> ConversationResult:
         """Run a request and apply the human-review trigger.
 
         `_converse` has several early returns — a blocked prompt, a model
         refusal, an exhausted regeneration budget. Deciding review here rather
         than at each of those sites means a new return path cannot forget to
         consult the trigger.
+
+        `principal` owns any vault token this request mints, and is the only
+        identity permitted to unmask them at egress. Callers with a real
+        identity (the server, from the session cookie) must pass it; the CLI and
+        library callers leave it empty, which is its own single-tenant owner
+        rather than a wildcard.
         """
-        result = self._converse(question, history, session_id, model=model)
+        result = self._converse(question, history, session_id, model=model,
+                                principal=principal)
         result.human_review, result.review_reason = self._review(
             result.trace, result.trace.verdict
         )
@@ -543,7 +576,8 @@ class Engine:
         return result
 
     def _converse(self, question: str, history: list[dict[str, Any]] | None = None,
-                  session_id: str = "", *, model: str | None = None) -> ConversationResult:
+                  session_id: str = "", *, model: str | None = None,
+                  principal: str = "") -> ConversationResult:
         p = self.policy
         tracer = Tracer(session_id=session_id)
         history = history or []
@@ -553,10 +587,12 @@ class Engine:
         with tracer.stage("Ingress", "bind session, open vault", kind="rail"):
             with tracer.rail("session.bind", "in-process") as r:
                 r.verdict = Verdict.PASS
-                r.meta = {"session": session_id or "anonymous", "policy": p.source}
+                r.meta = {"session": session_id or "anonymous", "policy": p.source,
+                          "principal": principal or "(none)"}
             with tracer.rail("vault.open", "aes-256-gcm") as r:
                 r.verdict = Verdict.PASS
-                r.meta = {"encrypted": self.vault.encrypted}
+                r.meta = {"encrypted": self.vault.encrypted,
+                          "owner": principal or "(none)"}
 
         # --- normalize (never optional) --------------------------------
         with tracer.stage("Normalize", "NFKC · homoglyph fold", kind="rail"):
@@ -569,7 +605,8 @@ class Engine:
         question_n = normalized
 
         # --- prompt rails ---------------------------------------------
-        ingress = self.evaluate(question_n, Surface.USER_PROMPT, tracer, "Prompt rails")
+        ingress = self.evaluate(question_n, Surface.USER_PROMPT, tracer, "Prompt rails",
+                                owner=principal)
         all_detections += [
             {"stage": "prompt", "rail": r.rail, **d.redacted()}
             for r in ingress.results for d in r.detections
@@ -641,7 +678,7 @@ class Engine:
         if chunks and p.enabled("pii", "retrieval"):
             joined = "\n\n".join(chunks)
             rag = self.evaluate(joined, Surface.RETRIEVAL, tracer, "Retrieval rails",
-                                "scanning retrieved context")
+                                "scanning retrieved context", owner=principal)
             if rag.blocked:
                 chunks = []
                 tracer.note("retrieved context blocked — proceeding without it")
@@ -708,7 +745,8 @@ class Engine:
                         )
 
             egress = self.evaluate(reply, Surface.LLM_RESPONSE, tracer,
-                                   f"Output rails{'' if attempt == 1 else f' · attempt {attempt}'}")
+                                   f"Output rails{'' if attempt == 1 else f' · attempt {attempt}'}",
+                                   owner=principal)
             all_detections += [
                 {"stage": f"output.{attempt}", "rail": r.rail, **d.redacted()}
                 for r in egress.results for d in r.detections
@@ -773,17 +811,36 @@ class Engine:
 
                     def _reveal(m):
                         nonlocal revealed
-                        val = self.vault.reveal(m.group(2))
+                        # Scoped to the principal that minted the token. A token
+                        # this caller does not own stays masked rather than
+                        # raising — the reply is still deliverable, it simply
+                        # does not carry someone else's value.
+                        val = self.vault.reveal(m.group(2), principal)
                         if val is None:
                             return m.group(0)
                         revealed += 1
                         return val
 
                     reply = _re.sub(r"<([A-Z_0-9]+):([0-9a-f]{12})(?:\s…[^>]*)?>", _reveal, reply)
+                denials = self.vault.take_denials()
                 r.verdict = Verdict.PASS
                 r.score = float(revealed)
                 r.unit = "count"
-                r.meta = {"tokens_revealed": revealed, "reversible": bool(p.get("pii.reversible"))}
+                r.meta = {
+                    "tokens_revealed": revealed,
+                    "reversible": bool(p.get("pii.reversible")),
+                    "principal": principal or "(none)",
+                }
+                # A refused unmask is a security event: it means a token reached
+                # a caller that does not own it. Surfaced here so it lands in the
+                # trace and therefore in the hash-chained audit log.
+                if denials:
+                    r.meta["unmask_denied"] = len(denials)
+                    r.meta["denial_reasons"] = sorted({d["reason"] for d in denials})
+                    tracer.note(
+                        f"{len(denials)} vault token(s) refused to '{principal or '(none)'}' — "
+                        + ", ".join(sorted({d["reason"] for d in denials}))
+                    )
 
             with tracer.rail("audit.write", "append-only, hash-chained") as r:
                 r.verdict = Verdict.PASS

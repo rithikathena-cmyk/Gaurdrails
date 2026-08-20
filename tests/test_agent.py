@@ -78,7 +78,7 @@ def test_a_tool_that_is_not_enabled_cannot_be_called(tmp_path):
         [("tool", "file_grievance", {"subject": "x", "details": "y"}), ("answer", "done")],
         tmp_path, **{"agent.tools_enabled": ["search_documents"]},
     )
-    result = runner.run("file something for me")
+    result = runner.run("file a grievance about my licence application")
     assert result.calls[0].verdict == "block"
     assert "not enabled" in result.calls[0].blocked_reason
 
@@ -124,7 +124,7 @@ def test_a_clean_tool_result_reaches_the_model(tmp_path):
 def test_a_tool_resolves_a_token_the_model_never_saw(tmp_path):
     """The whole point of `unmask_args`: entitlement belongs to the tool."""
     runner, engine, _ = build([("answer", "…")], tmp_path)
-    token = engine.vault.store("CUSTOM_1", "CLM-40028871")
+    token = engine.vault.store("CUSTOM_1", "CLM-40028871", "")
     ctx = ToolContext(engine=engine)
     out = TOOLS["check_claim_status"].run(
         {"reference": ctx.unmask(f"<CUSTOM_1:{token}>")}, ctx
@@ -214,7 +214,7 @@ def test_the_write_tool_resolves_the_claim_reference_it_files_against(tmp_path):
          ("answer", "done")],
         tmp_path,
     )
-    token = engine.vault.store("CUSTOM_1", "CLM-40028871")
+    token = engine.vault.store("CUSTOM_1", "CLM-40028871", "")
     paused = runner.run("file a grievance")
     paused.args = paused.approval.args
     paused.approval.args["claim_reference"] = f"<CUSTOM_1:{token}>"
@@ -226,7 +226,7 @@ def test_the_write_tool_resolves_the_claim_reference_it_files_against(tmp_path):
 def test_the_step_budget_ends_the_loop(tmp_path):
     script = [("tool", "lookup_fee", {"service": "birth_certificate"})] * 10
     runner, _, _ = build(script, tmp_path, **{"agent.max_steps": 3})
-    result = runner.run("loop forever")
+    result = runner.run("what does a birth certificate copy cost")
     assert result.steps <= 4
     assert any("step budget" in n for s in result.trace.stages for n in s.notes)
 

@@ -9,6 +9,8 @@ venv/
 audit.log
 config-changes.log
 eval/report.json
+eval/comparison.json
+eval/judge-model-comparison.json
 
 # NOT ignored, on purpose:
 #   config/overrides.yaml — the diff between your baseline and what is running.

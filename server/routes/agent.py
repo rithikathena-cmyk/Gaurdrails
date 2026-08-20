@@ -143,7 +143,8 @@ def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[st
     check_budget(user)
     try:
         result = runner.run(
-            req.message, history=state.history(req.session_id), session_id=req.session_id
+            req.message, history=state.history(req.session_id, user.name),
+            session_id=req.session_id, principal=user.name,
         )
     except LLMError as exc:
         raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
@@ -151,7 +152,7 @@ def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[st
     # A paused turn is not a finished turn: nothing goes into history until the
     # agent has actually answered.
     if not result.blocked and result.approval is None:
-        state.remember(req.session_id, req.message, result.reply)
+        state.remember(req.session_id, req.message, result.reply, user.name)
     body = _payload(result)
     calls = usage_in(body.get("trace") or {})
     directory.spend(user.name, calls)
@@ -162,7 +163,7 @@ def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[st
 @router.post("/agent/approve")
 def approve(req: ApprovalRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     runner = _runner()
-    pending = state.claim(req.token)
+    pending = state.claim(req.token, user.name)
     if pending is None:
         raise HTTPException(404, detail={
             "kind": "approval",
@@ -170,12 +171,13 @@ def approve(req: ApprovalRequest, user: User = Depends(current_user)) -> dict[st
                        "you will get a fresh one.",
         })
     try:
-        result = runner.resume(pending, req.approved, session_id=req.session_id)
+        result = runner.resume(pending, req.approved, session_id=req.session_id,
+                               principal=user.name)
     except LLMError as exc:
         raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
 
     if not result.blocked and result.approval is None:
-        state.remember(req.session_id, pending.question, result.reply)
+        state.remember(req.session_id, pending.question, result.reply, user.name)
     body = _payload(result)
     body["approved"] = req.approved
     body["resumed_from"] = pending.origin_request_id

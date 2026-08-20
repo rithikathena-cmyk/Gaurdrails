@@ -1,0 +1,57 @@
+# Local model rails — optional.
+#
+#   pip install -r requirements.txt          the stack runs: every deterministic
+#                                            rail, Presidio NER, and the judges
+#   pip install -r requirements-local.txt    adds the local classifier layer
+#
+# Nothing here is imported at startup. Each rail loads its model on first use
+# and reports `available: false` in the trace until then, the same way
+# `presidio_ner.py` already does. A deployment that skips this file gets the
+# behaviour it has today — patterns, then a judge — not a silently weaker one.
+#
+# What a missing model does is decided by policy, never by the import failing:
+# the configured judge takes over where one is available, and the rail fails
+# closed where one is not. `*.engine: local` with nothing installed is a
+# startup error rather than a rail that quietly passes everything.
+
+torch>=2.4.0
+transformers>=4.44.0
+
+# ── the models ─────────────────────────────────────────────────────
+# Downloaded from the Hub on first use, into HF_HOME. Sizes are the fp32
+# weights; see the ONNX note below for roughly a quarter of that.
+#
+#   unitary/toxic-bert                                    ~420MB  content.engine
+#   protectai/deberta-v3-base-prompt-injection-v2         ~740MB  prompt_attack.engine
+#   cross-encoder/nli-deberta-v3-base                     ~440MB  grounding.engine
+#
+# `content.engine` covers four of the six configured categories. `misconduct`
+# has no counterpart in the Jigsaw taxonomy toxic-bert is trained on, and its
+# `self_harm` coverage is too weak to carry a category whose threshold is the
+# lowest of the six on purpose. Both keep judge coverage regardless of this
+# setting — see `content.local_short_circuit_scope`, locked as a safety
+# invariant.
+#
+# Pre-fetch them in a build step rather than paying for the download on the
+# first request that needs one:
+#
+#   python -c "from transformers import pipeline; pipeline('text-classification', 'unitary/toxic-bert')"
+
+# ── smaller: ONNX Runtime instead of torch ─────────────────────────
+# torch is ~2.5GB of wheels before a single weight file. All three models above
+# export to ONNX and run 2–3x faster on CPU at int8, for roughly 450MB total
+# instead of ~4GB. Swap the two pins above for:
+#
+#   onnxruntime>=1.20.0
+#   optimum[onnxruntime]>=1.24.0
+#
+# Quantisation shifts scores by a few points, so export at fp32 and baseline
+# against the evaluation suite before quantising — then re-baseline. Do not
+# quantise and re-tune thresholds in the same change; you will not know which
+# one moved the numbers.
+
+# ── threading ──────────────────────────────────────────────────────
+# Rails inside a stage already run concurrently on a thread pool. Both runtimes
+# default to grabbing every core, so N rails x M threads oversubscribes and each
+# rail gets slower. The rails set single-threaded sessions and let the existing
+# per-rail concurrency do the parallelism.

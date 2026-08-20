@@ -238,6 +238,41 @@ PARAMS: list[Param] = [
        "Which hazard categories to evaluate at all.",
        "set", ["hate", "violence", "insults", "misconduct", "self_harm", "sexual"]),
 
+    _a("content.engine", "content",
+       "What scores content safety. The local classifier is a few milliseconds of CPU "
+       "and no API call; the judge is slower but reads intent. Together, the local "
+       "layer settles the confident cases and the judge is asked about the rest.",
+       "enum", "local+judge",
+       options=["local+judge", "local", "judge", "off"]),
+    _a("content.local_block_threshold", "content",
+       "How sure the local classifier must be before it blocks without asking the "
+       "judge. High on purpose: a short-circuit skips the layer that reads intent, so "
+       "it should only fire where the classifier is not in any doubt.",
+       "float", 0.90, minimum=0.5, maximum=1, step=0.01),
+    _a("prompt_attack.engine", "content",
+       "What detects injection, after the deterministic pattern layer. Patterns run "
+       "first either way — this chooses what happens when they find nothing. "
+       "Defaults to `judge`: the local classifier was measured scoring a legitimate "
+       "question at 0.991 and a real attack at 1.000, so no threshold separates them.",
+       "enum", "judge",
+       options=["local+judge", "local", "judge", "off"]),
+    _a("prompt_attack.local_block_threshold", "content",
+       "How sure the local injection classifier must be before it blocks without the "
+       "judge. Kept high because this model reports injection on text that merely "
+       "discusses prompts — including a citizen asking why they were refused.",
+       "float", 0.90, minimum=0.5, maximum=1, step=0.01),
+
+    _l("content.local_short_circuit_scope", "content",
+       "Which categories a local classifier may settle on its own.",
+       "const", Lock.SAFETY,
+       "block-direction only; never for misconduct or self_harm",
+       "A local classifier may end a request early only by blocking it. It can never "
+       "return a clean verdict that skips the judge, because 'this model saw nothing' "
+       "and 'there is nothing here' are different claims. Two categories are excluded "
+       "even from blocking: the Jigsaw-family taxonomy these models are trained on has "
+       "no label for misconduct at all, and its self_harm coverage is too weak to carry "
+       "a category whose threshold is deliberately the lowest of the six because a miss "
+       "costs more than a false positive. Both keep semantic judge coverage."),
     _l("content.hazard_taxonomy", "content",
        "The category set the judge is allowed to emit.",
        "enum[6]", Lock.MODEL,
@@ -411,6 +446,12 @@ PARAMS: list[Param] = [
     _a("grounding.max_regenerations", "grounding",
        "Retries before escalating. Each one costs a full model call.",
        "int", 2, minimum=0, maximum=3, step=1),
+    _a("grounding.engine", "grounding",
+       "What scores factual consistency. A local NLI model can check a claim against "
+       "the retrieved chunks without an API call, but it scores entailment only — "
+       "relevance and the verbatim unsupported-claim list still need the judge.",
+       "enum", "local+judge",
+       options=["local+judge", "local", "judge", "off"]),
     _a("grounding.require_citations", "grounding",
        "Reject responses that assert without pointing at a source.", "bool", False),
 

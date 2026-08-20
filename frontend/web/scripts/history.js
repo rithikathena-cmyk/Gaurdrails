@@ -79,10 +79,17 @@ function renderList() {
 /* ── transcript ── */
 function renderTurns(payload) {
   const head = $("#h-detail-head");
+  // Title the transcript with what was actually asked. `session_id` is a
+  // machine handle the browser minted (`web-64uvm9`) — it identifies the
+  // conversation to the server but tells a reader nothing about which one this
+  // is, and the list already titles every entry this way. Kept as metadata
+  // because support requests still start from it.
+  const opened = (payload.turns[0] && payload.turns[0].question) || payload.session_id;
   head.innerHTML = `
-    <b>${esc(payload.session_id)}</b>
+    <b title="${esc(opened)}">${esc(opened)}</b>
     <span>${payload.turns.length} turn${payload.turns.length === 1 ? "" : "s"} ·
-      ${esc(payload.whose.display)}</span>`;
+      ${esc(payload.whose.display)} ·
+      <code>${esc(payload.session_id)}</code></span>`;
 
   $("#h-turnlist").innerHTML = payload.turns.map((t) => `
     <article class="h-turn${t.blocked ? " refused" : ""}">

@@ -20,6 +20,7 @@ from __future__ import annotations
 import re
 
 from ..prompts import judge_prompt
+from . import groundedness_check
 from ..types import Detection, RailResult, Verdict
 
 GROUNDING_SCHEMA = {
@@ -86,12 +87,15 @@ class GroundingRail:
     engine = "claude judge · sentence-level claims"
 
     def __init__(self, llm, consistency_threshold: float, relevance_threshold: float,
-                 context_window: int, require_citations: bool = False) -> None:
+                 context_window: int, require_citations: bool = False,
+                 engine_mode: str = "judge") -> None:
         self.llm = llm
         self.consistency_threshold = consistency_threshold
         self.relevance_threshold = relevance_threshold
         self.context_window = context_window
         self.require_citations = require_citations
+        #: local+judge | local | judge | off
+        self.engine_mode = engine_mode
 
     def evaluate(self, question: str, answer: str, chunks: list[str],
                  action: str, result: RailResult) -> RailResult:
@@ -108,6 +112,72 @@ class GroundingRail:
         used = chunks[: self.context_window]
         context = "\n\n".join(f"[chunk {i + 1}] {c}" for i, c in enumerate(used))
 
+        use_local = self.engine_mode in ("local", "local+judge")
+        use_judge = self.engine_mode in ("judge", "local+judge") and self.llm is not None
+
+        # --- the local layer ------------------------------------------
+        # NLI scores entailment, which is the consistency half only. It can
+        # settle a confidently-grounded answer without a judge call; it cannot
+        # score relevance, and it cannot produce the verbatim unsupported-claim
+        # list that regeneration is built from. So it short-circuits in one
+        # direction — every claim entailed — and defers everything else.
+        local = groundedness_check.consistency(answer, used) if use_local else None
+        if local is not None:
+            result.meta["local_consistency"] = round(local["consistency"], 3)
+            result.meta["local_claims"] = local["claims"]
+            if (use_judge and not self.require_citations
+                    and local["consistency"] >= 0.999 and not local["unsupported"]):
+                result.score = local["consistency"]
+                result.meta.update({
+                    "layer": "local",
+                    "engine_mode": self.engine_mode,
+                    "consistency": round(local["consistency"], 3),
+                    "relevance": None,
+                    "relevance_scored": False,
+                    "chunks_considered": len(used),
+                    "judge_skipped": True,
+                })
+                result.verdict = Verdict.PASS
+                return result
+
+        if not use_judge:
+            # No semantic layer available. An answer nobody scored is not a
+            # grounded answer: follow the local reading where there is one, and
+            # fail closed where there is not.
+            if local is None:
+                result.score = 0.0
+                result.meta.update({
+                    "layer": "none",
+                    "engine_mode": self.engine_mode,
+                    "judge_available": self.llm is not None,
+                    "error": "no grounding layer available",
+                })
+                result.verdict = Verdict.FLAG if action == "flag" else Verdict.BLOCK
+                return result
+            result.score = local["consistency"]
+            result.meta.update({
+                "layer": "local",
+                "engine_mode": self.engine_mode,
+                "consistency": round(local["consistency"], 3),
+                "relevance": None,
+                "relevance_scored": False,
+                "chunks_considered": len(used),
+                "judge_available": False,
+            })
+            for claim in local["unsupported"]:
+                result.detections.append(
+                    Detection(kind="unsupported_claim", value=claim, start=0, end=0,
+                              confidence=1.0 - local["consistency"],
+                              note="not entailed by retrieved context")
+                )
+            failed = local["consistency"] < self.consistency_threshold
+            result.verdict = (
+                Verdict.PASS if not failed
+                else Verdict.FLAG if action == "flag"
+                else Verdict.BLOCK
+            )
+            return result
+
         payload = (
             f"QUESTION:\n{question}\n\n"
             f"CONTEXT ({len(used)} chunks):\n{context}\n\n"
@@ -120,7 +190,9 @@ class GroundingRail:
         unsupported = [str(s) for s in (verdict.get("unsupported_claims") or [])][:10]
 
         result.score = consistency
-        result.meta = {
+        result.meta.update({
+            "layer": "judge",
+            "engine_mode": self.engine_mode,
             "consistency": round(consistency, 3),
             "relevance": round(relevance, 3),
             "consistency_threshold": round(self.consistency_threshold, 3),
@@ -130,7 +202,7 @@ class GroundingRail:
             "lexical_overlap": round(_lexical_overlap(answer, context), 3),
             "rationale": str(verdict.get("rationale", ""))[:200],
             "sentences": len(_SENTENCE.split(answer.strip())) if answer.strip() else 0,
-        }
+        })
         for claim in unsupported:
             result.detections.append(
                 Detection(kind="unsupported_claim", value=claim, start=0, end=0,

@@ -93,18 +93,19 @@ def test_flag_action_does_not_rewrite():
 # ── vault ──────────────────────────────────────────────────────────
 def test_vault_round_trip():
     v = Vault()
-    token = v.store("US_SSN", "796-33-9021")
-    assert v.reveal(token) == "796-33-9021"
+    token = v.store("US_SSN", "796-33-9021", "alice")
+    assert v.reveal(token, "alice") == "796-33-9021"
 
 
 def test_vault_rejects_unknown_token():
-    assert Vault().reveal("deadbeefcafe") is None
+    assert Vault().reveal("deadbeefcafe", "alice") is None
 
 
 def test_tokens_are_never_deterministic():
     """Locked: a stable token is a stable identifier across requests."""
     v = Vault()
-    assert v.store("US_SSN", "796-33-9021") != v.store("US_SSN", "796-33-9021")
+    assert (v.store("US_SSN", "796-33-9021", "alice")
+            != v.store("US_SSN", "796-33-9021", "alice"))
 
 
 def test_vault_is_encrypted_when_cryptography_is_available():

@@ -153,8 +153,6 @@ function addAssistant(data) {
   }
   chips.push(`<span class="chip mute">${Math.round(t.total_ms)}ms · ${Math.round(t.guardrail_ms)}ms rails</span>`);
 
-  if (data.steps) chips.push(`<span class="chip mute">${data.steps} steps</span>`);
-
   const node = document.createElement("div");
   node.className = "turn assistant";
   node.innerHTML = `
@@ -162,7 +160,6 @@ function addAssistant(data) {
       <span class="who">${data.calls || data.approval ? "agent" : "assistant"}</span>${chips.join("")}
     </div>
     ${violations(data)}
-    ${toolCalls(data)}
     ${approvalCard(data)}
     ${data.reply
       ? `<div class="body md${data.blocked ? " refused" : ""}">${renderMarkdown(data.reply)}</div>`
@@ -177,30 +174,12 @@ function addAssistant(data) {
   scroll();
 }
 
-/** Every tool call, with the verdict on its arguments and on its result. Two
-    separate numbers because they are two separate surfaces. */
-function toolCalls(data) {
-  const calls = data.calls || [];
-  if (!calls.length) return "";
-  return `<div class="tools">${calls.map((c, i) => `
-    <div class="tool ${c.verdict}">
-      <span class="tool-n">${i + 1}</span>
-      <div class="tool-main">
-        <div class="tool-name">
-          <b>${esc(c.name)}</b>
-          <span class="chip ${c.kind === "write" ? "flag" : "mute"}">${esc(c.kind)}</span>
-          ${c.approved === true ? `<span class="chip pass">approved</span>` : ""}
-          ${c.approved === false ? `<span class="chip block">declined</span>` : ""}
-        </div>
-        <code>${esc(c.args_preview)}</code>
-        ${c.blocked_reason ? `<div class="tool-why">${esc(c.blocked_reason)}</div>` : ""}
-      </div>
-      <div class="tool-verdicts">
-        <span class="chip ${c.args_verdict}">args ${c.args_verdict}</span>
-        <span class="chip ${c.result_verdict}">data ${c.result_verdict}</span>
-      </div>
-    </div>`).join("")}</div>`;
-}
+// The per-tool-call block that used to render here — name, arguments, and the
+// `args`/`data` verdicts — has been removed from the chat turn. It is working
+// detail, not an answer, and on a two-step run it pushed the reply below the
+// fold. Nothing is lost: every tool call, both surface verdicts, and the
+// arguments are still in the trace behind "View trace", and anything a rail
+// actually acted on still appears above the reply via `violations()`.
 
 /** A write tool is waiting on a person. Say what will happen, in words. */
 function approvalCard(data) {

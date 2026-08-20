@@ -58,6 +58,12 @@ class RailCase:
     surface: str = "user.prompt"
     kinds: list[str] = field(default_factory=list)
     note: str = ""
+    #: Only a judge (or a local model) can catch this one. Without either, the
+    #: case is skipped rather than counted as a miss — a deterministic run that
+    #: reported a false negative for a semantic case would make the
+    #: no-API-key regression gate impossible to keep green, and a gate nobody
+    #: can keep green is a gate that gets deleted.
+    needs_model: bool = False
 
 
 @dataclass
@@ -237,11 +243,23 @@ def run_rails(suite: Suite, engine: Engine) -> Section:
     fp = fn = exact = 0
     positives = negatives = 0
     kind_hits = kind_total = 0
+    skipped = 0
+
+    # A semantic case needs something that can read meaning. Either layer will
+    # do; with neither, the case is not evidence about this run.
+    from ..rails import toxicity_check
+    semantic_available = engine.llm is not None or toxicity_check.classifier() is not None
 
     for case in suite.rails:
         surface = SURFACES.get(case.surface)
         if surface is None:
             section.rows.append(Row(case.id, False, f"unknown surface {case.surface}"))
+            continue
+
+        if case.needs_model and not semantic_available:
+            skipped += 1
+            section.rows.append(Row(case.id, True, "skipped",
+                                    "needs a judge or a local model"))
             continue
 
         tracer = Tracer(session_id="eval")
@@ -280,6 +298,10 @@ def run_rails(suite: Suite, engine: Engine) -> Section:
 
     section.metrics = {
         "cases": len(suite.rails),
+        "scored": len(suite.rails) - skipped,
+        # Named rather than silently folded in: a rate computed over fewer
+        # cases than the suite contains should say so.
+        "skipped_needs_model": skipped,
         "should_fire": positives,
         "should_stay_quiet": negatives,
         "false_positive_rate": round(fp / negatives, 3) if negatives else None,

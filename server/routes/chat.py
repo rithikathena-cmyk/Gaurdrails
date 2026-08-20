@@ -111,15 +111,16 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> dict[str, Any]
     check_budget(user)
     try:
         result = engine.converse(
-            req.message, history=state.history(req.session_id),
+            req.message, history=state.history(req.session_id, user.name),
             session_id=req.session_id, model=user.model or None,
+            principal=user.name,
         )
     except LLMError as exc:
         raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
 
     # A blocked prompt must not become context for the next turn.
     if not result.blocked:
-        state.remember(req.session_id, req.message, result.reply)
+        state.remember(req.session_id, req.message, result.reply, user.name)
 
     trace = result.trace.to_dict()
     state.record(trace)
@@ -166,6 +167,7 @@ def trace_detail(request_id: str) -> dict[str, Any]:
 
 
 @router.post("/session/reset")
-def reset(session_id: str = "default") -> dict[str, Any]:
-    state.forget(session_id)
+def reset(session_id: str = "default",
+          user: User = Depends(current_user)) -> dict[str, Any]:
+    state.forget(session_id, user.name)
     return {"ok": True}

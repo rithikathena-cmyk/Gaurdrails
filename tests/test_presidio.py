@@ -82,8 +82,61 @@ def test_the_rail_masks_a_name_with_no_judge_configured(engine_ready):
     assert out.meta["layer"] == "presidio"
 
 
-def test_the_judge_is_not_asked_when_local_ner_answers(engine_ready):
-    """A judge that is never called is the whole saving."""
+def test_the_judge_reviews_what_local_ner_proposes(engine_ready):
+    """`presidio+judge` means Presidio proposes and the judge decides.
+
+    This test used to assert the opposite — that a Presidio hit skipped the
+    judge entirely, on the grounds that a judge never called is the whole
+    saving. That saving was real and the cost was invisible: Presidio's hit was
+    never reviewed, and Presidio hits things that are not people. On this
+    service's own reply it read "Birth", in "Birth and death records", as a
+    person at 0.85 and masked it. Nobody noticed because egress unmasks for the
+    token's owner; another reader would have got "<PERSON:…> and death records".
+
+    A judge call is skipped only where nothing was proposed to review — the
+    structural gate still ends most requests before either layer runs.
+    """
+    class Rejecting:
+        model = "stub"
+        calls = 0
+
+        def judge(self, *a, **kw):
+            type(self).calls += 1
+            return {"entities": []}          # corroborates nothing
+
+    rail = EntityRail(Rejecting(), Vault(), 0.6, "vault-token",
+                      engine_mode="presidio+judge")
+    out = rail.evaluate(SENTENCE, "mask", blank())
+
+    assert Rejecting.calls == 1
+    assert out.meta["presidio_proposed"] >= 1
+    assert out.meta["presidio_corroborated"] == 0
+    assert out.meta["presidio_rejected"] == out.meta["presidio_proposed"]
+    assert out.verdict is Verdict.PASS       # an unreviewed guess masks nothing
+
+
+def test_a_corroborated_proposal_is_still_masked(engine_ready):
+    """Rejecting the false positives must not cost us the true ones."""
+    class Agreeing:
+        model = "stub"
+
+        def judge(self, *a, **kw):
+            return {"entities": [
+                {"text": "Anitha Selvam", "kind": "PERSON", "confidence": 0.95}]}
+
+    rail = EntityRail(Agreeing(), Vault(), 0.6, "vault-token",
+                      engine_mode="presidio+judge")
+    out = rail.evaluate(SENTENCE, "mask", blank())
+    assert out.verdict is Verdict.MASK
+    assert "Anitha Selvam" not in out.text_out
+
+
+def test_presidio_alone_still_skips_the_judge(engine_ready):
+    """`presidio` mode is the setting for a deployment that wants no API call.
+
+    It keeps the old behaviour deliberately: the local layer decides on its own,
+    false positives included. The trade is named in the enum rather than hidden.
+    """
     class Counting:
         model = "stub"
         calls = 0
@@ -92,10 +145,31 @@ def test_the_judge_is_not_asked_when_local_ner_answers(engine_ready):
             type(self).calls += 1
             return {"entities": []}
 
-    rail = EntityRail(Counting(), Vault(), 0.6, "vault-token",
-                      engine_mode="presidio+judge")
-    rail.evaluate(SENTENCE, "mask", blank())
+    rail = EntityRail(Counting(), Vault(), 0.6, "vault-token", engine_mode="presidio")
+    out = rail.evaluate(SENTENCE, "mask", blank())
     assert Counting.calls == 0
+    assert out.verdict is Verdict.MASK
+
+
+def test_a_published_contact_is_exempt_from_ner_too(engine_ready):
+    """`pii.allowlist` used to hold against the regex rail only.
+
+    A department address the operator deliberately published could still be
+    masked here, by a different rail, on the same text — which is how "who do I
+    write to" stops being answerable.
+    """
+    text = "Birth and death records: records@municipal.gov.in (Registrar)"
+    allow = [r"[a-z0-9._%+-]+@[a-z0-9.-]*municipal\.gov\.in"]
+
+    unguarded = EntityRail(None, Vault(), 0.6, "vault-token",
+                           engine_mode="presidio").evaluate(text, "mask", blank())
+    guarded = EntityRail(None, Vault(), 0.6, "vault-token", engine_mode="presidio",
+                         allowlist=allow).evaluate(text, "mask", blank())
+
+    assert "records@municipal.gov.in" in (guarded.text_out or text)
+    assert guarded.meta["allowlisted"] >= 1
+    # The exemption is applied after detection, so the finding is still recorded.
+    assert unguarded.meta["allowlisted"] == 0
 
 
 def test_the_judge_still_covers_what_ner_misses(engine_ready):

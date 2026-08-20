@@ -158,11 +158,45 @@ def cmd_eval(path: str, suite_path: str, answers: bool, json_out: str) -> int:
     return 1 if report.failures else 0
 
 
+def cmd_compare(path: str, suite_path: str) -> int:
+    """Measure the local layer against the judge on the same labelled cases.
+
+    Exits non-zero on a regression, so this can gate a change rather than
+    merely describe one.
+    """
+    from guardrails import AuditLog, Claude, LLMError, load
+    from guardrails.evaluation import compare
+    from guardrails.evaluation.suite import load_suite
+
+    suite = load_suite(suite_path)
+    policy = load(path)
+    llm = None
+    if os.getenv("ANTHROPIC_API_KEY"):
+        try:
+            llm = Claude(judge_model=str(policy.get("content.judge_model")))
+        except LLMError as exc:
+            print(f"  {exc}\n", file=sys.stderr)
+
+    print(f"\n  {suite.source} · {len(suite.rails)} rail cases · both arms\n")
+    result = compare.run(suite, path, llm=llm, audit=AuditLog("audit.log"))
+    print(compare.render(result))
+
+    # Written out because this run costs real judge calls: the next question
+    # about the numbers should be answerable without paying for them twice.
+    out = Path("eval/comparison.json")
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(result.to_dict(), indent=2), encoding="utf-8")
+    print(f"  written to {out}\n")
+    return 1 if result.regressions else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Guardrail Console")
     ap.add_argument("--config", default=os.getenv("GUARDRAIL_CONFIG", "config/policy.yaml"))
     ap.add_argument("--check", action="store_true", help="validate config and exit")
     ap.add_argument("--ask", metavar="TEXT", help="run one request through the stack")
+    ap.add_argument("--compare", action="store_true",
+                    help="judge-only vs local+judge over the evaluation suite")
     ap.add_argument("--eval", action="store_true", help="score against a labelled suite")
     ap.add_argument("--suite", default="eval/suite.yaml", help="the suite to score against")
     ap.add_argument("--answers", action="store_true",
@@ -179,6 +213,8 @@ def main() -> int:
         return cmd_check(args.config)
     if args.ask:
         return cmd_ask(args.config, args.ask)
+    if args.compare:
+        return cmd_compare(args.config, args.suite)
     if args.eval:
         return cmd_eval(args.config, args.suite, args.answers, args.json)
 

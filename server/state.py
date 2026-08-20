@@ -99,17 +99,31 @@ class AppState:
             pass
 
     # -----------------------------------------------------------------
-    def history(self, session_id: str) -> list[dict[str, Any]]:
-        return self.sessions.setdefault(session_id, [])
+    @staticmethod
+    def _key(session_id: str, owner: str) -> str:
+        """Namespace a conversation by its owner.
 
-    def remember(self, session_id: str, user: str, assistant: str) -> None:
-        h = self.history(session_id)
+        `session_id` arrives in the request body and is entirely client-chosen,
+        so on its own it is a claim, not an identity: naming someone else's
+        session would hand back their history. The stored reply is the
+        post-egress text, which for its owner has already been unmasked — so an
+        unnamespaced key leaks raw PII regardless of how well the vault is
+        scoped. NUL cannot appear in either part, so the join is unambiguous.
+        """
+        return f"{owner}\x00{session_id}"
+
+    def history(self, session_id: str, owner: str = "") -> list[dict[str, Any]]:
+        return self.sessions.setdefault(self._key(session_id, owner), [])
+
+    def remember(self, session_id: str, user: str, assistant: str,
+                 owner: str = "") -> None:
+        h = self.history(session_id, owner)
         h.append({"role": "user", "content": user})
         h.append({"role": "assistant", "content": assistant})
         del h[:-MAX_HISTORY_TURNS]
 
-    def forget(self, session_id: str) -> None:
-        self.sessions.pop(session_id, None)
+    def forget(self, session_id: str, owner: str = "") -> None:
+        self.sessions.pop(self._key(session_id, owner), None)
 
     def record(self, trace: dict[str, Any]) -> None:
         self.traces.appendleft(trace)
@@ -129,12 +143,25 @@ class AppState:
                 self.pending.pop(next(iter(self.pending)))
             self.pending[pending.token] = pending
 
-    def claim(self, token: str) -> PendingApproval | None:
-        """Take a parked approval. One use only — an approval is not replayable."""
+    def claim(self, token: str, owner: str = "") -> PendingApproval | None:
+        """Take a parked approval. One use only — an approval is not replayable.
+
+        The claimant must be the principal the approval was raised for. A
+        write-tool approval is the one place a person overrides a deterministic
+        hold, so holding the token cannot be sufficient: otherwise any signed-in
+        user who learned a token could authorise somebody else's destructive
+        call. A mismatch is put back, because rejecting it must not also consume
+        the legitimate owner's pending approval.
+        """
         with self._lock:
-            pending = self.pending.pop(token, None)
-        if pending is None:
-            return None
+            pending = self.pending.get(token)
+            if pending is None:
+                return None
+            if pending.owner != owner:
+                log.warning("approval %s claimed by %r, owned by %r",
+                            token[:8], owner, pending.owner)
+                return None
+            self.pending.pop(token, None)
         if time.time() - pending.created_at > PENDING_TTL_S:
             return None
         return pending

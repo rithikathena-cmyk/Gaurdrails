@@ -144,15 +144,44 @@ function rail(r) {
     </div>`;
 }
 
+/** Which layer settled a rail, and what the layers below it contributed.
+ *
+ *  Worth its own line because "masked a PERSON" and "masked a PERSON that the
+ *  local model proposed and the judge confirmed" are different claims, and only
+ *  the second one tells you whether to trust it. A rail that reports only its
+ *  verdict cannot be audited — the counts are how you see a local model being
+ *  overruled rather than rubber-stamped.
+ */
+function provenance(r) {
+  const m = r.meta || {};
+  const bits = [];
+  if (m.layer && m.layer !== "none") bits.push(esc(m.layer));
+  if (m.presidio_proposed != null) {
+    bits.push(`presidio ${m.presidio_proposed} proposed` +
+      (m.presidio_rejected ? `, ${m.presidio_rejected} rejected` : "") +
+      (m.presidio_corroborated ? `, ${m.presidio_corroborated} kept` : ""));
+  }
+  if (m.local_score != null) bits.push(`local ${m.local_score}`);
+  if (m.local_deferred) bits.push(`deferred: ${esc(m.local_deferred)}`);
+  if (m.allowlisted) bits.push(`${m.allowlisted} allowlisted`);
+  if (m.unmask_denied) bits.push(`${m.unmask_denied} unmask denied`);
+  if (m.judge_skipped) bits.push("judge skipped");
+  return bits.length ? `<small class="rail-prov">${bits.join(" · ")}</small>` : "";
+}
+
 function why(r) {
   if (r.error) return `<span class="err">${esc(r.error)}</span>`;
-  if (r.meta?.rationale) return esc(r.meta.rationale);
-  if (r.meta?.skipped) return esc(r.meta.skipped);
+  const prov = provenance(r);
+  if (r.meta?.rationale) return esc(r.meta.rationale) + prov;
+  if (r.meta?.skipped) return esc(r.meta.skipped) + prov;
   if (r.detections?.length) {
     const kinds = r.detections.slice(0, 4).map((d) => esc(d.kind)).join(", ");
-    return kinds + (r.detections.length > 4 ? ` +${r.detections.length - 4}` : "");
+    return kinds + (r.detections.length > 4 ? ` +${r.detections.length - 4}` : "") + prov;
   }
-  if (r.meta?.breached?.length) return "breached: " + esc(r.meta.breached.join(", "));
+  if (r.meta?.breached?.length) {
+    return "breached: " + esc(r.meta.breached.join(", ")) + prov;
+  }
+  if (prov) return prov;
   if (r.meta && Object.keys(r.meta).length) {
     return esc(Object.entries(r.meta).slice(0, 2)
       .map(([k, v]) => `${k}=${typeof v === "object" ? JSON.stringify(v).slice(0, 40) : v}`)

@@ -125,6 +125,9 @@ class PendingApproval:
     step: int = 1
     calls_used: int = 0
     origin_request_id: str = ""
+    #: The principal whose request produced this approval. Only they may answer
+    #: it — an approval is a decision about *their* pending write.
+    owner: str = ""
     created_at: float = field(default_factory=time.time)
 
     def to_dict(self) -> dict[str, Any]:
@@ -180,8 +183,8 @@ class AgentRunner:
 
     # ---- entry points ------------------------------------------------
     def run(self, question: str, history: list[dict[str, Any]] | None = None,
-            session_id: str = "") -> AgentResult:
-        result = self._run(question, history, session_id)
+            session_id: str = "", *, principal: str = "") -> AgentResult:
+        result = self._run(question, history, session_id, principal=principal)
         if result.approval is None:
             result.human_review, result.review_reason = self.engine._review(  # noqa: SLF001
                 result.trace, result.trace.verdict
@@ -193,11 +196,12 @@ class AgentRunner:
         return result
 
     def resume(self, pending: PendingApproval, approved: bool,
-               session_id: str = "") -> AgentResult:
+               session_id: str = "", *, principal: str = "") -> AgentResult:
         """Continue after a person answered the approval prompt."""
         tracer = Tracer(session_id=session_id)
         ctx = ToolContext(
-            engine=self.engine, session_id=session_id, chunks=list(pending.chunks),
+            engine=self.engine, session_id=session_id, principal=principal,
+            chunks=list(pending.chunks),
             min_score=float(self.engine.policy.get("ingest.min_chunk_score")),
             k=int(self.engine.policy.get("grounding.context_window")),
         )
@@ -243,7 +247,7 @@ class AgentRunner:
 
     # ---- the loop ----------------------------------------------------
     def _run(self, question: str, history: list[dict[str, Any]] | None,
-             session_id: str) -> AgentResult:
+             session_id: str, *, principal: str = "") -> AgentResult:
         engine, p = self.engine, self.engine.policy
         tracer = Tracer(session_id=session_id)
         history = history or []
@@ -267,7 +271,8 @@ class AgentRunner:
                 r.unit = "count"
                 r.meta = {"characters_changed": changed, "can_be_disabled": False}
 
-        ingress = engine.evaluate(question_n, Surface.USER_PROMPT, tracer, "Prompt rails")
+        ingress = engine.evaluate(question_n, Surface.USER_PROMPT, tracer, "Prompt rails",
+                                  owner=principal)
         detections = [
             {"stage": "prompt", "rail": r.rail, **d.redacted()}
             for r in ingress.results for d in r.detections
@@ -297,7 +302,7 @@ class AgentRunner:
             )
 
         ctx = ToolContext(
-            engine=engine, session_id=session_id,
+            engine=engine, session_id=session_id, principal=principal,
             min_score=float(p.get("ingest.min_chunk_score")),
             k=int(p.get("grounding.context_window")),
         )
@@ -393,7 +398,8 @@ class AgentRunner:
             messages.append({"role": "user", "content": results})
 
         # ---- output rails, grounding, egress --------------------------
-        egress = engine.evaluate(reply, Surface.LLM_RESPONSE, tracer, "Output rails")
+        egress = engine.evaluate(reply, Surface.LLM_RESPONSE, tracer, "Output rails",
+                                 owner=ctx.principal)
         detections += [
             {"stage": "output", "rail": r.rail, **d.redacted()}
             for r in egress.results for d in r.detections
@@ -428,17 +434,28 @@ class AgentRunner:
                 if bool(p.get("pii.reversible")):
                     def _reveal(m: re.Match[str]) -> str:
                         nonlocal revealed
-                        val = engine.vault.reveal(m.group(2))
+                        # Same gate as the chat path: the run's principal must
+                        # own the token, not merely be holding it.
+                        val = engine.vault.reveal(m.group(2), ctx.principal)
                         if val is None:
                             return m.group(0)
                         revealed += 1
                         return val
 
                     reply = MASK_TOKEN.sub(_reveal, reply)
+                denials = engine.vault.take_denials()
                 r.verdict = Verdict.PASS
                 r.score = float(revealed)
                 r.unit = "count"
-                r.meta = {"tokens_revealed": revealed}
+                r.meta = {"tokens_revealed": revealed,
+                          "principal": ctx.principal or "(none)"}
+                if denials:
+                    r.meta["unmask_denied"] = len(denials)
+                    r.meta["denial_reasons"] = sorted({d["reason"] for d in denials})
+                    tracer.note(
+                        f"{len(denials)} vault token(s) refused to "
+                        f"'{ctx.principal or '(none)'}'"
+                    )
             with tracer.rail("audit.write", "append-only, hash-chained") as r:
                 r.verdict = Verdict.PASS
                 r.meta = {"detections_recorded": len(detections),
@@ -490,6 +507,7 @@ class AgentRunner:
         args_scan = engine.evaluate(
             args_text, Surface.AGENT_TOOL, tracer,
             f"Tool call · {tool.name}", f"{tool.kind} tool · arguments",
+            owner=ctx.principal,
         )
         call.args_verdict = args_scan.verdict.value
         if args_scan.blocked:
@@ -513,6 +531,7 @@ class AgentRunner:
                 tool_use_id=use.id, chunks=list(ctx.chunks), calls=list(calls),
                 step=step, calls_used=calls_used - 1,
                 origin_request_id=tracer.trace.request_id,
+                owner=ctx.principal,
             )
             with tracer.stage(f"Approval required · {tool.name}",
                               "locked — every write tool", kind="rail"):
@@ -566,6 +585,7 @@ class AgentRunner:
         data_scan = engine.evaluate(
             payload, Surface.AGENT_DATA, tracer, f"Tool result · {tool.name}",
             "untrusted — a tool result is data, not instructions",
+            owner=ctx.principal,
         )
         call.result_verdict = data_scan.verdict.value
         call.detections = [

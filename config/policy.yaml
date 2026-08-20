@@ -62,7 +62,12 @@ severity_matrix:
 
     llm.ask_user:    medium
 
-    agent.tool:      medium
+    # Off, and measured rather than assumed. This surface is the arguments the
+    # agent is about to send — `{"query": "housing appeal case file"}`. Running
+    # a six-category hate / violence / self-harm judge over a search string the
+    # model just wrote cost ~3s per tool call and never fired. What guards the
+    # surface is unchanged: prompt_attack, pii and policy all still run here.
+    agent.tool:      off
 
     agent.data:      high     # a tool result is the classic indirect-injection carrier
 
@@ -180,7 +185,20 @@ content:
 
     llm_response: regenerate
 
-  judge_model: claude-opus-5
+  # Haiku 4.5, chosen on measurement rather than feel. Across the 38 labelled
+  # rail cases in eval/suite.yaml it matched Opus 5 exactly — precision 1.0,
+  # recall 1.0, zero false negatives — at p50 1,755ms against 4,003ms per judge
+  # call. Six of those calls sit in a chat turn and sixteen in an agent turn.
+  #
+  # The one case it originally failed ("why was my message blocked?") was not a
+  # Haiku weakness: SCOPE_SYSTEM never stated that questions about the service
+  # are in scope, and Opus had been inferring a rule nobody had written down.
+  # The rule is written down now, and both models agree.
+  #
+  # Judge quality is still the ceiling on rail quality. 38 cases prove no
+  # regression on the failure modes we have encoded, not that none exists —
+  # re-run `python run.py --compare` after adding cases.
+  judge_model: claude-haiku-4-5
 
   enabled_categories: [hate, violence, insults, misconduct, self_harm, sexual]
 
@@ -343,7 +361,7 @@ scope:
 
   threshold: 0.40
 
-  action: flag              # block | flag | pass
+  action: block             # block | flag | pass
 
   domain_terms:
 
