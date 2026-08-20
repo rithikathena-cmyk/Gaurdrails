@@ -143,14 +143,33 @@ node("adjudicate", "model", "Was it too close to call?", [
 ], 600, 80)
 arrow("personal details are now tokens", 46)
 
-retrieval = node("retrieval", "solid", "Look up the facts", [
-    "search the documents, and check what comes back",
+# The agent loop. Two gates per tool call, one in each direction, because a
+# tool's arguments leave the system and a tool's answer comes back into it.
+node("plan", "model", "Decide what to do next", [
+    "pick a tool, or answer — up to six rounds",
+], 600, 80)
+arrow("the arguments it wants to send", 44)
+
+node("gate-tool", "gate", "Are these arguments allowed out?", [
+    "checked before the call runs; a write stops for a person",
+], 600, 84, gate_label="GATE — AGENT.TOOL")
+deny("gate-tool", "REFUSED, or held for approval")
+arrow(None, 40)
+
+retrieval = node("retrieval", "solid", "Run the tool", [
+    "search the documents, look up a claim, file a grievance",
     "the office's own address stays readable; yours does not",
 ], 600, 96)
-arrow("the question, plus what was found", 46)
+arrow("whatever the tool returned", 44)
 
-node("generate", "model", "Ask the model", [
-    "it only sees the tokens, and only the facts found above",
+node("gate-data", "gate", "Is the result safe to read?", [
+    "a record is text somebody else wrote — it crosses a rail first",
+], 600, 84, gate_label="GATE — AGENT.DATA")
+deny("gate-data", "WITHHELD — the agent never reads it")
+arrow("back around, or on to the answer", 44)
+
+node("generate", "model", "Write the answer", [
+    "it only ever saw tokens, and only what the tools returned",
 ], 600, 80)
 deny_y3 = deny("generate", "MODEL DECLINED")
 arrow("a draft nobody has seen yet", 44)

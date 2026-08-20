@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Guardrail architecture · chat and agent</title>
+<title>Guardrail architecture · the agent flow</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🛡️</text></svg>">
 <style>
 /* ═══════════════════════════════════════════════════════════════════
@@ -323,9 +323,8 @@ footer code { font-family:var(--mono); }
     </a>
     <div>
       <h1>Where the rails sit</h1>
-      <p>The same guardrail stack, drawn as it runs. Flip between a chat turn and an
-         agent turn — the agent adds two trust boundaries the chat path does not have —
-         then run a real request through it, or run the five scenarios below.</p>
+      <p>The same guardrail stack, drawn as it runs. One agent turn, end to end — two trust boundaries per tool call, one in each
+         direction. Run a real request through it, or run the five scenarios below.</p>
     </div>
     <div class="spacer"></div>
     <a class="linkbtn homebtn" href="/"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.6 6.9 8 2.6l5.4 4.3V13a.9.9 0 0 1-.9.9h-9a.9.9 0 0 1-.9-.9V6.9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.5 13.9V9.6h3v4.3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Home</a>
@@ -339,29 +338,12 @@ footer code { font-family:var(--mono); }
     </button>
   </header>
 
-  <!-- ═══════════ mode toggle ═══════════ -->
   <div class="modebar">
-    <div class="toggle" role="group" aria-label="Pipeline mode">
-      <button id="mode-chat" aria-pressed="true">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M14 7.5c0 2.9-2.7 5.3-6 5.3-.8 0-1.6-.1-2.3-.4L2 13.5l1.2-2.8A5.1 5.1 0 0 1 2 7.5C2 4.6 4.7 2.2 8 2.2s6 2.4 6 5.3Z"
-                stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-        </svg>
-        Chat flow
-      </button>
-      <button id="mode-agent" aria-pressed="false">
-        <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <rect x="2.5" y="4.5" width="11" height="8" rx="2.5" stroke="currentColor" stroke-width="1.4"/>
-          <path d="M8 2v2.5M5.8 8.2v1M10.2 8.2v1" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
-        </svg>
-        Agent flow
-      </button>
-    </div>
     <div class="mode-note" id="mode-note"></div>
   </div>
 
   <!-- ═══════════ the diagram ═══════════ -->
-  <div class="diagram" id="diagram" data-mode="chat">
+  <div class="diagram" id="diagram" data-mode="agent">
     <div class="lanes">
 
       <!-- lane 1 · user -->
@@ -417,25 +399,6 @@ footer code { font-family:var(--mono); }
       <section class="lane">
         <div class="lane-head" id="mid-head">Model</div>
         <div class="lane-body">
-
-          <!-- chat -->
-          <div class="loop chat" id="loop-chat" data-mode-only="chat">
-            <button class="box" data-box="c-retrieve" data-key="retrieve">
-              <h4>Retrieve</h4>
-              <span class="sub">bm25 over the index, coverage-gated</span>
-              <div class="metrics"></div>
-            </button>
-            <button class="box" data-box="c-ctxrails" data-key="ctxrails">
-              <h4>Context rails <span class="surface">retrieval</span></h4>
-              <span class="sub">what came back is input too — mask it or drop it</span>
-              <div class="metrics"></div>
-            </button>
-            <button class="box" data-box="c-generate" data-key="generate">
-              <h4>Generate</h4>
-              <span class="sub">context + masked question, non-streaming</span>
-              <div class="metrics"></div>
-            </button>
-          </div>
 
           <!-- agent -->
           <div class="loop" id="loop-agent" data-mode-only="agent" hidden>
@@ -755,8 +718,6 @@ const NOTES = {
 function setMode(mode) {
   MODE = mode;
   $("#diagram").dataset.mode = mode;
-  $("#mode-chat").setAttribute("aria-pressed", String(mode === "chat"));
-  $("#mode-agent").setAttribute("aria-pressed", String(mode === "agent"));
   $$("[data-mode-only]").forEach((el) => { el.hidden = el.dataset.modeOnly !== mode; });
   $("#mid-head").textContent = mode === "chat" ? "Model" : "Agent loop";
   $("#mode-note").innerHTML = NOTES[mode];
@@ -766,8 +727,7 @@ function setMode(mode) {
   resetLanes();
   loadSamples();
 }
-$("#mode-chat").addEventListener("click", () => setMode("chat"));
-$("#mode-agent").addEventListener("click", () => setMode("agent"));
+
 
 /* ── samples ── */
 const CHAT_FALLBACK = [
@@ -777,7 +737,7 @@ const CHAT_FALLBACK = [
 ];
 let samples = [];
 async function loadSamples() {
-  const url = MODE === "chat" ? "/api/samples" : "/api/agent/tools";
+  const url = "/api/agent/tools";
   try {
     const res = await fetch(url);
     const body = await res.json();
@@ -850,7 +810,7 @@ function paint(data) {
       metrics.innerHTML = chips.join("");
     }
   });
-  const loop = MODE === "chat" ? $("#loop-chat") : $("#loop-agent");
+  const loop = $("#loop-agent");
   if (reachedModel) loop.dataset.state = "hit";
 
   /* header */
@@ -942,7 +902,7 @@ async function run() {
   $("#approval").hidden = true;
 
   try {
-    const res = await fetch(MODE === "chat" ? "/api/chat" : "/api/agent/chat", {
+    const res = await fetch("/api/agent/chat", {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, session_id: SESSION }),
     });
@@ -1086,7 +1046,7 @@ async function loadScenarios() {
   }));
 }
 
-setMode("chat");
+setMode("agent");
 loadDocs();
 loadScenarios();
 </script>

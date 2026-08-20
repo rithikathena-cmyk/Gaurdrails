@@ -7,7 +7,7 @@ Four ways to look at it:
 
 | | |
 |---|---|
-| **[`index.html`](index.html)** → **/demo** | the architecture as swimlanes, with a **chat ↔ agent** toggle, a live runner, an ingestion panel, and the five scenarios. |
+| **[`index.html`](index.html)** → **/demo** | the architecture as swimlanes for the **agent flow**, with a live runner, an ingestion panel, and the five scenarios. |
 | **[`stages.html`](stages.html)** → **/demo/stages** | the chat request stage by stage, in depth, with a live trace overlaid. |
 | **[`flow.py`](flow.py)** | the same stage chart in the terminal. `python demo/flow.py --sample injection` |
 | **this file** | the reference diagrams and a written account of each stage. |

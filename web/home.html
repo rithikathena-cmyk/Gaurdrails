@@ -33,11 +33,7 @@ a { color: var(--accent-ink); }
   padding: 9px 16px; font-size: 14px; font-weight: 600; white-space: nowrap;
 }
 .start:hover { background: var(--accent-2); }
-.status {
-  display: inline-flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--ink-2);
-  border: 1px solid var(--border); background: var(--surface); border-radius: 999px; padding: 6px 13px;
-  white-space: nowrap;
-}
+
 .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-3); flex: none; }
 .dot.ok { background: var(--pass); } .dot.warn { background: var(--flag); } .dot.err { background: var(--block); }
 
@@ -62,6 +58,7 @@ a { color: var(--accent-ink); }
   background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
   padding: 12px 16px 6px; box-shadow: var(--shadow); overflow-x: auto;
 }
+.page-tools { display: flex; justify-content: flex-end; padding: 18px 0 6px; }
 svg.flow { width: 100%; height: auto; min-width: 940px; display: block; }
 
 /* node shells */
@@ -176,60 +173,22 @@ footer code { font-family: var(--mono); }
 <body>
 <div class="wrap">
 
-  <header class="top">
-    <svg class="mark" width="30" height="33" viewBox="0 0 18 20" fill="none" aria-hidden="true">
-      <path d="M9 1L16.5 4V9.5C16.5 14 13.3 17.8 9 19C4.7 17.8 1.5 14 1.5 9.5V4L9 1Z"
-            stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
-      <path d="M5.6 9.8L8 12.2L12.4 7.6" stroke="currentColor" stroke-width="1.4"
-            stroke-linecap="round" stroke-linejoin="round"/>
-    </svg>
-    <div>
-      <h1>Guardrail Console</h1>
-      <p>An enterprise guardrail stack for LLM applications, built on Claude. Rails run on
-         the way in and on the way out, every request produces a complete trace, and every
-         parameter is either yours to tune or fixed for a stated reason.</p>
-    </div>
-    <div class="spacer"></div>
-    <span class="status" id="status"><span class="dot" id="dot"></span><span id="status-text">checking…</span></span>
-    <a class="start" href="/login">Start app
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-        <path d="M3 8h9m0 0-3.5-3.5M12 8l-3.5 3.5" stroke="currentColor" stroke-width="1.6"
-              stroke-linecap="round" stroke-linejoin="round"/></svg>
-    </a>
+  <div class="page-tools">
     <button class="icon-btn" id="theme" title="Toggle theme" aria-label="Toggle theme">
       <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
         <path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"
               stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
       </svg>
     </button>
-  </header>
-
-  <div class="cards">
-    <a class="card" href="/login?next=/console">
-      <b><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M14 7.5c0 2.9-2.7 5.3-6 5.3-.8 0-1.6-.1-2.3-.4L2 13.5l1.2-2.8A5.1 5.1 0 0 1 2 7.5C2 4.6 4.7 2.2 8 2.2s6 2.4 6 5.3Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Console</b>
-      <span>Ask something, in chat or agent mode, and read the trace it produced.</span>
-    </a>
-    <a class="card" href="/console#docs">
-      <b><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M4 2h5l3 3v9H4V2Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M9 2v3h3M6 8.5h4" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Documents</b>
-      <span>Ingest a document and see what the rails found before it was indexed.</span>
-    </a>
-    <a class="card" href="/console#params">
-      <b><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="2" stroke="currentColor" stroke-width="1.4"/><path d="M8 1.8v2M8 12.2v2M14.2 8h-2M3.8 8h-2" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/></svg>Parameters</b>
-      <span>The full control surface: what you may tune, what is fixed, and why.</span>
-    </a>
-    <a class="card" href="/demo">
-      <b><svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="1.8" y="4" width="5" height="8" rx="1.6" stroke="currentColor" stroke-width="1.4"/><rect x="9.2" y="4" width="5" height="8" rx="1.6" stroke="currentColor" stroke-width="1.4"/></svg>Architecture</b>
-      <span>The same stack as swimlanes, with five scenarios you can run live.</span>
-    </a>
   </div>
 
   <section class="figure">
     <div class="figure-head">
-      <h2>One request, gate by gate</h2>
-      <p>Ten steps. Four of the nineteen boxes are dashed — those are the model, and they only score, write, or settle a close call. Every solid box is ordinary code, and those are the ones that decide. One step usually does not run at all: the close-call review only wakes when a score lands near its own line. <a href="/demo/stages">The long version</a> has every rail.</p>
+      <h2>One agent turn, gate by gate</h2>
+      <p>Twelve steps, the agent path. Five of the twenty-two boxes are dashed — those are the model, and it only plans, writes, or settles a close call. Every solid box is ordinary code, and those are the ones that decide. Two of the gates run once per tool call, one in each direction: a tool's arguments leave the system, and a tool's answer comes back into it. <a href="/demo/stages">The long version</a> has every rail.</p>
     </div>
     <div class="sheet">
-<svg viewBox="0 0 1400 1458" class="flow" role="img" aria-label="The guardrail pipeline, gate by gate">
+<svg viewBox="0 0 1400 1832" class="flow" role="img" aria-label="The guardrail pipeline, gate by gate">
 <g class="node terminal" data-node="user-in">
   <rect x="420" y="54" width="440" height="74" rx="11"/>
   <text class="title" x="640" y="84">Someone asks a question</text>
@@ -316,69 +275,95 @@ footer code { font-family: var(--mono); }
 </g>
 <path class="edge" d="M640 652 L640 689" marker-end="url(#arrow)"/>
 <text class="edge-label" x="654" y="679">personal details are now tokens</text>
+<g class="node model" data-node="plan">
+  <rect x="340" y="698" width="600" height="80" rx="11"/>
+  <text class="title" x="640" y="728">Decide what to do next</text>
+  <text class="mono" x="640" y="750">pick a tool, or answer — up to six rounds</text>
+</g>
+<path class="edge" d="M640 778 L640 813" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="804">the arguments it wants to send</text>
+<g class="node gate" data-node="gate-tool">
+  <rect x="340" y="822" width="600" height="84" rx="11"/>
+  <text class="gate-label" x="360" y="848">GATE — AGENT.TOOL</text>
+  <text class="title left" x="360" y="873">Are these arguments allowed out?</text>
+  <text class="mono left" x="360" y="895">checked before the call runs; a write stops for a person</text>
+</g>
+<path class="deny" d="M940 864 L1268 864"/>
+<text class="deny-label" x="956" y="854">REFUSED, or held for approval</text>
+<path class="edge" d="M640 906 L640 937" marker-end="url(#arrow)"/>
 <g class="node solid" data-node="retrieval">
-  <rect x="340" y="698" width="600" height="96" rx="11"/>
-  <text class="title" x="640" y="728">Look up the facts</text>
-  <text class="mono" x="640" y="750">search the documents, and check what comes back</text>
-  <text class="mono" x="640" y="768">the office's own address stays readable; yours does not</text>
+  <rect x="340" y="946" width="600" height="96" rx="11"/>
+  <text class="title" x="640" y="976">Run the tool</text>
+  <text class="mono" x="640" y="998">search the documents, look up a claim, file a grievance</text>
+  <text class="mono" x="640" y="1016">the office's own address stays readable; yours does not</text>
 </g>
-<path class="edge" d="M640 794 L640 831" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="821">the question, plus what was found</text>
+<path class="edge" d="M640 1042 L640 1077" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="1068">whatever the tool returned</text>
+<g class="node gate" data-node="gate-data">
+  <rect x="340" y="1086" width="600" height="84" rx="11"/>
+  <text class="gate-label" x="360" y="1112">GATE — AGENT.DATA</text>
+  <text class="title left" x="360" y="1137">Is the result safe to read?</text>
+  <text class="mono left" x="360" y="1159">a record is text somebody else wrote — it crosses a rail first</text>
+</g>
+<path class="deny" d="M940 1128 L1268 1128"/>
+<text class="deny-label" x="956" y="1118">WITHHELD — the agent never reads it</text>
+<path class="edge" d="M640 1170 L640 1205" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="1196">back around, or on to the answer</text>
 <g class="node model" data-node="generate">
-  <rect x="340" y="840" width="600" height="80" rx="11"/>
-  <text class="title" x="640" y="870">Ask the model</text>
-  <text class="mono" x="640" y="892">it only sees the tokens, and only the facts found above</text>
+  <rect x="340" y="1214" width="600" height="80" rx="11"/>
+  <text class="title" x="640" y="1244">Write the answer</text>
+  <text class="mono" x="640" y="1266">it only ever saw tokens, and only what the tools returned</text>
 </g>
-<path class="deny" d="M940 880 L1268 880"/>
-<text class="deny-label" x="956" y="870">MODEL DECLINED</text>
-<path class="edge" d="M640 920 L640 955" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="946">a draft nobody has seen yet</text>
+<path class="deny" d="M940 1254 L1268 1254"/>
+<text class="deny-label" x="956" y="1244">MODEL DECLINED</text>
+<path class="edge" d="M640 1294 L640 1329" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="1320">a draft nobody has seen yet</text>
 <g class="node gate" data-node="gate3">
-  <rect x="340" y="964" width="600" height="84" rx="11"/>
-  <text class="gate-label" x="360" y="990">GATE 3 — THE ANSWER</text>
-  <text class="title left" x="360" y="1015">Is the answer allowed out?</text>
-  <text class="mono left" x="360" y="1037">the same checks again, on the way back</text>
+  <rect x="340" y="1338" width="600" height="84" rx="11"/>
+  <text class="gate-label" x="360" y="1364">GATE 3 — THE ANSWER</text>
+  <text class="title left" x="360" y="1389">Is the answer allowed out?</text>
+  <text class="mono left" x="360" y="1411">the same checks again, on the way back</text>
 </g>
-<path class="deny" d="M940 1006 L1268 1006"/>
-<text class="deny-label" x="956" y="996">REFUSED — the draft is never shown</text>
-<path class="edge" d="M640 1048 L640 1079" marker-end="url(#arrow)"/>
+<path class="deny" d="M940 1380 L1268 1380"/>
+<text class="deny-label" x="956" y="1370">REFUSED — the draft is never shown</text>
+<path class="edge" d="M640 1422 L640 1453" marker-end="url(#arrow)"/>
 <g class="node gate" data-node="gate4">
-  <rect x="340" y="1088" width="600" height="84" rx="11"/>
-  <text class="gate-label" x="360" y="1114">GATE 4 — IS IT TRUE</text>
-  <text class="title left" x="360" y="1139">Does it match the sources?</text>
-  <text class="mono left" x="360" y="1161">every claim checked against what was found</text>
+  <rect x="340" y="1462" width="600" height="84" rx="11"/>
+  <text class="gate-label" x="360" y="1488">GATE 4 — IS IT TRUE</text>
+  <text class="title left" x="360" y="1513">Does it match the sources?</text>
+  <text class="mono left" x="360" y="1535">every claim checked against what was found</text>
 </g>
-<path class="deny" d="M940 1130 L1268 1130"/>
-<text class="deny-label" x="956" y="1120">SENT TO A PERSON</text>
-<path class="edge" d="M640 1172 L640 1207" marker-end="url(#arrow)"/>
+<path class="deny" d="M940 1504 L1268 1504"/>
+<text class="deny-label" x="956" y="1494">SENT TO A PERSON</text>
+<path class="edge" d="M640 1546 L640 1581" marker-end="url(#arrow)"/>
 <g class="node data" data-node="audit">
-  <rect x="290" y="1216" width="700" height="84" rx="11"/>
-  <text class="title" x="640" y="1246">Put the real values back, and write it all down</text>
-  <text class="mono" x="640" y="1268">the reader gets their own data; the log cannot be edited</text>
+  <rect x="290" y="1590" width="700" height="84" rx="11"/>
+  <text class="title" x="640" y="1620">Put the real values back, and write it all down</text>
+  <text class="mono" x="640" y="1642">the reader gets their own data; the log cannot be edited</text>
 </g>
-<path class="edge" d="M640 1300 L640 1335" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 1674 L640 1709" marker-end="url(#arrow)"/>
 <g class="node terminal" data-node="user-out">
-  <rect x="405" y="1344" width="470" height="74" rx="11"/>
-  <text class="title" x="640" y="1374">The answer, and the trace behind it</text>
-  <text class="mono" x="640" y="1396">every check, its verdict, and how long it took</text>
+  <rect x="405" y="1718" width="470" height="74" rx="11"/>
+  <text class="title" x="640" y="1748">The answer, and the trace behind it</text>
+  <text class="mono" x="640" y="1770">every check, its verdict, and how long it took</text>
 </g>
-<path class="deny" d="M1268 220 L1268 1258 L1000 1258" marker-end="url(#arrow-deny)"/>
-<path class="loop" d="M340 1130 L208 1130 L208 880 L330 880" marker-end="url(#arrow-loop)"/>
-<text class="loop-label" x="220" y="964">regenerate ≤ 2×</text>
+<path class="deny" d="M1268 220 L1268 1632 L1000 1632" marker-end="url(#arrow-deny)"/>
+<path class="loop" d="M340 1504 L208 1504 L208 1254 L330 1254" marker-end="url(#arrow-loop)"/>
+<text class="loop-label" x="220" y="1338">regenerate ≤ 2×</text>
 <g class="node solid">
-  <rect x="70" y="627" width="200" height="58" rx="10"/>
-  <text class="title small" x="170" y="652">A document arrives</text>
-  <text class="mono" x="170" y="670">uploaded, pasted, or scanned</text>
+  <rect x="70" y="875" width="200" height="58" rx="10"/>
+  <text class="title small" x="170" y="900">A document arrives</text>
+  <text class="mono" x="170" y="918">uploaded, pasted, or scanned</text>
 </g>
-<path class="edge" d="M170 685 L170 706" marker-end="url(#arrow)"/>
+<path class="edge" d="M170 933 L170 954" marker-end="url(#arrow)"/>
 <g class="node gate">
-  <rect x="45" y="715" width="250" height="62" rx="10"/>
-  <text class="gate-label" x="63" y="738">GATE — A DOCUMENT</text>
-  <text class="mono left" x="63" y="760">checked before it is stored</text>
+  <rect x="45" y="963" width="250" height="62" rx="10"/>
+  <text class="gate-label" x="63" y="986">GATE — A DOCUMENT</text>
+  <text class="mono left" x="63" y="1008">checked before it is stored</text>
 </g>
-<path class="deny" d="M170 777 L170 801"/>
-<text class="deny-label mid" x="170" y="817">quarantined — no search finds it</text>
-<path class="edge" d="M295 746 L331 746" marker-end="url(#arrow)"/>
+<path class="deny" d="M170 1025 L170 1049"/>
+<text class="deny-label mid" x="170" y="1065">quarantined — no search finds it</text>
+<path class="edge" d="M295 994 L331 994" marker-end="url(#arrow)"/>
 </svg>
     </div>
     <div class="legend">
@@ -485,24 +470,6 @@ $("#theme").addEventListener("click", () => {
   localStorage.setItem("gc-theme", next);
 });
 
-/* live status — the header should say what is actually running */
-try {
-  const h = await (await fetch("/api/health")).json();
-  const dot = $("#dot"), text = $("#status-text");
-  if (!h.ok) {
-    dot.className = "dot err";
-    text.textContent = "config rejected";
-  } else if (!h.model_rails) {
-    dot.className = "dot warn";
-    text.textContent = "deterministic rails only";
-  } else {
-    dot.className = "dot ok";
-    text.textContent = `all rails live · ${h.corpus.indexed} documents indexed`;
-  }
-} catch {
-  $("#dot").className = "dot err";
-  $("#status-text").textContent = "server unreachable";
-}
 </script>
 </body>
 </html>

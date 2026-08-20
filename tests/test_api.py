@@ -23,7 +23,7 @@ def test_home_page_is_served(client):
     """`/` is the landing page; the app itself moved to /console."""
     home = client.get("/")
     assert home.status_code == 200
-    assert "One request, gate by gate" in home.text
+    assert "One agent turn, gate by gate" in home.text
 
     console = client.get("/console")
     assert console.status_code == 200

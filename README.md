@@ -43,7 +43,7 @@ egress, for an authorized caller — the model never sees a raw SSN. A failed ou
 returns to the model, never to the user; only a second failure surfaces a human. A tool
 that changes state outside the system stops and asks a person, always.
 
-See it: **`/demo`** is the pipeline as a diagram you can flip between chat and agent, run
+See it: **`/demo`** is the agent pipeline as a diagram you can run
 live, and drive five scenarios through. **`/demo/stages`** is the same thing stage by
 stage.
 
@@ -341,7 +341,7 @@ didn't finish checking" is not the same as "the check errored".
 │       └── chat · docs · trace · params · people · history · markdown · main
 │
 ├── demo/                     the pipeline, drawn and explained
-│   ├── index.html            swimlane view, chat ↔ agent toggle          (/demo)
+│   ├── index.html            swimlane view of the agent flow            (/demo)
 │   ├── stages.html           the same request, stage by stage    (/demo/stages)
 │   ├── flow.py               the terminal chart, with a live trace
 │   ├── home_diagram.py       computes the home page flowchart geometry
