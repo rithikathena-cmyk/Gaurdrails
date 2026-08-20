@@ -23,7 +23,7 @@ from .explain import Violation, explain, summarise
 from .knowledge import Corpus, Document, chunk_text, new_document_id
 from .knowledge import retrieve
 from .llm import Claude, LLMError, Refusal
-from .agent.adjudicator import Adjudicator
+from .rails.adjudicator import Adjudicator
 from .rails.content import CATEGORIES, ContentRail, PromptAttackRail
 from .rails.entities import EntityRail
 from .rails.scope import ScopeRail

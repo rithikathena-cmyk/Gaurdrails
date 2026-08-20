@@ -1,5 +1,11 @@
 """The adjudicator — the one decision in the stack a model is allowed to revisit.
 
+It lives with the rails rather than with the agent. It is model-driven, which is
+why it started out in `agent/`, but that is a statement about how it works and
+not about what it does: it reads what the rails decided and rules on it. The
+agent package is the loop that chooses actions; nothing here chooses anything
+except a verdict.
+
 Every scored rail draws a hard line at its threshold. `content.safety` at 0.47
 against a 0.49 threshold passes; at 0.50 it blocks. Nothing separates those two
 requests but a rounding error, yet the stack treats one as ordinary traffic and

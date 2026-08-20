@@ -16,7 +16,7 @@ from __future__ import annotations
 import pytest
 
 from guardrails import AuditLog, Corpus, Engine, load
-from guardrails.agent.adjudicator import DOWNGRADE_FLOOR, Adjudicator
+from guardrails.rails.adjudicator import DOWNGRADE_FLOOR, Adjudicator
 from guardrails.llm import Generation
 from guardrails.tracing import Tracer
 from guardrails.types import RailResult, Surface, Verdict

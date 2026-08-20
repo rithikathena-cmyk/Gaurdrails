@@ -291,20 +291,21 @@ didn't finish checking" is not the same as "the check errored".
 │   ├── explain.py            verdicts turned into something a citizen can read
 │   ├── tracing.py            Tracer, and the hash-chained AuditLog
 │   │
-│   ├── rails/                one file per family, each independent
+│   ├── rails/                DECIDE ABOUT TEXT — read a string, return a verdict
 │   │   ├── normalize.py      NFKC → invisibles → homoglyphs (locked on)
 │   │   ├── words.py          Aho–Corasick, pure Python
 │   │   ├── pii.py            recognizers, checksums, allowlist, AES-256-GCM vault
-│   │   ├── entities.py       names and addresses no regex can find
+│   │   ├── entities.py       names and addresses: gate → presidio → judge
+│   │   ├── presidio_ner.py   the local NER layer entities.py calls
 │   │   ├── policy.py         named regex rule sets
 │   │   ├── content.py        content safety, and prompt injection
 │   │   ├── scope.py          vocabulary first, judge second
-│   │   └── grounding.py      claim-level consistency and relevance
+│   │   ├── grounding.py      claim-level consistency and relevance
+│   │   └── adjudicator.py    rules on a verdict decided by a hair
 │   │
-│   ├── agent/                the only place a model chooses what happens next
+│   ├── agent/                DECIDES WHAT TO DO NEXT — the only such place
 │   │   ├── tools.py          what it may call, and what each may see unmasked
-│   │   ├── runner.py         the loop, and the rails on every edge of it
-│   │   └── adjudicator.py    the second opinion on decisions made by a hair
+│   │   └── runner.py         the loop, and the rails on every edge of it
 │   │
 │   ├── knowledge/            what the answers are grounded in
 │   │   ├── seed.py           twenty-five built-in documents
@@ -374,6 +375,11 @@ didn't finish checking" is not the same as "the check errored".
 
 Three rules hold the shape:
 
+- **`rails/` decides about text; `agent/` decides what to do next.** That is the
+  whole split. A rail reads a string and returns a verdict — it never calls a tool
+  and never sees another rail. The agent picks a tool, reads what came back, and
+  picks again. The adjudicator is model-driven and still lives in `rails/`, because
+  what it does is rule on a verdict.
 - **`guardrails/` never imports `server/`.** The library runs headless — `run.py --ask`
   exercises the whole pipeline with no HTTP anywhere.
 - **A permission is declared next to the router it guards**, once, in `routes/__init__.py`.
