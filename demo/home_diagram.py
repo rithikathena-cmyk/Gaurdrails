@@ -230,12 +230,16 @@ out.append(f'<path class="edge" d="M{IX + GATE_W / 2:.0f} {r_mid:.0f} '
            f'L{r["left"] - 9:.0f} {r_mid:.0f}" marker-end="url(#arrow)"/>')
 
 
+# Relative to this file, so the script runs from any working directory
+# and on any machine.
+OUT = Path(__file__).resolve().parent.parent / "web" / "_diagram.svg.part"
+
 HEIGHT = y + 40
 svg = "\n".join(out)
 
-Path("E:/GuardRails/web/_diagram.svg.part").write_text(
+OUT.write_text(
     f'<svg viewBox="0 0 {W} {HEIGHT:.0f}" class="flow" role="img" '
     f'aria-label="The guardrail pipeline, gate by gate">\n{svg}\n</svg>',
     encoding="utf-8",
 )
-print(f"diagram generated: {W} x {HEIGHT:.0f}, {len(anchors)} anchored nodes")
+print(f"diagram generated: {W} x {HEIGHT:.0f}, {len(anchors)} anchored nodes -> {OUT}")
