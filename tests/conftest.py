@@ -133,3 +133,32 @@ def no_local_ner(monkeypatch, request):
     from guardrails.rails import presidio_ner
 
     monkeypatch.setattr(presidio_ner, "engine", lambda: None)
+
+@pytest.fixture(autouse=True)
+def ignore_live_overrides(monkeypatch, tmp_path):
+    """Stop the suite reading config/overrides.yaml.
+
+    `load(REPO / "config" / "policy.yaml")` picks up whatever an operator last
+    saved beside it, so a live setting decides whether a test passes: setting
+    scope.action to `block` made two agent tests fail, because the prompt they
+    drive the loop with is off-topic and never reached the loop.
+
+    Only the repo's own policy is redirected. A sandbox copy keeps its real
+    overrides path, so the tests that are *about* the overrides layer still
+    exercise it.
+    """
+    from guardrails import config as config_module
+
+    real = config_module.overrides_path_for
+    repo_policy = (REPO / "config" / "policy.yaml").resolve()
+    missing = tmp_path / "no-overrides.yaml"
+
+    def scoped(policy_path):
+        try:
+            same = Path(policy_path).resolve() == repo_policy
+        except OSError:
+            same = False
+        return missing if same else real(policy_path)
+
+    monkeypatch.setattr(config_module, "overrides_path_for", scoped)
+    yield

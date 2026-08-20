@@ -6,9 +6,6 @@
 # Safe to delete: removing it reverts every parameter to the baseline. Safe to
 # commit: it is the record of what a deployment actually changed.
 
-updated_at: 2026-08-20T18:23:42+0530
+updated_at: 2026-08-20T19:45:01+0530
 values:
-  pii.custom_regex:
-  - CLM-\d{8}
-  - (?<![\d+])(?:\+91[\s-]?(?:\d[\s-]?){9}\d|0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}|[6-9]\d{4}[\s-]?\d{5})(?!\d)
   scope.action: block
