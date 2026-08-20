@@ -46,7 +46,7 @@ class ScriptedJudge:
             return {"entities": []}
         if "consistency" in props:
             return {"consistency": 1.0, "relevance": 1.0,
-                    "unsupported_claims": [], "rationale": "stub"}
+                    "unsupported": [], "rationale": "stub"}
         if "injection" in props:
             return {"injection": 0.0, "technique": "none", "rationale": "stub"}
         return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}

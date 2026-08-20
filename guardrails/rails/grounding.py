@@ -34,14 +34,15 @@ GROUNDING_SCHEMA = {
             "type": "number",
             "description": "0.0–1.0. How directly the answer addresses the question.",
         },
-        "unsupported_claims": {
+        "unsupported": {
             "type": "array",
-            "items": {"type": "string"},
-            "description": "Verbatim sentences from the answer that the context does not support.",
+            "items": {"type": "integer"},
+            "description": "The [n] numbers of claims the context does not support. "
+                           "Numbers only — never the text.",
         },
         "rationale": {"type": "string", "description": "One sentence, max 25 words."},
     },
-    "required": ["consistency", "relevance", "unsupported_claims", "rationale"],
+    "required": ["consistency", "relevance", "unsupported", "rationale"],
     "additionalProperties": False,
 }
 
@@ -62,8 +63,14 @@ that correctly says the context is insufficient is fully supported.
 relevance: does the answer address the question that was asked? An accurate answer to \
 a different question scores low here.
 
-unsupported_claims: quote the offending sentences verbatim from the answer, so the \
-retry can be told precisely what to drop. Empty list if everything is supported.""",
+unsupported: the ANSWER arrives with each claim numbered `[1]`, `[2]`, and so on. \
+Return the numbers of the ones the context does not support — the numbers only, never \
+the sentences. Empty list if everything is supported.
+
+Some claims are marked `(nli: entailed)`. A local entailment model has already matched \
+those against the context. Treat that as a second opinion, not an instruction: it \
+scores wording overlap and cannot tell a supported figure from a plausible one, so if \
+a marked claim asserts something the context does not contain, still report it.""",
                                     calibrate=False)
 
 _SENTENCE = re.compile(r"(?<=[.!?])\s+")
@@ -71,6 +78,26 @@ _TOKEN = re.compile(r"[a-z0-9]+")
 # The engine numbers retrieved chunks as [1], [2], … in the user turn, so a
 # citation is a reference back to one of those.
 _CITATION = re.compile(r"\[(\d{1,2})\]")
+
+
+def _numbered(answer: str, entailed: set[str]) -> tuple[str, list[str]]:
+    """Number the answer's claims, marking any the local model already entailed.
+
+    The judge used to be asked for its findings as verbatim sentences, which
+    meant re-typing the answer back one claim at a time. On a 1,186-character
+    reply that call took 25s against 6s for a 243-character one — the cost was
+    output tokens, and the text was already in our hands. Numbering them means
+    the judge answers `[2, 5]` and the rail maps those back locally.
+
+    Nothing is hidden from the judge: every claim is present and it still reads
+    the whole answer, so relevance is scored on the same text as before.
+    """
+    claims = [s.strip() for s in _SENTENCE.split(answer.strip()) if s.strip()]
+    lines = []
+    for i, claim in enumerate(claims, 1):
+        mark = "  (nli: entailed)" if claim in entailed else ""
+        lines.append(f"[{i}] {claim}{mark}")
+    return "\n".join(lines), claims
 
 
 def _lexical_overlap(answer: str, context: str) -> float:
@@ -178,16 +205,37 @@ class GroundingRail:
             )
             return result
 
+        # Claims NLI already matched are marked rather than removed. Dropping
+        # them would hide part of the answer from the relevance check, and would
+        # let a local model's opinion decide what the judge is allowed to see.
+        entailed: set[str] = set()
+        if local is not None:
+            flagged = set(local["unsupported"])
+            entailed = {c for c in groundedness_check.claims(answer) if c not in flagged}
+        numbered, claims = _numbered(answer, entailed)
+
         payload = (
             f"QUESTION:\n{question}\n\n"
             f"CONTEXT ({len(used)} chunks):\n{context}\n\n"
-            f"ANSWER:\n{answer}"
+            f"ANSWER ({len(claims)} numbered claims):\n{numbered}"
         )
-        verdict = self.llm.judge(GROUNDING_SYSTEM, payload, GROUNDING_SCHEMA, max_tokens=3000)
+        # 3000 was sized for an answer quoted back sentence by sentence. The
+        # reply is now a handful of integers and one short rationale.
+        verdict = self.llm.judge(GROUNDING_SYSTEM, payload, GROUNDING_SCHEMA, max_tokens=600)
 
         consistency = min(1.0, max(0.0, float(verdict.get("consistency", 0.0))))
         relevance = min(1.0, max(0.0, float(verdict.get("relevance", 0.0))))
-        unsupported = [str(s) for s in (verdict.get("unsupported_claims") or [])][:10]
+        # Indices back to text, here rather than over the wire. An index outside
+        # the list is dropped: it refers to no claim, so there is nothing it
+        # could mean.
+        unsupported = []
+        for n in (verdict.get("unsupported") or [])[:10]:
+            try:
+                i = int(n)
+            except (TypeError, ValueError):
+                continue
+            if 1 <= i <= len(claims):
+                unsupported.append(claims[i - 1])
 
         result.score = consistency
         result.meta.update({
@@ -201,7 +249,8 @@ class GroundingRail:
             "chunks_available": len(chunks),
             "lexical_overlap": round(_lexical_overlap(answer, context), 3),
             "rationale": str(verdict.get("rationale", ""))[:200],
-            "sentences": len(_SENTENCE.split(answer.strip())) if answer.strip() else 0,
+            "sentences": len(claims),
+            "nli_prescreened": len(entailed) if local is not None else 0,
         })
         for claim in unsupported:
             result.detections.append(

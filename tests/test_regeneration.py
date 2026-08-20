@@ -39,7 +39,7 @@ class StubClaude:
         if "consistency" in props:
             score = self.grounding_scores.pop(0) if self.grounding_scores else 1.0
             return {"consistency": score, "relevance": 1.0,
-                    "unsupported_claims": [] if score >= 0.5 else ["an invented fee"],
+                    "unsupported": [] if score >= 0.5 else [1],
                     "rationale": "stub"}
         if "injection" in props:
             return {"injection": 0.0, "technique": "none", "rationale": "stub"}

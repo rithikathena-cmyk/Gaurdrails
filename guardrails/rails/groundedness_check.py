@@ -9,10 +9,10 @@ kept apart:
 **A natural-language-inference model can only speak to the first.** Entailment
 is a relation between a premise and a hypothesis; "does this answer the user's
 question" is not in that relation at all. So this module returns a consistency
-score and nothing else, and the rail keeps the judge for relevance and for the
-verbatim `unsupported_claims` list that the regeneration prompt is built from.
-An NLI score cannot produce that list — it says a claim is unsupported, not
-which sentence to drop.
+score and nothing else, and the rail keeps the judge for relevance and for
+deciding which claims are actually unsupported. What this model contributes to
+that decision is a pre-screen: claims it entails are marked for the judge, which
+still reads every one of them and can overrule the mark.
 
 The method is per-claim, matching the rail's existing sentence segmentation:
 each sentence of the answer is checked against each retrieved chunk, a claim
@@ -145,8 +145,9 @@ def consistency(answer: str, chunks: list[str]) -> dict[str, Any] | None:
         "consistency": supported / len(to_check),
         "claims": len(to_check),
         "supported": supported,
-        # Reported for the trace, not for the retry prompt — the judge's
-        # verbatim list is what regeneration is built from.
+        # The rail marks everything *not* in here as entailed when it numbers
+        # the claims for the judge. A wrong entry costs a claim being marked the
+        # judge then has to overrule, which is why the prompt tells it to.
         "unsupported": unsupported[:10],
     }
 

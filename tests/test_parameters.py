@@ -94,7 +94,7 @@ class StubClaude:
                     "rationale": "stub upheld the rails"}
         if "consistency" in props:
             return {"consistency": self.consistency, "relevance": self.relevance,
-                    "unsupported_claims": [], "rationale": "stub"}
+                    "unsupported": [], "rationale": "stub"}
         if "injection" in props:
             return {"injection": self.injection, "technique": "stub", "rationale": "stub"}
         # These two exist so a test about content thresholds is not quietly

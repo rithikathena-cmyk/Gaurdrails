@@ -33,7 +33,7 @@ class ScriptedClaude:
         props = set(schema.get("properties", {}))
         if "consistency" in props:
             return {"consistency": self.consistency, "relevance": 1.0,
-                    "unsupported_claims": [], "rationale": "stub"}
+                    "unsupported": [], "rationale": "stub"}
         if "injection" in props:
             return {"injection": self.injection, "technique": "stub", "rationale": "stub"}
         return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}

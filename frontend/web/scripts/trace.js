@@ -162,6 +162,8 @@ function provenance(r) {
       (m.presidio_corroborated ? `, ${m.presidio_corroborated} kept` : ""));
   }
   if (m.local_score != null) bits.push(`local ${m.local_score}`);
+  if (m.local_consistency != null) bits.push(`nli ${m.local_consistency}`);
+  if (m.nli_prescreened) bits.push(`${m.nli_prescreened}/${m.sentences} pre-screened`);
   if (m.local_deferred) bits.push(`deferred: ${esc(m.local_deferred)}`);
   if (m.allowlisted) bits.push(`${m.allowlisted} allowlisted`);
   if (m.unmask_denied) bits.push(`${m.unmask_denied} unmask denied`);

@@ -48,7 +48,7 @@ class CountingJudge:
         if "consistency" in props:
             return {"consistency": self.scores.get("consistency", 1.0),
                     "relevance": self.scores.get("relevance", 1.0),
-                    "unsupported_claims": [], "rationale": "stub"}
+                    "unsupported": [], "rationale": "stub"}
         return {**{c: self.scores.get(c, 0.0) for c in CATEGORIES}, "rationale": "stub"}
 
 
