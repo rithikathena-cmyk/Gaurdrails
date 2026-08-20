@@ -331,21 +331,21 @@ didn't finish checking" is not the same as "the check errored".
 │       ├── params.py         registry read, and validated edits
 │       └── scenarios.py      run a scenario against the live stack
 │
-├── web/                      the console. No build step, ES modules
-│   ├── home.html             landing page and pipeline diagram          (/)
-│   ├── login.html            split-screen sign-in, role tiles      (/login)
-│   ├── index.html            the console itself                  (/console)
-│   ├── styles/               tokens.css (palette, both themes) · app.css
-│   └── scripts/
-│       ├── api.js            the only module that talks to the server
-│       ├── dom.js            shared helpers
-│       └── chat · docs · trace · params · people · history · markdown · main
-│
-├── demo/                     the pipeline, drawn and explained
-│   ├── stages.html           the same request, stage by stage    (/demo/stages)
-│   ├── flow.py               the terminal chart, with a live trace
-│   ├── home_diagram.py       computes the home page flowchart geometry
-│   └── README.md             the written account, with a mermaid chart
+├── frontend/                 everything the browser loads. No build step
+│   └── web/                  the console, ES modules
+│       ├── home.html         landing page and pipeline diagram          (/)
+│       ├── login.html        split-screen sign-in, role tiles      (/login)
+│       ├── index.html        the console itself                  (/console)
+│       ├── styles/           tokens.css (palette, both themes) · app.css
+│       └── scripts/
+│           ├── api.js        the only module that talks to the server
+│           ├── dom.js        shared helpers
+│           └── chat · docs · trace · params · people · history · markdown · main
+│   └── demo/                 the pipeline, drawn and explained
+│       ├── stages.html       the same request, stage by stage    (/demo/stages)
+│       ├── flow.py           the terminal chart, with a live trace
+│       ├── home_diagram.py   computes the home page flowchart geometry
+│       └── README.md         the written account, with a mermaid chart
 │
 ├── config/
 │   ├── policy.yaml           the baseline you edit by hand
@@ -399,8 +399,8 @@ Three rules hold the shape:
 python run.py                 # start the server
 python run.py --check         # validate config against the registry, then exit
 python run.py --ask "..."     # one request through the stack, printed as a trace
-python demo/flow.py           # the same request, drawn as a flow chart
-python demo/flow.py --sample injection
+python frontend/demo/flow.py           # the same request, drawn as a flow chart
+python frontend/demo/flow.py --sample injection
 python run.py --eval          # score against the labelled suite
 python -m pytest tests/ -q    # 309 tests, no API key required
 ```

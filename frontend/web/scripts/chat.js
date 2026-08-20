@@ -26,8 +26,7 @@ const badge = (name) => {
 
 const SESSION = "web-" + Math.random().toString(36).slice(2, 8);
 let busy = false;
-let mode = "chat";          // chat | agent
-let chatSamples = [];
+// One flow. The agent is the pipeline; there is nothing to switch to.
 let agentSamples = [];
 
 export async function initChat() {
@@ -53,8 +52,6 @@ export async function initChat() {
     document.dispatchEvent(new CustomEvent("nav", { detail: "chat" }));
   });
 
-  $$("#chat-mode button").forEach((b) =>
-    b.addEventListener("click", () => setMode(b.dataset.mode)));
 
   await loadSamples();
   renderSamples();
@@ -62,37 +59,16 @@ export async function initChat() {
   input.focus();
 }
 
-/** Chat or agent. The difference is not cosmetic: the agent path has two extra
-    surfaces and can stop mid-turn to ask permission, so the composer says which
-    one you are talking to. */
-function setMode(next) {
-  mode = next;
-  $$("#chat-mode button").forEach((b) =>
-    b.setAttribute("aria-pressed", String(b.dataset.mode === next)));
-  $("#composer-hint").textContent = IDLE_HINT[next];
-  $("#input").placeholder = next === "agent"
-    ? "Ask the agent — it can search, look up a fee, or check a claim…"
-    : "Ask about licences, grants, records…";
-  $("#hero-eyebrow").textContent = next === "agent" ? "Agent · tools" : "Public services";
-  $("#hero-lede").textContent = next === "agent"
-    ? "The agent picks its own tools. Each call is checked before it runs, each result "
-      + "before it is read, and anything that writes stops to ask you first."
-    : "Rails run on the way in and again on the way out, and the whole decision is "
-      + "written down.";
-  renderSamples();
-}
-
+/** The prompts offered under an empty composer. They come from the agent's own
+    tool list, so a suggestion can never name a tool the config has disabled. */
 async function loadSamples() {
-  try {
-    chatSamples = (await api.samples()).samples || [];
-  } catch { chatSamples = []; }
   try {
     agentSamples = (await api.agentTools()).samples || [];
   } catch { agentSamples = []; }
 }
 
 function renderSamples() {
-  const samples = mode === "agent" ? agentSamples : chatSamples;
+  const samples = agentSamples;
   $("#suggestions").innerHTML = samples.map((s) => `
     <button class="suggestion" data-fill="${esc(s.text)}">
       ${badge(s.icon)}
@@ -123,16 +99,14 @@ async function send() {
   const pending = document.createElement("div");
   pending.className = "turn assistant";
   pending.innerHTML = `
-    <div class="turn-meta"><span class="who">${mode === "agent" ? "agent" : "assistant"}</span></div>
+    <div class="turn-meta"><span class="who">agent</span></div>
     <div class="thinking"><span class="pulse"></span> ${
-      mode === "agent" ? "planning, calling tools…" : "running rails…"}</div>`;
+      "planning, calling tools…"}</div>`;
   $("#messages").appendChild(pending);
   scroll();
 
   try {
-    const data = mode === "agent"
-      ? await api.agentChat(text, SESSION)
-      : await api.chat(text, SESSION);
+    const data = await api.agentChat(text, SESSION);
     pending.remove();
     addAssistant(data);
     addTrace(data.trace);
@@ -145,17 +119,14 @@ async function send() {
   }
 }
 
-const IDLE_HINT = {
-  chat: "Rails evaluate before dispatch",
-  agent: "Tools run behind rails · writes ask first",
-};
+const IDLE_HINT = "Tools run behind rails · writes ask first";
 
 function setBusy(on) {
   busy = on;
   $("#send").disabled = on;
   $("#composer-hint").textContent = on
-    ? (mode === "agent" ? "planning…" : "evaluating…")
-    : IDLE_HINT[mode];
+    ? "planning…"
+    : IDLE_HINT;
 }
 
 function addUser(text) {

@@ -14,8 +14,11 @@ from .routes import api
 from .state import state
 
 ROOT = Path(__file__).resolve().parent.parent
-WEB = ROOT / "web"
-DEMO = ROOT / "demo"
+# The browser half lives under frontend/. Nothing in guardrails/ or server/
+# reads it except these two paths and the mount below.
+FRONTEND = ROOT / "frontend"
+WEB = FRONTEND / "web"
+DEMO = FRONTEND / "demo"
 
 
 @asynccontextmanager
