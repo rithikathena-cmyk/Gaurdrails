@@ -367,7 +367,10 @@ def test_a_citizen_holds_chat_and_nothing_else(citizen):
     body = citizen.get("/api/auth/me").json()["user"]
     assert body["role"] == "user"
     assert body["permissions"] == ["chat"]
-    assert body["views"] == ["chat"]
+    # Derived from the permission they hold: a citizen sees chat, and their own
+    # conversations, because reading your own transcript needs no more than chat.
+    expected = {v for v, perm in VIEW_PERMISSION.items() if perm == "chat"}
+    assert set(body["views"]) == expected
 
 
 def test_a_citizen_cannot_read_traces_even_by_asking_directly(citizen):

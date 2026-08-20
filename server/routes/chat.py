@@ -9,7 +9,8 @@ from pydantic import BaseModel, Field
 
 from guardrails import Engine, LLMError
 
-from ..auth import User, current_user, directory, require
+from ..auth import User, cost_micros, current_user, directory, require
+from ..history import history
 from ..state import state
 
 router = APIRouter()
@@ -122,7 +123,21 @@ def chat(req: ChatRequest, user: User = Depends(current_user)) -> dict[str, Any]
 
     trace = result.trace.to_dict()
     state.record(trace)
-    directory.spend(user.name, usage_in(trace))
+    calls = usage_in(trace)
+    directory.spend(user.name, calls)
+
+    # A blocked turn is recorded too: the refusal is the interesting part when
+    # somebody later asks why this person could not get an answer.
+    history.append(
+        user.name, session_id=req.session_id, question=req.message,
+        reply=result.reply, verdict=trace["verdict"], request_id=trace["request_id"],
+        mode="chat", blocked=result.blocked,
+        refusal_reason=result.refusal_reason or "",
+        masked=len(result.detections or []),
+        tokens=sum(i + o for _, i, o in calls),
+        cost_usd=sum(cost_micros(m, i, o) for m, i, o in calls) / 1e6,
+        model=next((m for m, _, _ in calls if m), ""),
+    )
 
     return {
         "reply": result.reply,

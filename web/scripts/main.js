@@ -7,6 +7,7 @@ import { initDocs, loadDocs, docsLoaded } from "./docs.js";
 import { initParams, loadParams, paramsLoaded } from "./params.js";
 import { renderRecent, renderTrace } from "./trace.js";
 import { initPeople, loadPeople, peopleLoaded } from "./people.js";
+import { initHistory, loadHistory, historyLoaded } from "./history.js";
 
 /* ── theme ── */
 const savedTheme = localStorage.getItem("gc-theme");
@@ -37,6 +38,7 @@ function navigate(view) {
   if (view === "docs" && !docsLoaded()) loadDocs();
   if (view === "trace") renderTrace();
   if (view === "people" && !peopleLoaded()) loadPeople();
+  if (view === "history" && !historyLoaded()) loadHistory();
 }
 
 $$(".nav-item").forEach((b) =>
@@ -45,7 +47,7 @@ document.addEventListener("nav", (e) => navigate(e.detail));
 
 /* The home page links straight at a view — /console#docs. Anything else in the
    hash is ignored rather than left on a blank screen. */
-const VIEWS = new Set(["chat", "trace", "docs", "params", "people"]);
+const VIEWS = new Set(["chat", "trace", "docs", "params", "people", "history"]);
 const fromHash = () => {
   const view = location.hash.replace("#", "");
   if (VIEWS.has(view)) navigate(view);
@@ -123,6 +125,7 @@ async function applyIdentity() {
 const identity = await applyIdentity();
 await initChat();
 initPeople();
+initHistory();
 if (identity?.views.includes("params")) initParams();
 if (identity?.views.includes("docs")) initDocs();
 fromHash();

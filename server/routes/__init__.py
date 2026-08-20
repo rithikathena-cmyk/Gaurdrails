@@ -8,7 +8,8 @@ forget to ask.
 from fastapi import APIRouter, Depends
 
 from ..auth import require
-from . import agent, chat, documents, params, scenarios, session, system, users
+from . import (agent, chat, documents, history, params, scenarios, session,
+               system, users)
 
 api = APIRouter(prefix="/api")
 
@@ -19,6 +20,11 @@ api.include_router(session.router, tags=["auth"])
 # Everything else requires a session and the right permission.
 api.include_router(chat.router, tags=["chat"], dependencies=[Depends(require("chat"))])
 api.include_router(agent.router, tags=["agent"], dependencies=[Depends(require("chat"))])
+# Transcripts authorise per request, not per router: the same path serves a
+# citizen reading their own and an operator reading anyone's. `chat` is the
+# floor; the owner check is in the handlers.
+api.include_router(history.router, tags=["history"],
+                   dependencies=[Depends(require("chat"))])
 api.include_router(documents.router, tags=["documents"],
                    dependencies=[Depends(require("documents"))])
 api.include_router(scenarios.router, tags=["scenarios"],

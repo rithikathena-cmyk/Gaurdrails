@@ -33,6 +33,12 @@ export const api = {
   traces:      ()               => request("/api/traces"),
   auditVerify: ()               => request("/api/audit/verify"),
 
+  /* conversations */
+  history:     (who = "")       => request(
+                                    `/api/history${who ? `?user=${encodeURIComponent(who)}` : ""}`),
+  historySession: (who, sid)    => request(
+                                    `/api/history/${encodeURIComponent(who)}/${encodeURIComponent(sid)}`),
+
   /* people */
   users:       ()               => request("/api/users"),
   addUser:     (body)           => request("/api/users", {

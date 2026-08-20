@@ -130,6 +130,7 @@ VIEW_PERMISSION = {
     "docs": "documents",
     "params": "parameters",
     "people": "users",
+    "history": "chat",
 }
 
 

@@ -62,10 +62,32 @@ function budgetCell(u) {
   ].join("");
 }
 
+/* The cost is a button. Collapsed it answers "how much"; open it answers
+   "how much, over what, and against which ceiling" — which is three numbers
+   per window and does not belong permanently in a table cell. */
 function costCell(u) {
+  const line = (label, used, limit, cost) => {
+    const cap = limit > 0 ? `of ${fmt(limit)}` : `<span class="u-dim">no ceiling</span>`;
+    const pct = limit > 0 ? ` · ${Math.min(100, Math.round((used / limit) * 100))}%` : "";
+    return `<tr><th>${label}</th><td>${fmt(used)} ${cap}${pct}</td><td>${money(cost)}</td></tr>`;
+  };
   return `
-    <b class="u-cost">${money(u.cost_usd)}</b>
-    <span class="u-sub">${money(u.day_cost_usd)} today · ${money(u.month_cost_usd)} this month</span>`;
+    <button class="u-cost-btn" data-cost="${esc(u.name)}" aria-expanded="false"
+            title="Show the breakdown by window">
+      <b class="u-cost">${money(u.cost_usd)}</b>
+      <span class="u-sub">${money(u.day_cost_usd)} today ▾</span>
+    </button>
+    <div class="u-cost-detail" hidden>
+      <table>
+        <thead><tr><th></th><th>tokens</th><th>cost</th></tr></thead>
+        <tbody>
+          ${line("day", u.day_tokens, u.daily_limit, u.day_cost_usd)}
+          ${line("month", u.month_tokens, u.monthly_limit, u.month_cost_usd)}
+          ${line("total", u.tokens_used, u.token_limit, u.cost_usd)}
+        </tbody>
+      </table>
+      <span class="u-sub">${esc(u.model_label)}${u.breached ? ` · over the ${esc(u.breached)} ceiling` : ""}</span>
+    </div>`;
 }
 
 function row(u, models) {
@@ -162,9 +184,32 @@ async function apply(fn, ok) {
   }
 }
 
+function closeCostPanels() {
+  $$(".u-cost-detail").forEach((d) => { d.hidden = true; });
+  $$("[data-cost]").forEach((b) => b.setAttribute("aria-expanded", "false"));
+}
+
 /* ── wiring ── */
 export function initPeople() {
+  // A popover that only closes by clicking its own trigger is a popover people
+  // leave open by accident.
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".u-costcell")) closeCostPanels();
+  });
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeCostPanels();
+  });
+
   $("#u-rows").addEventListener("click", (e) => {
+    const cost = e.target.closest("button[data-cost]");
+    if (cost) {
+      const panel = cost.nextElementSibling;
+      const open = panel.hidden;
+      closeCostPanels();               // one open at a time, or they overlap
+      panel.hidden = !open;
+      cost.setAttribute("aria-expanded", String(open));
+      return;
+    }
     const btn = e.target.closest("button[data-act]");
     if (!btn) return;
     const name = btn.dataset.name;

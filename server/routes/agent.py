@@ -19,7 +19,8 @@ from pydantic import BaseModel, Field
 from guardrails import AgentRunner, LLMError
 from guardrails.agent import TOOLS
 
-from ..auth import User, current_user, directory
+from ..auth import User, cost_micros, current_user, directory
+from ..history import history
 from .chat import check_budget, usage_in
 from ..state import state
 
@@ -119,6 +120,23 @@ def tools() -> dict[str, Any]:
     }
 
 
+def _remember(user: User, session_id: str, question: str,
+              body: dict[str, Any], calls: list) -> None:
+    """Write the agent turn to the transcript, priced like a chat turn."""
+    trace = body.get("trace") or {}
+    history.append(
+        user.name, session_id=session_id, question=question,
+        reply=body.get("reply") or "", verdict=trace.get("verdict", ""),
+        request_id=trace.get("request_id", ""), mode="agent",
+        blocked=bool(body.get("blocked")),
+        refusal_reason=body.get("refusal_reason") or "",
+        masked=len(body.get("detections") or []),
+        tokens=sum(i + o for _, i, o in calls),
+        cost_usd=sum(cost_micros(m, i, o) for m, i, o in calls) / 1e6,
+        model=next((m for m, _, _ in calls if m), ""),
+    )
+
+
 @router.post("/agent/chat")
 def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     runner = _runner()
@@ -135,7 +153,9 @@ def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[st
     if not result.blocked and result.approval is None:
         state.remember(req.session_id, req.message, result.reply)
     body = _payload(result)
-    directory.spend(user.name, usage_in(body.get("trace") or {}))
+    calls = usage_in(body.get("trace") or {})
+    directory.spend(user.name, calls)
+    _remember(user, req.session_id, req.message, body, calls)
     return body
 
 
@@ -159,5 +179,7 @@ def approve(req: ApprovalRequest, user: User = Depends(current_user)) -> dict[st
     body = _payload(result)
     body["approved"] = req.approved
     body["resumed_from"] = pending.origin_request_id
-    directory.spend(user.name, usage_in(body.get("trace") or {}))
+    calls = usage_in(body.get("trace") or {})
+    directory.spend(user.name, calls)
+    _remember(user, req.session_id, pending.question, body, calls)
     return body

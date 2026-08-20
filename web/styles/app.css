@@ -829,9 +829,30 @@ button.cell:hover { transform: translateY(-1px); filter: brightness(1.06); }
              font-variant-numeric: tabular-nums; text-align: right; }
 .u-nobar { font-size: 11px; color: var(--ink-3); }
 
-.u-costcell { min-width: 110px; }
+.u-costcell { min-width: 124px; position: relative; }
+.u-cost-btn { display: block; width: 100%; text-align: left; cursor: pointer;
+              border: 1px solid transparent; background: none; color: inherit;
+              border-radius: 8px; padding: 4px 6px; margin: -4px -6px; }
+.u-cost-btn:hover { background: var(--hover); border-color: var(--border); }
+.u-cost-btn[aria-expanded="true"] { background: var(--surface-2); border-color: var(--border); }
 .u-cost { font-size: 15px; font-weight: 600; font-variant-numeric: tabular-nums;
-          display: block; margin-bottom: 2px; }
+          display: block; margin-bottom: 1px; }
+
+/* Absolutely positioned on purpose: in flow it widened the cost column enough
+   to push the actions column off the edge of the table. A detail panel should
+   never reflow the thing it describes. */
+.u-cost-detail { position: absolute; z-index: 20; right: 8px; top: calc(100% - 4px);
+                 min-width: 232px; padding: 9px 11px; border-radius: 9px;
+                 background: var(--surface); border: 1px solid var(--border-2);
+                 box-shadow: var(--shadow); }
+.u-cost-detail table { border-collapse: collapse; width: 100%; }
+.u-cost-detail th, .u-cost-detail td { text-align: left; padding: 2px 6px 2px 0;
+  font-family: var(--mono); font-size: 10.5px; font-weight: 400; color: var(--ink-2);
+  font-variant-numeric: tabular-nums; white-space: nowrap; }
+.u-cost-detail thead th { color: var(--ink-3); font-size: 9.5px;
+  text-transform: uppercase; letter-spacing: .05em; }
+.u-cost-detail tbody th { color: var(--ink); }
+.u-cost-detail td:last-child { text-align: right; }
 
 .u-lim { width: 78px; font-family: var(--mono); font-size: 11.5px; padding: 3px 6px;
          border: 1px solid var(--border); border-radius: 6px;
@@ -881,3 +902,61 @@ button.cell:hover { transform: translateY(-1px); filter: brightness(1.06); }
   border-radius: 8px; background: var(--surface); color: var(--ink);
 }
 .u-new-foot { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-top: 14px; }
+
+/* ── conversations ──────────────────────────────────────────── */
+.page.wide { max-width: 1180px; }
+
+.h-people { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 14px; }
+.h-person { text-align: left; cursor: pointer; padding: 8px 12px; border-radius: 9px;
+            border: 1px solid var(--border); background: var(--surface); color: var(--ink); }
+.h-person:hover { background: var(--hover); }
+.h-person.on { border-color: var(--accent); background: var(--accent-soft); }
+.h-person b { display: block; font-size: 13px; font-weight: 600; }
+.h-person span { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.h-person.on span { color: var(--accent-ink); }
+
+.h-split { display: grid; grid-template-columns: 1fr; gap: 14px; align-items: start; }
+@media (min-width: 940px) { .h-split { grid-template-columns: 320px minmax(0, 1fr); } }
+
+.h-list { max-height: 62vh; overflow-y: auto; }
+.h-item { display: block; width: 100%; text-align: left; cursor: pointer;
+          padding: 11px 14px; border: 0; border-bottom: 1px solid var(--border);
+          background: none; color: var(--ink); }
+.h-item:last-child { border-bottom: 0; }
+.h-item:hover { background: var(--hover); }
+.h-item.on { background: var(--accent-soft); }
+.h-item-top { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; }
+.h-open { margin: 0 0 4px; font-size: 13px; line-height: 1.45;
+          display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+          overflow: hidden; }
+.h-when { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+.h-meta { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+
+.h-chip { font-family: var(--mono); font-size: 9.5px; letter-spacing: .04em;
+          padding: 1px 6px; border-radius: 999px; background: var(--surface-2);
+          color: var(--ink-3); border: 1px solid var(--border); }
+.h-chip.block, .h-chip.blocked { background: var(--block-soft); color: var(--block); border-color: transparent; }
+.h-chip.mask { background: var(--mask-soft, var(--surface-2)); color: var(--mask); border-color: transparent; }
+.h-chip.pass { background: var(--pass-soft); color: var(--pass); border-color: transparent; }
+.h-chip.flag { background: var(--flag-soft, var(--surface-2)); color: var(--flag); border-color: transparent; }
+
+#h-detail-head { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+#h-detail-head b { font-family: var(--mono); font-size: 12.5px; }
+#h-detail-head span { font-size: 12px; color: var(--ink-3); }
+
+.h-turnlist { max-height: 62vh; overflow-y: auto; padding: 4px 0; }
+.h-turn { padding: 14px 16px; border-bottom: 1px solid var(--border); }
+.h-turn:last-child { border-bottom: 0; }
+.h-turn.refused { background: var(--block-soft); }
+.h-turn header { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 9px; }
+.h-trace { margin-left: auto; font-family: var(--mono); font-size: 10.5px; cursor: pointer;
+           border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+           border-radius: 6px; padding: 2px 8px; }
+.h-trace:hover { border-color: var(--accent); color: var(--accent-ink); }
+.h-q { font-size: 14px; padding: 9px 12px; border-radius: 9px; background: var(--surface-2);
+       border: 1px solid var(--border); margin-bottom: 10px; }
+.h-a { font-size: 14px; line-height: 1.6; }
+.h-a > :first-child { margin-top: 0; }
+.h-a > :last-child { margin-bottom: 0; }
+.h-refusal { display: block; font-family: var(--mono); font-size: 11.5px;
+             color: var(--block); margin-bottom: 8px; }

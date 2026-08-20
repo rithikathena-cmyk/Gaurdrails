@@ -24,6 +24,7 @@ from pydantic import BaseModel, Field
 
 from ..auth import (ASSIGNABLE_MODELS, PRICING, ROLES, User, current_user,
                     directory, require)
+from ..history import history
 
 router = APIRouter()
 
@@ -140,4 +141,5 @@ def delete_user(name: str, me: User = Depends(current_user)) -> dict[str, Any]:
                          "message": "you cannot delete the account you are signed in as"})
     if not directory.remove_user(name):
         raise HTTPException(404, detail={"kind": "missing", "message": f"no user {name!r}"})
+    history.forget_user(name)
     return {"ok": True, **_snapshot()}

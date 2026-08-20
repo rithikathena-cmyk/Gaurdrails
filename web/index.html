@@ -47,6 +47,17 @@
         </svg>
         Chat
       </button>
+      <button class="nav-item" role="tab" data-view="history" aria-selected="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M8 4.4V8l2.4 1.4" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M2.6 8a5.4 5.4 0 1 0 1.6-3.8" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round"/>
+          <path d="M2.2 2.6v2.6h2.6" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        Conversations
+      </button>
       <button class="nav-item" role="tab" data-view="trace" aria-selected="false">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M2 12.5h12M2 4h6M2 8.25h9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -354,6 +365,49 @@
               nobody — give it to them yourself.</span>
           </div>
         </form>
+      </div>
+    </section>
+
+    <section class="view" id="view-history">
+      <div class="page wide">
+        <header class="page-head">
+          <h1>Conversations</h1>
+          <p>Every turn as it happened — what was asked, what came back, and what the
+             rails decided. Refusals are kept too: when somebody asks why they could not
+             get an answer, the refusal is the part that answers it.
+             <span id="h-scope-note"></span></p>
+        </header>
+
+        <div class="h-people" id="h-people" hidden></div>
+
+        <div class="u-stats">
+          <div class="u-stat"><b id="h-turns">0</b><span>turns</span></div>
+          <div class="u-stat"><b id="h-sessions">0</b><span>conversations</span></div>
+          <div class="u-stat"><b id="h-blocked">0</b><span>refused</span></div>
+          <div class="u-stat"><b id="h-masked">0</b><span>values masked</span></div>
+          <div class="u-stat"><b id="h-cost">$0.00</b><span>cost</span></div>
+        </div>
+
+        <div class="h-split">
+          <div class="card h-listcard">
+            <div class="card-head">
+              <h3 id="h-whose">Conversations</h3>
+              <div class="right">
+                <button class="u-btn ghost" id="h-refresh">Refresh</button>
+              </div>
+            </div>
+            <div class="h-list" id="h-list"></div>
+            <div class="empty" id="h-empty" hidden>Nothing here yet.</div>
+          </div>
+
+          <div class="card h-detailcard">
+            <div class="card-head" id="h-detail-head"><h3>Transcript</h3></div>
+            <div class="empty" id="h-detail-empty">Pick a conversation to read it.</div>
+            <div id="h-detail" hidden>
+              <div class="h-turnlist" id="h-turnlist"></div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 
