@@ -111,10 +111,20 @@ _MODEL = LazyModel(f"injection classifier ({MODEL_ID})", _build, log)
 
 
 def available() -> bool:
-    """Is the runtime importable at all? Cheap — no model is loaded."""
+    """Is the runtime importable at all? Cheap — no model weights are loaded.
+
+    `pipeline` is resolved here, on the calling thread, and not only imported.
+    transformers exposes it through a lazy module, so the attribute lookup is
+    what triggers the submodule import — and doing that first from the loader
+    thread races the main thread still importing the package. It surfaces as
+    `Could not import module 'pipeline'`, the model is marked failed for the
+    life of the process, and every request quietly falls through to the judge.
+    Resolving it from whoever builds the engine costs an import at startup and
+    removes the race.
+    """
     try:
-        import transformers  # noqa: F401
-    except ImportError:
+        from transformers import pipeline  # noqa: F401
+    except Exception:  # noqa: BLE001 — unavailable is unavailable, however it failed
         return False
     return True
 
