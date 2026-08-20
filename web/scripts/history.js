@@ -53,6 +53,10 @@ function renderList() {
   $("#h-masked").textContent = fmt(s.masked);
   $("#h-cost").textContent = money(s.cost_usd);
 
+  $("#h-scope-note").textContent = snapshot.people.length
+    ? "You hold the traces permission, so you can read anyone's."
+    : "You are reading your own, and only your own.";
+
   $("#h-whose").textContent = snapshot.mine
     ? "Your conversations"
     : `${snapshot.whose.display} · ${snapshot.whose.role_label}`;

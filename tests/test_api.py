@@ -6,57 +6,9 @@ Runs against a sandboxed copy of config/ so nothing here writes to the repo.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
 from guardrails.knowledge.seed import CORPUS
 from server.auth import VIEW_PERMISSION
-
-
-@pytest.fixture
-def client(sandbox, monkeypatch, tmp_path):
-    monkeypatch.setenv("GUARDRAIL_CONFIG", str(sandbox / "policy.yaml"))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.chdir(tmp_path)          # keep audit + changelog out of the repo
-
-    from server.app import create_app
-    from server.routes import params as params_routes
-    from server.state import state as app_state
-
-    params_routes.CHANGELOG = tmp_path / "config-changes.log"
-    app_state.corpus.path = tmp_path / "corpus.json"   # never touch data/
-    app_state.corpus.reset()
-    with TestClient(create_app()) as c:
-        # Most of this file tests what the console can do, which means an
-        # operator. The citizen's view has its own fixture below.
-        c.post("/api/auth/login", json={"username": "admin", "password": "admin"})
-        yield c
-
-
-@pytest.fixture
-def citizen(sandbox, monkeypatch, tmp_path):
-    """A signed-in account holding `chat` and nothing else."""
-    monkeypatch.setenv("GUARDRAIL_CONFIG", str(sandbox / "policy.yaml"))
-    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-    monkeypatch.chdir(tmp_path)
-
-    from server.app import create_app
-    from server.state import state as app_state
-
-    app_state.corpus.path = tmp_path / "corpus.json"
-    app_state.corpus.reset()
-    with TestClient(create_app()) as c:
-        c.post("/api/auth/login", json={"username": "citizen", "password": "citizen"})
-        yield c
-
-
-@pytest.fixture
-def anonymous(sandbox, monkeypatch, tmp_path):
-    monkeypatch.setenv("GUARDRAIL_CONFIG", str(sandbox / "policy.yaml"))
-    monkeypatch.chdir(tmp_path)
-    from server.app import create_app
-
-    with TestClient(create_app()) as c:
-        yield c
 
 
 # ── system ─────────────────────────────────────────────────────────
