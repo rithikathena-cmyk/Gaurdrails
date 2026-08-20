@@ -19,15 +19,23 @@ def test_health_reports_offline_model_rails(client):
     assert "ANTHROPIC_API_KEY" in body["note"]
 
 
-def test_home_page_is_served(client):
-    """`/` is the landing page; the app itself moved to /console."""
-    home = client.get("/")
-    assert home.status_code == 200
-    assert "One agent turn, gate by gate" in home.text
+def test_the_three_screens_are_served(client):
+    """`/` the door, `/summary` what this is, `/console` the app itself.
+
+    Asserted on the served body rather than the status, because `/` answers a
+    signed-in caller with a redirect and following it would pass this test
+    without ever proving the summary is reachable.
+    """
+    summary = client.get("/summary")
+    assert summary.status_code == 200
+    assert "One agent turn, gate by gate" in summary.text
 
     console = client.get("/console")
     assert console.status_code == 200
     assert "Every answer is checked" in console.text
+
+    # And the way on from one to the other is a link, not a guess.
+    assert 'href="/console"' in summary.text
 
 
 def test_demo_charts_are_served(client):
@@ -356,7 +364,7 @@ def test_signing_out_ends_the_session(client):
 
 
 def test_the_login_page_is_served_and_names_both_roles(anonymous):
-    page = anonymous.get("/login")
+    page = anonymous.get("/")
     assert page.status_code == 200
     assert "Sign in" in page.text
 
@@ -368,7 +376,7 @@ def test_the_login_page_is_served_and_names_both_roles(anonymous):
 def test_app_pages_redirect_to_the_door_and_remember_where_you_were(anonymous):
     r = anonymous.get("/console", follow_redirects=False)
     assert r.status_code == 303
-    assert r.headers["location"] == "/login?next=/console"
+    assert r.headers["location"] == "/?next=/console"
 
 
 def test_the_lifecycle_chart_is_an_operators_tool(citizen, client):
@@ -376,24 +384,33 @@ def test_the_lifecycle_chart_is_an_operators_tool(citizen, client):
     assert client.get("/demo/stages", follow_redirects=False).status_code == 200
 
 
-def test_signing_in_again_sends_each_role_where_it_belongs(citizen, client):
-    """`/login` with a live session bounces rather than showing the form.
+def test_the_door_is_at_the_root_and_a_live_session_moves_past_it(citizen, client):
+    """`/` is the door; `/summary` is the room past it.
 
-    It used to bounce everybody to `/`, which is the operator's page — a tour of
-    seven screens a citizen cannot open and none of the one they can. The
-    citizen path is the whole point of the test; the operator one is here so a
-    later change cannot fix one by breaking the other.
+    Signing in while signed in is a dead end, so a live session skips ahead
+    rather than being shown the form again. Both roles land in the same place:
+    what the rails do does not depend on who is asking.
     """
-    r = citizen.get("/login", follow_redirects=False)
-    assert r.status_code == 303
-    assert r.headers["location"] == "/console"
-
-    r = client.get("/login", follow_redirects=False)
-    assert r.status_code == 303
-    assert r.headers["location"] == "/"
+    for who in (citizen, client):
+        r = who.get("/", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers["location"] == "/summary"
 
 
-def test_a_citizen_may_still_read_the_home_page_if_they_ask_for_it(citizen):
-    """Not sent there, but not barred from it either — it explains the service
-    they are using, and a session is all that page asks for."""
-    assert citizen.get("/", follow_redirects=False).status_code == 200
+def test_the_old_login_path_still_lands_somewhere(anonymous, citizen):
+    """A bookmark should not fall through to the static mount and 404."""
+    for who in (anonymous, citizen):
+        r = who.get("/login", follow_redirects=False)
+        assert r.status_code == 303
+        assert r.headers["location"] == "/"
+
+
+def test_the_summary_is_open_to_every_role(citizen, client):
+    """A session is all it asks for. It explains the service both of them are
+    using, and the explanation is the same one."""
+    assert citizen.get("/summary", follow_redirects=False).status_code == 200
+    assert client.get("/summary", follow_redirects=False).status_code == 200
+
+
+def test_the_summary_sends_a_stranger_to_the_door_and_remembers_why(anonymous):
+    assert anonymous.get("/summary", follow_redirects=False).headers["location"]         == "/?next=/summary"

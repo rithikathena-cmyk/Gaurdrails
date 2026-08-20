@@ -31,33 +31,6 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Guardrail Console", version="1.0.0", lifespan=lifespan)
     app.include_router(api)
 
-    def _landing(user) -> str:
-        """Where signing in sends somebody with no destination in mind.
-
-        The home page is an operator's page: it walks the pipeline gate by gate
-        and explains the traces and the control surface. A citizen holds `chat`
-        and nothing else, so landing them there offers a tour of screens they
-        cannot open and none of the one they can. They came to ask a question.
-
-        `traces` is the test rather than the role, because the role list is
-        configurable and that permission is what the home page is about.
-
-        `login.html` makes the same decision for a caller who actually submits
-        the form. The two have to agree — this one is the path taken when a live
-        session skips the form entirely.
-        """
-        return "/" if user.can("traces") else "/console"
-
-    @app.get("/login", include_in_schema=False)
-    def login_page(gc_session: str | None = Cookie(default=None)):
-        """Signing in while already signed in is a dead end. Somebody who has a
-        session gets sent where signing in would have sent them. Sign out first
-        to switch accounts."""
-        user = directory.resolve(gc_session)
-        if user is not None:
-            return RedirectResponse(_landing(user), status_code=303)
-        return FileResponse(WEB / "login.html")
-
     def _gate(cookie: str | None, target: str, permission: str = ""):
         """Send an unauthenticated caller to sign in, remembering where they were.
 
@@ -66,21 +39,40 @@ def create_app() -> FastAPI:
         """
         user = directory.resolve(cookie)
         if user is None:
-            return RedirectResponse(f"/login?next={target}", status_code=303)
+            return RedirectResponse(f"/?next={target}", status_code=303)
         if permission and not user.can(permission):
             return RedirectResponse("/console", status_code=303)
         return None
 
     @app.get("/", include_in_schema=False)
-    def home(gc_session: str | None = Cookie(default=None)):
+    def door(gc_session: str | None = Cookie(default=None)):
+        """The door. Sign in here, or be shown where you already are.
+
+        Three screens in a line, and each one answers a different question:
+        `/` who are you, `/summary` what is this, `/console` ask it something.
+        Signing in while signed in is a dead end, so a live session skips
+        straight to the second. Sign out first to switch accounts.
+        """
+        if directory.resolve(gc_session) is not None:
+            return RedirectResponse("/summary", status_code=303)
+        return FileResponse(WEB / "login.html")
+
+    @app.get("/login", include_in_schema=False)
+    def login_page():
+        """The door moved to `/`. Kept so a bookmark or an old link still lands
+        somewhere, rather than falling through to the static mount and 404ing."""
+        return RedirectResponse("/", status_code=303)
+
+    @app.get("/summary", include_in_schema=False)
+    def summary(gc_session: str | None = Cookie(default=None)):
         """Where signing in lands you.
 
-        Sign-in is the front door; this is the room behind it. What the stack
-        is, drawn as one pipeline, with the scenarios it is checked against —
-        and one way on, into the console. A session is all it asks for: every
-        role sees the same page.
+        The door is behind you; this is the room past it. What the stack is,
+        drawn as one pipeline, with the scenarios it is checked against — and
+        one way on, into the console. A session is all it asks for: every role
+        sees the same page, because what the rails do is the same either way.
         """
-        return _gate(gc_session, "/") or FileResponse(WEB / "home.html")
+        return _gate(gc_session, "/summary") or FileResponse(WEB / "home.html")
 
     @app.get("/console", include_in_schema=False)
     def console(gc_session: str | None = Cookie(default=None)):
@@ -111,7 +103,7 @@ def create_app() -> FastAPI:
         """
         response = await call_next(request)
         path = request.url.path
-        if path.endswith((".js", ".css", ".html")) or path in ("/", "/console", "/login"):
+        if path.endswith((".js", ".css", ".html")) or path in ("/", "/summary", "/console", "/login"):
             response.headers.setdefault("Cache-Control", "no-cache")
         return response
 

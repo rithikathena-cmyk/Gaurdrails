@@ -355,20 +355,11 @@ $("#hint").addEventListener("click", () => {
 // Where they were headed before the gate stopped them, if anywhere.
 const requested = new URLSearchParams(location.search).get("next");
 
-/** Where to land somebody who just signed in with no destination in mind.
- *
- *  The home page is an operator's page: it explains the pipeline, the rails and
- *  the scenarios, and it ends by telling the reader to "sign in as the operator
- *  to see the pipeline diagram, the traces and the control surface". Landing a
- *  citizen there hands them a tour of seven things they hold no permission for
- *  and none of the one thing they do. They came to ask a question.
- *
- *  `traces` is the test rather than the role, because the role list is
- *  configurable and the permission is what the home page is actually about.
- */
-function landingFor(user) {
-  return (user?.permissions || []).includes("traces") ? "/" : "/console";
-}
+// Everyone lands on the summary. It answers "what is this thing", which is the
+// question you have immediately after "who are you" and immediately before you
+// start typing at it — and it is the same answer for every role, because what
+// the rails do does not depend on who is asking. `Start app` is the way on.
+const SUMMARY = "/summary";
 
 function say(kind, html) {
   const box = $("#note");
@@ -398,7 +389,7 @@ async function signIn(username, password, card) {
     // An explicit `next` wins — it is where they were actually going. Anything
     // they cannot open still redirects on arrival, so this only has to be
     // sensible, not clairvoyant.
-    location.href = requested || landingFor(body.user);
+    location.href = requested || SUMMARY;
   } catch (err) {
     say("err", esc(err.message));
     busy = false;

@@ -8,7 +8,7 @@ async function request(path, options = {}) {
   });
   // A dead session should return you to the door, not to a broken screen.
   if (res.status === 401 && !path.startsWith("/api/auth")) {
-    location.href = `/login?next=${encodeURIComponent(location.pathname)}`;
+    location.href = `/?next=${encodeURIComponent(location.pathname)}`;
     return new Promise(() => {});
   }
   const text = await res.text();

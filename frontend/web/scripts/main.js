@@ -127,7 +127,7 @@ async function applyIdentity() {
   box.classList.toggle("admin", user.role === "admin");
   $("#sign-out").addEventListener("click", async () => {
     await api.logout();
-    location.href = "/login";
+    location.href = "/";
   });
   return user;
 }
