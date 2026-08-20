@@ -352,8 +352,23 @@ $("#hint").addEventListener("click", () => {
     + "deployment change rather than an email.");
 });
 
-// Default home, not the console: sign in, see what the stack is, then go in.
-const next = new URLSearchParams(location.search).get("next") || "/";
+// Where they were headed before the gate stopped them, if anywhere.
+const requested = new URLSearchParams(location.search).get("next");
+
+/** Where to land somebody who just signed in with no destination in mind.
+ *
+ *  The home page is an operator's page: it explains the pipeline, the rails and
+ *  the scenarios, and it ends by telling the reader to "sign in as the operator
+ *  to see the pipeline diagram, the traces and the control surface". Landing a
+ *  citizen there hands them a tour of seven things they hold no permission for
+ *  and none of the one thing they do. They came to ask a question.
+ *
+ *  `traces` is the test rather than the role, because the role list is
+ *  configurable and the permission is what the home page is actually about.
+ */
+function landingFor(user) {
+  return (user?.permissions || []).includes("traces") ? "/" : "/console";
+}
 
 function say(kind, html) {
   const box = $("#note");
@@ -380,10 +395,10 @@ async function signIn(username, password, card) {
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body?.error?.message || "Sign-in failed.");
-    // `next` is where they were headed before the gate stopped them. Anything
+    // An explicit `next` wins — it is where they were actually going. Anything
     // they cannot open still redirects on arrival, so this only has to be
     // sensible, not clairvoyant.
-    location.href = next;
+    location.href = requested || landingFor(body.user);
   } catch (err) {
     say("err", esc(err.message));
     busy = false;
