@@ -1,0 +1,44 @@
+# Render blueprint. Deploy from the dashboard with "New > Blueprint", or push
+# this file and point Render at the repo.
+#
+# The free plan is 512MB, which the base install fits comfortably: the process
+# measured 97MB with the local classifiers absent, against 1,090MB with them
+# loaded. The Dockerfile installs requirements.txt only, so that is the path
+# this runs on.
+services:
+  - type: web
+    name: guardrail-console
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+
+    # The app's own answer, not a TCP check — it reports config errors and
+    # whether the model rails are live.
+    healthCheckPath: /api/health
+
+    envVars:
+      # Set this in the dashboard, never here. `sync: false` makes Render ask
+      # for it at deploy time and keeps it out of the repo.
+      - key: ANTHROPIC_API_KEY
+        sync: false
+
+      # Without it the app still starts and every deterministic rail runs —
+      # PII with checksums and the vault, the injection pattern layer, the word
+      # automaton, policy rules, the audit chain. The model-backed rails are
+      # skipped and the UI says so rather than showing green.
+
+      - key: HOST
+        value: 0.0.0.0
+      - key: PYTHONUNBUFFERED
+        value: "1"
+
+# Two things the free plan does not give you, both of which matter here:
+#
+#   No persistent disk. `data/` — accounts, live sessions, the corpus, the
+#   transcripts — resets on every deploy. The built-in demo accounts come back
+#   and the corpus reseeds, so the app works; anything a user added does not
+#   survive. Add a paid disk mounted at /app/data if it needs to.
+#
+#   Spin-down after 15 minutes idle. The next request pays a cold start on top
+#   of this app's own 20-50s judge latency, so the first one after a quiet
+#   period can take a minute. Ask a cheap question first when demoing.

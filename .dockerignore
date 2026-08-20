@@ -1,0 +1,36 @@
+# Anything not needed to serve a request. Keeping the context small keeps the
+# build fast, but the first two entries are the ones that matter: `.env` holds
+# the API key and `data/` holds accounts, live session tokens and transcripts.
+# Neither belongs in an image that gets pushed to a registry.
+.env
+data/
+
+.git/
+.gitignore
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+venv/
+
+# Runtime records — written by the container, not shipped into it.
+audit.log
+config-changes.log
+eval/report.json
+eval/comparison.json
+eval/judge-model-comparison.json
+
+# Not served, and the PDF alone is 400KB of build context.
+docs/
+tests/
+frontend/demo/__pycache__/
+frontend/web/_diagram.svg.part
+
+# Local tooling.
+.claude/
+.playwright-mcp/
+*.png
+!frontend/web/**/*.png
+
+# The local-model layer is deliberately not installed — see the Dockerfile.
+requirements-local.txt
