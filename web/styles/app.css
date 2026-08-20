@@ -790,7 +790,7 @@ button.cell:hover { transform: translateY(-1px); filter: brightness(1.06); }
 .u-stat b { display: block; font-size: 21px; font-weight: 600; letter-spacing: -.02em;
             font-variant-numeric: tabular-nums; }
 .u-stat span { font-size: 11.5px; color: var(--ink-3); }
-.u-over { margin: 0 16px; font-size: 12px; font-weight: 600; color: var(--block);
+.u-over { margin: 10px 16px; font-size: 12px; font-weight: 600; color: var(--block);
           background: var(--block-soft); border-radius: 999px; padding: 4px 11px; }
 
 .u-msg { font-size: 13px; padding: 9px 13px; border-radius: 8px; margin-bottom: 14px; }
@@ -842,9 +842,17 @@ button.cell:hover { transform: translateY(-1px); filter: brightness(1.06); }
 .u-btn.danger { color: var(--block); }
 .u-btn.danger:hover { background: var(--block-soft); border-color: var(--block); }
 
-.u-new { margin-top: 16px; }
-.u-new h2 { font-size: 15px; font-weight: 600; margin: 0 0 12px; }
-.u-fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(168px, 1fr)); gap: 12px; }
+/* `.card` is a shell — it carries the surface and border and nothing else, so
+   anything placed in one supplies its own padding. Without this the form sat
+   flush against the border and read as though the boxes had collided. */
+.u-new { margin-top: 16px; padding: 18px 20px 20px; }
+.u-new h2 { font-size: 15px; font-weight: 600; margin: 0 0 14px; }
+
+/* Six fields. auto-fit gave five on one row and one orphaned below it, which
+   looks like a mistake rather than a layout. Fixed counts land 3 + 3. */
+.u-fields { display: grid; grid-template-columns: 1fr; gap: 13px 16px; }
+@media (min-width: 620px)  { .u-fields { grid-template-columns: repeat(2, 1fr); } }
+@media (min-width: 1000px) { .u-fields { grid-template-columns: repeat(3, 1fr); } }
 .u-fields label { display: flex; flex-direction: column; gap: 5px; font-size: 12px; color: var(--ink-2); }
 .u-fields input, .u-fields select {
   font-size: 13px; padding: 7px 10px; border: 1px solid var(--border);
