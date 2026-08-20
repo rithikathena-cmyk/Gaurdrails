@@ -231,18 +231,23 @@ def test_a_retrieved_chunk_with_a_citizens_details_is_masked_before_the_model(tm
 # ── 5 · seed documents that carry personal data ────────────────────
 # The four contact documents carry *published* contacts, which the allowlist
 # deliberately lets through — so none of them exercise masking on a retrieved
-# chunk. These three carry a citizen's own details and do.
+# chunk. The case file carries a citizen's own details and does.
+#
+# The two bulk logs used to as well, and no longer do. A grievance log and a
+# caseload note are reached whole by one ordinary search, so holding several
+# unrelated residents' contact details in them put those people one question
+# away from each other. The rail masked it every time — but a safety net is the
+# wrong thing to rely on when the aggregate need not exist at all. They now
+# reference cases by number, and `test_a_bulk_log_carries_no_contact_details`
+# asserts they stay that way.
 
 CASE_FILE_PII = ["anitha.selvam@example.com", "9962214477", "CLM-77310945"]
-LOG_PII = ["rajesh.k@example.com", "9840055120", "f.sheikh@example.com",
-           "9791188342", "9445573310"]
 
 
 @pytest.mark.parametrize("question,expect", [
     ("who is the appellant on housing appeal HA-9902", "case-file-ha9902"),
     ("which open grievances are past the escalation threshold", "grievance-log-q2"),
     ("which assessment objections is the wing carrying forward", "officer-caseload"),
-    ("who owns assessment AS-4420", "officer-caseload"),
 ])
 def test_a_case_file_is_reachable_by_an_ordinary_question(question, expect):
     hits = Corpus(seed=True).search(question, 4, 0.15)
@@ -252,7 +257,6 @@ def test_a_case_file_is_reachable_by_an_ordinary_question(question, expect):
 
 @pytest.mark.parametrize("values,question", [
     (CASE_FILE_PII, "who is the appellant on housing appeal HA-9902"),
-    (LOG_PII, "which open grievances are past the escalation threshold"),
 ])
 def test_personal_data_in_a_retrieved_chunk_is_masked_before_the_model(
         values, question, engine):
@@ -264,6 +268,25 @@ def test_personal_data_in_a_retrieved_chunk_is_masked_before_the_model(
     assert out.verdict is Verdict.MASK
     for v in values:
         assert v not in out.text, f"{v} survived into the model input"
+
+
+@pytest.mark.parametrize("doc_id", ["grievance-log-q2", "officer-caseload"])
+def test_a_bulk_log_carries_no_contact_details(doc_id):
+    """A log is reached whole by one search, so it must not aggregate people.
+
+    A case file is about one person and properly contains their details; a
+    quarterly log is about many, and holding their emails and mobile numbers
+    together is the exposure the retrieval rail then has to clean up on every
+    single query. Cases are referenced by number instead.
+    """
+    import re
+
+    doc = next(d for d in CORPUS if d["id"] == doc_id)
+    text = doc["text"]
+    assert not re.search(r"[\w.+-]+@example\.com", text), "an individual's email"
+    assert not re.search(r"\b[6-9]\d{9}\b", text), "a mobile number"
+    # The case references are the point of the document and must survive.
+    assert re.search(r"\b(?:GRV|AS)-\d{4}\b", text), "lost the case references"
 
 
 def test_a_case_file_is_not_treated_as_a_published_contact(engine):

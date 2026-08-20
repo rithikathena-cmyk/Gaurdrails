@@ -116,25 +116,35 @@ CORPUS: list[dict[str, str]] = [
     {
         "id": "grievance-log-q2",
         "title": "Grievance log, second quarter",
-        "text": "Open grievances awaiting first response. GRV-3341, raised by Rajesh "
-                "Kandasamy, rajesh.k@example.com, 9840055120, about a delayed trade "
-                "licence renewal, 22 working days open. GRV-3358, raised by Fatima Sheikh, "
-                "f.sheikh@example.com, 9791188342, about a property tax assessment she "
-                "believes double-counts a mezzanine floor, 9 working days open. GRV-3362, "
-                "raised by Joseph Antony, 9445573310, about a birth certificate copy not "
-                "received after payment, 31 working days open and past the escalation "
-                "threshold.",
+        # Cases by reference, not by person. A log is a *bulk* document: one
+        # ordinary search reaches all of it, so holding three unrelated
+        # residents' names, emails and mobile numbers here put them one question
+        # away from each other. The retrieval rail masked them every time, which
+        # is the right safety net and the wrong thing to depend on — the fix is
+        # for the aggregate not to exist. Contact details belong on the
+        # individual case record, which is what `case-file-ha9902` models.
+        "text": "Open grievances awaiting first response. GRV-3341, a delayed trade "
+                "licence renewal, 22 working days open. GRV-3358, a property tax "
+                "assessment the objector believes double-counts a mezzanine floor, "
+                "9 working days open. GRV-3362, a birth certificate copy not received "
+                "after payment, 31 working days open and past the escalation threshold. "
+                "Contact details for each grievance are held on its case record and are "
+                "not reproduced in this log.",
     },
     {
         "id": "officer-caseload",
         "title": "Caseload note — assessment wing",
+        # This one stated the rule in its last sentence and broke it in the
+        # three before: a single searchable note carrying three owners' names,
+        # emails and mobile numbers is the sharing it forbids, just done in
+        # advance. Assessments by reference now, so the closing rule is one the
+        # document itself keeps.
         "text": "Assessment wing caseload, week 24. Three objections carried forward. "
-                "AS-4417, owner Arun Mehta, arun.mehta@example.com, 9884433221, built-up "
-                "area 1,240 sq ft, objection lodged on the locality rate. AS-4420, owner "
-                "Sundari Ganesan, 9600427718, objection lodged on the built-up area "
-                "measurement, site visit requested. AS-4431, owner Vikram Pillai, "
-                "vikram.p@example.com, no objection lodged, assessment stands. Officers "
-                "must not share an owner's contact details with another owner.",
+                "AS-4417, built-up area 1,240 sq ft, objection lodged on the locality "
+                "rate. AS-4420, objection lodged on the built-up area measurement, site "
+                "visit requested. AS-4431, no objection lodged, assessment stands. Owner "
+                "details are held on the individual assessment record. Officers must not "
+                "share an owner's contact details with another owner.",
     },
 
 {
