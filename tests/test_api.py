@@ -31,11 +31,7 @@ def test_home_page_is_served(client):
 
 
 def test_demo_charts_are_served(client):
-    """Both charts are routes, not static files — the mount would 404 them."""
-    swimlane = client.get("/demo")
-    assert swimlane.status_code == 200
-    assert "Where the rails sit" in swimlane.text
-
+    """The chart is a route, not a static file — the mount would 404 it."""
     stages = client.get("/demo/stages")
     assert stages.status_code == 200
     assert "From prompt to reply" in stages.text
@@ -375,6 +371,6 @@ def test_app_pages_redirect_to_the_door_and_remember_where_you_were(anonymous):
     assert r.headers["location"] == "/login?next=/console"
 
 
-def test_the_architecture_view_is_an_operators_tool(citizen, client):
-    assert citizen.get("/demo", follow_redirects=False).status_code == 303
-    assert client.get("/demo", follow_redirects=False).status_code == 200
+def test_the_lifecycle_chart_is_an_operators_tool(citizen, client):
+    assert citizen.get("/demo/stages", follow_redirects=False).status_code == 303
+    assert client.get("/demo/stages", follow_redirects=False).status_code == 200

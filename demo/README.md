@@ -7,7 +7,6 @@ Four ways to look at it:
 
 | | |
 |---|---|
-| **[`index.html`](index.html)** → **/demo** | the architecture as swimlanes for the **agent flow**, with a live runner, an ingestion panel, and the five scenarios. |
 | **[`stages.html`](stages.html)** → **/demo/stages** | the chat request stage by stage, in depth, with a live trace overlaid. |
 | **[`flow.py`](flow.py)** | the same stage chart in the terminal. `python demo/flow.py --sample injection` |
 | **this file** | the reference diagrams and a written account of each stage. |
@@ -69,7 +68,7 @@ model is allowed to read it. Neither exists in the chat path, and neither is opt
 
 ## The five scenarios
 
-Run them from `/demo`, or `POST /api/scenarios/{id}/run`. They drive the real engine and
+Run them with `POST /api/scenarios/{id}/run`. They drive the real engine and
 assert on what came back.
 
 | | Scenario | Surfaces | What it proves |
@@ -446,7 +445,7 @@ regenerations, and total-vs-rail milliseconds. "View trace" opens the full stage
 ## Running it
 
 ```bash
-python run.py                       # console, with this chart at /demo
+python run.py                       # console, with this chart at /demo/stages
 python demo/flow.py                 # terminal chart, live trace overlaid
 python demo/flow.py --sample pii    # clean | pii | injection | ungrounded
 python demo/flow.py --ask "..."     # your own prompt

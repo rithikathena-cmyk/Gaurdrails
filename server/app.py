@@ -62,13 +62,8 @@ def create_app() -> FastAPI:
         return _gate(gc_session, "/console") or FileResponse(WEB / "index.html")
 
     # The request-lifecycle chart. Declared before the static mount below, so
-    # it wins the path; the page itself calls /api/chat to overlay a real trace.
-    @app.get("/demo", include_in_schema=False)
-    def demo(gc_session: str | None = Cookie(default=None)):
-        # The architecture view runs scenarios and ingests documents, so it is
-        # an operator's tool rather than a citizen's.
-        return _gate(gc_session, "/demo", "scenarios") or FileResponse(DEMO / "index.html")
-
+    # it wins the path; the page itself calls /api/agent/chat to overlay a real
+    # trace.
     @app.get("/demo/stages", include_in_schema=False)
     def demo_stages(gc_session: str | None = Cookie(default=None)):
         """The same pipeline stage by stage, in depth."""

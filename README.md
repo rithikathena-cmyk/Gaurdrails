@@ -43,7 +43,7 @@ egress, for an authorized caller — the model never sees a raw SSN. A failed ou
 returns to the model, never to the user; only a second failure surfaces a human. A tool
 that changes state outside the system stops and asks a person, always.
 
-See it: **`/demo`** is the agent pipeline as a diagram you can run
+See it: **`/demo/stages`** is the agent pipeline stage by stage, with a live runner
 live, and drive five scenarios through. **`/demo/stages`** is the same thing stage by
 stage.
 
@@ -341,7 +341,6 @@ didn't finish checking" is not the same as "the check errored".
 │       └── chat · docs · trace · params · people · history · markdown · main
 │
 ├── demo/                     the pipeline, drawn and explained
-│   ├── index.html            swimlane view of the agent flow            (/demo)
 │   ├── stages.html           the same request, stage by stage    (/demo/stages)
 │   ├── flow.py               the terminal chart, with a live trace
 │   ├── home_diagram.py       computes the home page flowchart geometry
@@ -401,7 +400,7 @@ python -m pytest tests/ -q    # 309 tests, no API key required
 ```
 
 Then open **http://127.0.0.1:8000** — the pipeline diagram, with the console at
-**/console** and the interactive architecture at **/demo**.
+**/console** and the request lifecycle at **/demo/stages**.
 
 Set `GUARDRAIL_CONFIG` to point at a different policy file, or pass `--config`.
 
@@ -523,7 +522,7 @@ GET  /api/agent/tools                             → the tool set, with its gat
 ## Five scenarios
 
 `guardrails/scenarios.py` drives the real engine and asserts on what came back — they can
-fail, and they say so. Run them from `/demo`, or `POST /api/scenarios/{id}/run`.
+fail, and they say so. Run them with `POST /api/scenarios/{id}/run`.
 
 | | Scenario | What it proves |
 |---|---|---|
