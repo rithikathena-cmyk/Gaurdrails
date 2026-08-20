@@ -344,6 +344,11 @@ def stem(word: str) -> str:
     return word[:-1] if len(word) > 3 and word.endswith("e") else word
 
 
+#: A question longer than this must match at least two distinct terms, not
+#: just clear the coverage ratio. Below it, one match is all a question has
+#: to give — "renewal fee?" is two terms and entirely legitimate.
+MIN_TERMS_FOR_PAIR = 3
+
 K1 = 1.5
 B = 0.75
 
@@ -529,7 +534,7 @@ class Corpus:
         return added
 
     def seed_builtin(self) -> None:
-        """The fifteen built-in public-services documents.
+        """The twenty-five built-in public-services documents.
 
         Deliberately small and incomplete: a knowledge base that covers
         everything never produces an ungrounded answer, so it never exercises
@@ -614,7 +619,7 @@ class Corpus:
         self._avgdl = (total / len(postings)) if postings else 1.0
 
     def search(self, query: str, k: int = 4, min_coverage: float = 0.15) -> list[Hit]:
-        """BM25 ranking, term-coverage gate.
+        """BM25 ranking, term-coverage gate, and a floor of two matched terms.
 
         Coverage is checked before ranking because the two answer different
         questions: BM25 says "which of these is most relevant", coverage says
@@ -632,8 +637,16 @@ class Corpus:
                 return []
             hits: list[Hit] = []
             for doc_id, idx, tf, length in postings:
-                coverage = len(q_set & set(tf)) / len(q_set)
+                matched = q_set & set(tf)
+                coverage = len(matched) / len(q_set)
                 if coverage < min_coverage:
+                    continue
+                # Coverage is a ratio, so a short question needs proportionally
+                # fewer matches to clear the gate: five terms need one. That let
+                # "how do I apply for a fishing permit" reach a trade-licence
+                # chunk on the word "applying" alone. One shared term is a
+                # coincidence, not a topic — unless the question is that short.
+                if len(matched) < 2 and len(q_set) > MIN_TERMS_FOR_PAIR:
                     continue
                 score = 0.0
                 for term in q_set:

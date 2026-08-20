@@ -714,3 +714,23 @@ def test_ingestion_has_its_own_latency_budget(ingest_engine):
     result = ingest_engine.ingest("Long circular", long_document)
     assert not result.quarantined, result.reason
     assert result.document.indexed
+
+def test_one_shared_word_is_not_a_topic(corpus):
+    """Coverage is a ratio, so a short question needs proportionally fewer
+    matches. Five terms needed one, which let a fishing-permit question reach a
+    trade-licence chunk on the word "applying". Two distinct terms are now the
+    floor for anything longer than three."""
+    hits = corpus.search("How do I apply for a fishing permit on the east coast?", 4, 0.15)
+    assert hits == [], f"matched on a coincidence: {[h.doc_id for h in hits]}"
+
+
+def test_a_short_question_may_still_match_on_one_term(corpus):
+    """The floor lifts below four terms: 'renewal fee' is a real question and
+    has only two terms to give."""
+    hits = corpus.search("renewal fee", 4, 0.15)
+    assert hits, "a short, legitimate question should still retrieve"
+
+
+def test_a_genuine_question_still_matches_several_terms(corpus):
+    hits = corpus.search("what documents do I need to renew a trade licence", 4, 0.15)
+    assert hits and "trade-licence-renewal" in hits[0].doc_id

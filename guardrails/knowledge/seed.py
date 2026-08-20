@@ -1,6 +1,6 @@
 """The knowledge base.
 
-`CORPUS` below is the built-in seed: fifteen public-services documents,
+`CORPUS` below is the built-in seed: twenty-five public-services documents,
 deliberately tiny and deliberately incomplete. The grounding rail only means
 something if the model can plausibly reach past what it was given — a knowledge
 base that covers everything never produces an ungrounded answer, so it never
@@ -135,6 +135,115 @@ CORPUS: list[dict[str, str]] = [
                 "measurement, site visit requested. AS-4431, owner Vikram Pillai, "
                 "vikram.p@example.com, no objection lodged, assessment stands. Officers "
                 "must not share an owner's contact details with another owner.",
+    },
+
+{
+        "id": "death-certificate",
+        "title": "Death certificate",
+        "text": "A death must be registered within 21 days at the office for the place "
+                "it occurred, not the place of residence. The informant is the head of "
+                "the household, or the hospital where the death occurred. Certified "
+                "copies cost 100 rupees each and take 7 working days. Copies may be "
+                "requested by a spouse, child, parent, or the executor of the estate, on "
+                "production of photo identification and proof of relationship. A late "
+                "registration beyond 21 days needs an affidavit and the approval of the "
+                "Registrar.",
+    },
+    {
+        "id": "survivor-benefit",
+        "title": "Survivor benefit after a death",
+        "text": "When a pensioner dies, the pension stops at the end of that month and "
+                "the survivor benefit must be claimed separately — it is not automatic. "
+                "A surviving spouse may claim within 12 months of the death. The claim "
+                "needs the death certificate, proof of marriage, the pensioner's "
+                "reference number, and bank details in the survivor's own name. "
+                "Applications are processed within 45 working days. Where the household "
+                "has no income in the meantime, an interim payment may be requested at "
+                "any municipal office and is decided within 10 working days.",
+    },
+    {
+        "id": "trade-licence-new",
+        "title": "A new trade licence",
+        "text": "Applying for a trade licence for the first time is a separate process "
+                "from extending one you already hold. It requires proof of premises, an "
+                "identity document for each partner or director, a site sketch, and "
+                "clearance from the health wing where food is prepared or sold. The fee "
+                "follows the standard schedule — 1,200 rupees under 500 square feet, "
+                "2,400 rupees above — plus a one-time registration charge of 500 rupees. "
+                "A first application takes 30 working days; trading before the licence is "
+                "issued is an offence.",
+    },
+    {
+        "id": "water-connection",
+        "title": "Water and sewerage connection",
+        "text": "A new domestic water connection requires proof of ownership or a "
+                "no-objection letter from the owner, the property tax assessment number, "
+                "and a refundable deposit of 3,000 rupees. Sewerage is connected at the "
+                "same time where a main is available within 30 metres. Work is scheduled "
+                "within 21 working days of payment. A connection cannot be issued while "
+                "property tax on the premises is in arrears.",
+    },
+    {
+        "id": "building-permit",
+        "title": "Building plan approval",
+        "text": "Construction, extension, or a change of use needs plan approval before "
+                "work begins. Submit the site plan, the building plan signed by a "
+                "registered architect, proof of ownership, and the current property tax "
+                "receipt. Plans up to 300 square metres are decided within 30 working "
+                "days; anything larger goes to the technical committee and takes 60. "
+                "Approval lapses if work has not started within two years.",
+    },
+    {
+        "id": "marriage-registration",
+        "title": "Marriage registration",
+        "text": "A marriage is registered at the office for the place it was solemnised "
+                "or where either party has lived for at least six months. Both parties "
+                "attend with photo identification, proof of date of birth, and three "
+                "witnesses. The fee is 200 rupees, and the certificate is issued in 15 "
+                "working days. Registration after 90 days of the ceremony needs the "
+                "Registrar's written permission.",
+    },
+    {
+        "id": "payments-and-refunds",
+        "title": "Paying, and getting money back",
+        "text": "Fees are payable online, at any municipal counter, or by demand draft. "
+                "Cash is accepted only at a counter and only against a printed receipt — "
+                "no officer collects cash anywhere else. A payment made twice, or for a "
+                "service later refused by the department, is refundable on written "
+                "application within 90 days, and is repaid to the account it came from "
+                "within 30 working days. Application fees for a service that was assessed "
+                "and rejected on merit are not refundable.",
+    },
+    {
+        "id": "office-hours",
+        "title": "When offices are open",
+        "text": "Counters are open 09:30 to 17:30 Monday to Friday and 09:30 to 13:00 on "
+                "the second and fourth Saturday. They are closed on other Saturdays, "
+                "Sundays, and declared public holidays. Token issue for same-day service "
+                "stops one hour before closing. The online portal accepts applications at "
+                "any time; working-day counts begin on the next working day.",
+    },
+    {
+        "id": "how-we-use-your-details",
+        "title": "How your details are used",
+        "text": "Contact details are used to reach you about the application they were "
+                "given for. They are visible to the wing handling that application and to "
+                "an operator reviewing it, and are not shared with another applicant or "
+                "with any private party. You may ask what is held about you, and ask for "
+                "a correction, in writing to the wing that holds the file. A grievance "
+                "about how your details were handled follows the ordinary escalation "
+                "route and is answered within 15 working days.",
+    },
+    {
+        "id": "fraud-warning",
+        "title": "What staff will never ask you for",
+        "text": "No officer will ask for a one-time password, an account password, or a "
+                "card number, by telephone, email, or message. No officer will ask for "
+                "payment to a personal account or a payment application. No officer will "
+                "offer to speed up an application for a fee. A caller who asks for any of "
+                "these is not from this department, whatever number they appear to call "
+                "from. Report an approach of this kind through the grievance route, "
+                "quoting the date and the number that called.",
     },
 
     {

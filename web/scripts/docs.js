@@ -232,7 +232,7 @@ function report(body) {
 }
 
 async function resetCorpus() {
-  if (!confirm("Drop every uploaded document and restore the fifteen built-in ones?")) return;
+  if (!confirm("Drop every uploaded document and restore the twenty-five built-in ones?")) return;
   $("#d-reset").disabled = true;
   try {
     await api.resetDocuments();

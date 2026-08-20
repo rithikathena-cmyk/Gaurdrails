@@ -85,7 +85,7 @@ ENGINE = [
     ("n2", "2", "Normalize  [locked]", "NFKC → strip invisibles → homoglyph fold → collapse", ("normalize",)),
     ("n3", "3", "Prompt rails", "surface user.prompt · all rails concurrent, one budget", ("prompt rails",)),
     ("n4", "4", "Policy decision  [locked]", "precedence ▶ then a review of whatever landed marginal", ("policy decision",)),
-    ("n5", "5", "Retrieval", "bm25 over 15 built-ins + uploads · top k=4 · coverage ≥ 0.15", ("retrieval",)),
+    ("n5", "5", "Retrieval", "bm25 over 25 built-ins + uploads · top k=4 · coverage ≥ 0.15", ("retrieval",)),
     ("n6", "6", "Retrieval rails", "surface retrieval · mask it or drop it · published contacts exempt", ("retrieval rails",)),
     ("n7", "7", "Generation", "SYSTEM_PROMPT + CONTEXT[1..n] + the masked QUESTION", ("generation", "regeneration")),
     ("n8", "8", "Output rails", "surface llm.response · words · pii · entities · policy · content", ("output rails",)),

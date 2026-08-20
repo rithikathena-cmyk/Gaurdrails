@@ -1,6 +1,6 @@
 """Where documents live, and how facts come back out.
 
-    seed.py     the fifteen built-in documents, and the retrieval entry point
+    seed.py     the twenty-five built-in documents, and the retrieval entry point
     ingest.py   extraction, chunking, the corpus and its BM25 index
 
 Ingestion is a trust boundary of its own — an uploaded document is

@@ -325,7 +325,7 @@ to explain itself in the refusal, and `_refusal()` reads that list.
 
 ### 5 · Retrieval — `guardrails/ingest.py`
 
-BM25 over every indexed chunk — the fifteen seed documents plus everything ingested — top
+BM25 over every indexed chunk — the twenty-five seed documents plus everything ingested — top
 `k = grounding.context_window`, gated by term coverage at `ingest.min_chunk_score`. The
 two numbers answer different questions: BM25 ranks, coverage decides whether any of it is
 about the question at all. A weak match is worse than no match, because it gives the
@@ -336,7 +336,7 @@ Quarantined documents are not in the index, so retrieval cannot return them.
 The seed corpus is small and incomplete **on purpose** — a knowledge base that covers
 everything never produces an ungrounded answer, so it never exercises the rail.
 
-Four of the fifteen carry contact details:
+Four of the twenty-five carry contact details:
 
 | Document | Why it is there |
 |---|---|

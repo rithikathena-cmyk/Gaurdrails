@@ -84,6 +84,20 @@ def test_the_seed_corpus_carries_contact_details_to_retrieve():
 
 
 @pytest.mark.parametrize("question,expect", [
+    # The services a municipal desk is actually asked about. Each one is here
+    # because a question a citizen would really ask must reach it.
+    ("my husband died, how do I get a death certificate", "death-certificate"),
+    ("the pension stopped after a death, how do I claim the survivor benefit",
+     "survivor-benefit"),
+    ("I am opening a shop, how do I apply for a trade licence for the first time",
+     "trade-licence-new"),
+    ("how do I get a new water connection", "water-connection"),
+    ("do I need approval before I extend my house", "building-permit"),
+    ("where do I register a marriage", "marriage-registration"),
+    ("can I get a refund if I paid twice", "payments-and-refunds"),
+    ("what time do the counters close", "office-hours"),
+    ("who can see my contact details", "how-we-use-your-details"),
+    ("someone called asking for an OTP, is that your office", "fraud-warning"),
     ("who do I escalate a grievance to", "grievance-escalation"),
     ("which email handles housing grant appeals", "office-directory"),
     ("how long do I have to appeal a rejected housing grant", "appeal-deadlines"),

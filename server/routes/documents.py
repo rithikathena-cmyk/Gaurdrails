@@ -161,6 +161,6 @@ def delete_document(doc_id: str) -> dict[str, Any]:
 
 @router.post("/documents/reset")
 def reset_documents() -> dict[str, Any]:
-    """Back to the fifteen built-in documents. Uploads are dropped, not archived."""
+    """Back to the twenty-five built-in documents. Uploads are dropped, not archived."""
     state.corpus.reset()
     return {"ok": True, "stats": state.corpus.stats()}

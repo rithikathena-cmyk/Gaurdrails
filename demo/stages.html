@@ -617,7 +617,7 @@ footer code { font-family:var(--mono); }
         <svg class="caret" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="node-body">
-        <p>BM25 over every indexed chunk — the fifteen seed documents plus anything ingested —
+        <p>BM25 over every indexed chunk — the twenty-five seed documents plus anything ingested —
            gated by term coverage. The two answer different questions: BM25 ranks, coverage
            decides whether any of it is about the question at all. Anything under 0.15 is
            dropped, because a weak match is worse than no match: it gives the grounding rail
@@ -653,7 +653,7 @@ footer code { font-family:var(--mono); }
            context is <b>dropped</b> and generation continues without it; masked context is what
            the model sees. In the shipped matrix <code>content</code> is <code>off</code> on this
            surface — the corpus is ours — while <code>pii</code> stays <code>high</code>.</p>
-        <p><b>This is where the allowlist earns its place.</b> Four of the fifteen built-in
+        <p><b>This is where the allowlist earns its place.</b> Four of the twenty-five built-in
            documents carry contact details, because a citizen asking “who do I escalate to” wants
            an address, not a policy summary. To a regular expression a departmental address looks
            exactly like a personal one, so without

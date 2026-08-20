@@ -307,7 +307,7 @@ didn't finish checking" is not the same as "the check errored".
 │   │   └── adjudicator.py    the second opinion on decisions made by a hair
 │   │
 │   ├── knowledge/            what the answers are grounded in
-│   │   ├── seed.py           fifteen built-in documents
+│   │   ├── seed.py           twenty-five built-in documents
 │   │   └── ingest.py         extract → chunk → mask → BM25 index
 │   │
 │   └── evaluation/           does it still work, and how well
