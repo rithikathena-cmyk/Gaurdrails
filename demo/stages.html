@@ -278,9 +278,9 @@ footer code { font-family:var(--mono); }
     </a>
     <div>
       <h1>From prompt to reply</h1>
-      <p>Everything that happens to one message: keystroke, HTTP, eleven pipeline stages,
-         and back. Click any stage to open it — or run a real request and watch the path
-         it actually took light up.</p>
+      <p>Everything that happens to one message: keystroke, HTTP, the agent loop, and
+         back. Click any stage to open it — or run a real request and watch the path it
+         actually took light up. The four middle stages repeat once per tool call.</p>
     </div>
     <div class="spacer"></div>
     <a class="back homebtn" href="/"><svg width="13" height="13" viewBox="0 0 16 16" fill="none" aria-hidden="true"><path d="M2.6 6.9 8 2.6l5.4 4.3V13a.9.9 0 0 1-.9.9h-9a.9.9 0 0 1-.9-.9V6.9Z" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/><path d="M6.5 13.9V9.6h3v4.3" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/></svg>Home</a>
@@ -606,86 +606,137 @@ footer code { font-family:var(--mono); }
 
   <div class="step">
     <div class="gutter"><span class="idx">5</span></div>
-    <div class="node" data-node="n5" data-stage="Retrieval">
+    <div class="node" data-node="n5" data-stage="Agent step">
       <button class="node-head">
         <span class="grow">
-          <span class="node-title">Retrieval</span>
-          <span class="node-sub">BM25 over the index · top k = 4 · term coverage ≥ 0.15</span>
-          <span class="node-file">guardrails/knowledge.py</span>
+          <span class="node-title">Agent step <span class="chip mute">model</span></span>
+          <span class="node-sub">the model reads what it has and picks a tool, or answers</span>
+          <span class="node-file">guardrails/agent/runner.py · _loop()</span>
           <span class="node-metrics"></span>
         </span>
         <svg class="caret" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="node-body">
-        <p>BM25 over every indexed chunk — the twenty-five seed documents plus anything ingested —
-           gated by term coverage. The two answer different questions: BM25 ranks, coverage
-           decides whether any of it is about the question at all. Anything under 0.15 is
-           dropped, because a weak match is worse than no match: it gives the grounding rail
-           irrelevant context to score against.</p>
-        <p>Tokens are stemmed, so <code>file</code>, <code>filed</code> and <code>filing</code>
-           are one term. Without that, “where do I file a grievance” scored 0.143 against a
-           0.15 gate and the right document was dropped by a hair.</p>
-        <p>The corpus is small and incomplete <i>on purpose</i>: a knowledge base that covers
-           everything never produces an ungrounded answer, so it never exercises the rail you
-           built. Swap <code>retrieve()</code> for a vector search and nothing else changes.</p>
+        <p>One turn of the loop. The model sees only the tools the config enabled — it
+           cannot call what it cannot see — and either asks for one or writes the answer.</p>
+        <p>Bounded twice, because one bound is not enough: <code>agent.max_steps</code> rounds
+           and <code>agent.max_tool_calls</code> calls across the whole request. A loop that
+           only counts rounds can still make forty calls in six of them.</p>
         <div class="rails" data-rails>
-          <div class="rail"><b>corpus.search</b><span class="eng">bm25 + coverage gate</span><span class="measure"></span><span class="v"><span class="chip pass">pass</span></span></div>
+          <div class="rail"><b>llm.converse</b><span class="eng">claude · tool use</span><span class="measure"></span><span class="v"><span class="chip mute">—</span></span></div>
         </div>
       </div>
     </div>
-    <div class="lane"></div>
   </div>
 
   <div class="step">
     <div class="gutter"><span class="idx">6</span></div>
-    <div class="node" data-node="n6" data-stage="Retrieval rails">
+    <div class="node" data-node="n6" data-stage="Tool call">
       <button class="node-head">
         <span class="grow">
-          <span class="node-title">Retrieval rails <span class="chip mute">surface retrieval</span></span>
-          <span class="node-sub">what came back out of the corpus is input too</span>
-          <span class="node-file">engine.py · evaluate()</span>
+          <span class="node-title">Tool call <span class="chip mute">surface agent.tool</span></span>
+          <span class="node-sub">the arguments, checked before anything runs</span>
+          <span class="node-file">runner.py · _one_call()</span>
           <span class="node-metrics"></span>
         </span>
         <svg class="caret" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
       </button>
       <div class="node-body">
-        <p>Runs only when something was retrieved and the matrix enables a family here. Blocked
-           context is <b>dropped</b> and generation continues without it; masked context is what
-           the model sees. In the shipped matrix <code>content</code> is <code>off</code> on this
-           surface — the corpus is ours — while <code>pii</code> stays <code>high</code>.</p>
-        <p><b>This is where the allowlist earns its place.</b> Four of the twenty-five built-in
-           documents carry contact details, because a citizen asking “who do I escalate to” wants
-           an address, not a policy summary. To a regular expression a departmental address looks
-           exactly like a personal one, so without
-           <code>pii.allowlist</code> the model would receive
-           <code>&lt;EMAIL_ADDRESS:9f2e1d&gt;</code> and the desk could never answer the question
-           it exists to answer.</p>
-        <p>The allowlist is matched against <b>spans in the text</b>, not against the detected
-           value — the phone recognizer slices <code>800 425 1969</code> out of a published
-           <code>1800 425 1969</code>, and a value-based rule could never match that fragment. A
-           citizen's own address matches none of the entries and is masked exactly as before,
-           including when both appear in one sentence.</p>
-        <p class="locked"><b>pii.allowlist_ordering — safety invariant.</b> Detection runs first;
-           the allowlist only exempts what was already found. An exempt contact is still detected,
-           still counted, and still written to the audit entry — only the rewrite is skipped. An
-           allowlist consulted <i>before</i> detection would suppress the match itself, making an
-           exemption indistinguishable from a recognizer that quietly failed.</p>
+        <p>The last point before an action leaves the system. The arguments the model
+           produced are evaluated like any other text, because that is what they are.</p>
+        <p class="locked"><b>The approval gate — safety invariant.</b> A tool declared
+           <code>kind="write"</code> stops here and waits for a person, every time. The gate is
+           in <code>runner.py</code>, not in the prompt: told <em>"just file it, don't ask me"</em>,
+           it asks anyway, because the instruction is text and the gate is code.</p>
+        <p>Entitlement is per <em>argument</em>, not per tool. <code>check_claim_status</code>
+           declares <code>reference</code> in its <code>unmask_args</code> and receives the real
+           claim number; nothing else in the call is unmasked, and the model never sees it.</p>
+        <div class="rails" data-rails>
+          <div class="rail"><b>words.lexicon</b><span class="eng">aho–corasick</span><span class="measure"></span><span class="v"><span class="chip mute">mask</span></span></div>
+          <div class="rail"><b>pii.detect</b><span class="eng">regex + checksum + allowlist</span><span class="measure"></span><span class="v"><span class="chip mute">flag</span></span></div>
+          <div class="rail"><b>policy.rules</b><span class="eng">named rule sets</span><span class="measure"></span><span class="v"><span class="chip mute">per rule</span></span></div>
+          <div class="rail"><b>content.safety</b><span class="eng">claude judge</span><span class="measure"></span><span class="v"><span class="chip mute">block</span></span></div>
+        </div>
       </div>
     </div>
-    <div class="lane">
-      <div class="branch info"><b>context dropped</b><span>A blocked chunk never becomes model input; the request continues ungrounded and the grounding rail will notice.</span></div>
+  </div>
+  <div class="lane">
+      <div class="branch" data-branch="tool-refusal">
+        <b>◀ BLOCK → the call never runs</b>
+        <span>And a write tool that reaches the gate pauses instead: the turn returns an
+              approval, the agent stops mid-loop, and nothing has happened yet.</span>
+      </div>
+    </div>
+  <div class="step">
+    <div class="gutter"><span class="idx">7</span></div>
+    <div class="node" data-node="n7" data-stage="Tool run">
+      <button class="node-head">
+        <span class="grow">
+          <span class="node-title">Tool run</span>
+          <span class="node-sub">the tool executes · vault unmask, only where entitled</span>
+          <span class="node-file">guardrails/agent/tools.py</span>
+          <span class="node-metrics"></span>
+        </span>
+        <svg class="caret" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="node-body">
+        <p>The tool itself. Read tools look things up; the one write tool creates a
+           municipal record in somebody's name, which is why it cannot get here without a
+           person having said yes.</p>
+        <p>Bounded by <code>agent.tool_timeout_ms</code> — one stuck tool must not hold the
+           request open.</p>
+        <div class="rails" data-rails>
+          <div class="rail"><b>tool.&lt;name&gt;</b><span class="eng">in-process</span><span class="measure"></span><span class="v"><span class="chip pass">pass</span></span></div>
+        </div>
+      </div>
     </div>
   </div>
+
+  <div class="step">
+    <div class="gutter"><span class="idx">8</span></div>
+    <div class="node" data-node="n8" data-stage="Tool result">
+      <button class="node-head">
+        <span class="grow">
+          <span class="node-title">Tool result <span class="chip mute">surface agent.data</span></span>
+          <span class="node-sub">what came back, before the model is allowed to read it</span>
+          <span class="node-file">runner.py · _execute()</span>
+          <span class="node-metrics"></span>
+        </span>
+        <svg class="caret" width="12" height="12" viewBox="0 0 16 16" fill="none"><path d="m6 3 5 5-5 5" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      </button>
+      <div class="node-body">
+        <p><b>A tool result is untrusted input.</b> It is attacker-reachable text — a
+           record field somebody else filled in, a document somebody else uploaded. Trusting
+           it because it arrived through your own tool is precisely how indirect injection
+           lands, so it crosses a rail before the model reads it.</p>
+        <p>This is the surface the poisoned-document scenario exercises twice: once at ingest,
+           and again here, when the same payload arrives through a lookup. Covering one and
+           not the other leaves the door open.</p>
+        <div class="rails" data-rails>
+          <div class="rail"><b>pii.detect</b><span class="eng">regex + checksum + allowlist</span><span class="measure"></span><span class="v"><span class="chip mute">mask</span></span></div>
+          <div class="rail"><b>prompt_attack</b><span class="eng">pattern set → claude judge</span><span class="measure"></span><span class="v"><span class="chip mute">block</span></span></div>
+          <div class="rail"><b>content.safety</b><span class="eng">claude judge</span><span class="measure"></span><span class="v"><span class="chip mute">block</span></span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+  <div class="lane">
+      <div class="branch info"><b>result withheld</b><span>A blocked result is not handed to the model. The loop continues without it, and the agent is told the call returned nothing usable.</span></div>
+    </div>
+
+  <div class="lane">
+      <div class="branch info"><b>↺ back to the agent step</b><span>Up to <code>agent.max_steps</code> rounds. Each one crosses both surfaces again — the gates are per call, not per request.</span></div>
+    </div>
 
   <!-- regeneration loop -->
   <div class="loop" id="loop">
     <div class="step first">
-      <div class="gutter"><span class="idx">7</span></div>
-      <div class="node" data-node="n7" data-stage="Generation">
+      <div class="gutter"><span class="idx">9</span></div>
+      <div class="node" data-node="n9" data-stage="Generation">
         <button class="node-head">
           <span class="grow">
             <span class="node-title">Generation</span>
-            <span class="node-sub">SYSTEM_PROMPT + CONTEXT[1..n] + the masked QUESTION</span>
+            <span class="node-sub">the masked question, and whatever the tools returned</span>
             <span class="node-file">guardrails/llm.py · generate()</span>
             <span class="node-metrics"></span>
           </span>
@@ -713,8 +764,8 @@ footer code { font-family:var(--mono); }
     </div>
 
     <div class="step">
-      <div class="gutter"><span class="idx">8</span></div>
-      <div class="node" data-node="n8" data-stage="Output rails">
+      <div class="gutter"><span class="idx">10</span></div>
+      <div class="node" data-node="n10" data-stage="Output rails">
         <button class="node-head">
           <span class="grow">
             <span class="node-title">Output rails <span class="chip mute">surface llm.response</span></span>
@@ -744,8 +795,8 @@ footer code { font-family:var(--mono); }
     </div>
 
     <div class="step last">
-      <div class="gutter"><span class="idx">9</span></div>
-      <div class="node" data-node="n9" data-stage="Grounding">
+      <div class="gutter"><span class="idx">11</span></div>
+      <div class="node" data-node="n11" data-stage="Grounding">
         <button class="node-head">
           <span class="grow">
             <span class="node-title">Grounding</span>
@@ -777,8 +828,8 @@ footer code { font-family:var(--mono); }
   </div>
 
   <div class="step">
-    <div class="gutter"><span class="idx">10</span></div>
-    <div class="node" data-node="n10" data-stage="Egress">
+    <div class="gutter"><span class="idx">12</span></div>
+    <div class="node" data-node="n12" data-stage="Egress">
       <button class="node-head">
         <span class="grow">
           <span class="node-title">Egress</span>
@@ -810,7 +861,7 @@ footer code { font-family:var(--mono); }
   </div>
 
   <div class="step last">
-    <div class="gutter"><span class="idx">11</span></div>
+    <div class="gutter"><span class="idx">13</span></div>
     <div class="node" data-node="n11">
       <button class="node-head">
         <span class="grow">
@@ -970,12 +1021,16 @@ function nodeFor(stageName) {
   if (n.startsWith("normalize")) return "n2";
   if (n.startsWith("prompt rails")) return "n3";
   if (n.startsWith("policy decision")) return "n4";
-  if (n.startsWith("retrieval rails")) return "n6";
-  if (n.startsWith("retrieval")) return "n5";
-  if (n.startsWith("generation") || n.startsWith("regeneration")) return "n7";
-  if (n.startsWith("output rails")) return "n8";
-  if (n.startsWith("grounding")) return "n9";
-  if (n.startsWith("egress")) return "n10";
+  // The agent names its stages after the tool — "Tool call · lookup_fee" — so
+  // these match on the prefix and every round lights the same four boxes.
+  if (n.startsWith("agent step")) return "n5";
+  if (n.startsWith("tool call")) return "n6";
+  if (n.startsWith("tool run")) return "n7";
+  if (n.startsWith("tool result")) return "n8";
+  if (n.startsWith("generation") || n.startsWith("regeneration")) return "n9";
+  if (n.startsWith("output rails")) return "n10";
+  if (n.startsWith("grounding")) return "n11";
+  if (n.startsWith("egress")) return "n12";
   return null;
 }
 
@@ -1101,7 +1156,7 @@ async function run() {
   resetChart();
 
   try {
-    const res = await fetch("/api/chat", {
+    const res = await fetch("/api/agent/chat", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, session_id: SESSION }),
