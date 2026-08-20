@@ -160,6 +160,8 @@ class EntityRail:
 
         # The judge is the fallback, not the default: asked only when the cheap
         # layer found nothing and there is still a candidate in the text.
+        # Presidio never returns ORGANISATION, so a text whose only identifier is
+        # one still has to reach the judge.
         if not items and use_judge:
             found = self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
             items = list((found.get("entities") or [])[:40])

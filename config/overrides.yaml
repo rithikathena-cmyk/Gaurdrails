@@ -6,7 +6,7 @@
 # Safe to delete: removing it reverts every parameter to the baseline. Safe to
 # commit: it is the record of what a deployment actually changed.
 
-updated_at: 2026-08-20T15:12:54+0530
+updated_at: 2026-08-20T15:44:53+0530
 values:
   pii.custom_regex:
   - CLM-\d{8}

@@ -51,9 +51,15 @@ KIND_MAP = {
     "LOCATION": "ADDRESS",
     "GPE": "ADDRESS",
     "NRP": "PERSON",
-    "ORGANIZATION": "ORGANISATION",
-    "ORG": "ORGANISATION",
 }
+
+#: ORGANIZATION is deliberately absent. The distinction that matters — a private
+#: employer that identifies a person should be masked, the department the citizen
+#: is writing to should not — is a judgement about what an organisation *is*, and
+#: NER only knows that it is one. Left to Presidio it masked "Chennai
+#: Corporation", the desk's own name, in a sentence about where to go. The judge
+#: is told the difference and keeps that kind.
+JUDGE_ONLY_KINDS = {"ORGANISATION"}
 
 #: A house number immediately before a name-like span. spaCy's small English
 #: model reliably tags "Anna Salai" and drops the "14" in front of it, so the
