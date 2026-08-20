@@ -101,3 +101,27 @@ def test_audit_chain_detects_tampering(tmp_path):
     ok, message = AuditLog(path).verify()
     assert ok is False
     assert "modified" in message or "mismatch" in message
+
+def test_concurrent_writes_do_not_fork_the_audit_chain(tmp_path):
+    """Regression: `write()` read the previous hash, hashed, appended, then
+    advanced the pointer — with no lock. Two requests overlapping in the thread
+    pool both read the same `prev`, and the chain forked. A tamper-evident log
+    that breaks on its own is worse than none, because it teaches an operator to
+    ignore the alarm that matters."""
+    import concurrent.futures as futures
+
+    from guardrails.tracing import AuditLog, Tracer
+
+    log = AuditLog(tmp_path / "audit.log")
+
+    def one(i: int) -> None:
+        t = Tracer()
+        with t.stage("Prompt rails"):
+            pass
+        log.write(t.finish(Verdict.PASS), [])
+
+    with futures.ThreadPoolExecutor(max_workers=16) as pool:
+        list(pool.map(one, range(60)))
+
+    ok, message = log.verify()
+    assert ok, message

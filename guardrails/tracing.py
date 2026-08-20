@@ -8,6 +8,7 @@ report a number it made up.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
@@ -90,6 +91,12 @@ class AuditLog:
     def __init__(self, path: str | Path = "audit.log") -> None:
         self.path = Path(path)
         self._prev = self._tail_hash()
+        # Reading the previous hash, hashing, appending, and advancing the
+        # pointer have to be one step. Without this, two requests overlapping
+        # in the thread pool both read the same `prev` and the chain forks —
+        # and a chain that breaks on its own trains an operator to ignore the
+        # alarm that matters.
+        self._lock = threading.Lock()
 
     def _tail_hash(self) -> str:
         if not self.path.exists():
@@ -109,6 +116,10 @@ class AuditLog:
     def write(self, trace: Trace, detections: list[dict]) -> str:
         import hashlib
 
+        with self._lock:
+            return self._write_locked(trace, detections, hashlib)
+
+    def _write_locked(self, trace: Trace, detections: list[dict], hashlib) -> str:
         body = {
             "request_id": trace.request_id,
             "session_id": trace.session_id,
