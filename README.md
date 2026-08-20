@@ -43,15 +43,16 @@ egress, for an authorized caller — the model never sees a raw SSN. A failed ou
 returns to the model, never to the user; only a second failure surfaces a human. A tool
 that changes state outside the system stops and asks a person, always.
 
-See it: **`/demo/stages`** is the agent pipeline stage by stage, with a live runner
-live, and drive five scenarios through. **`/demo/stages`** is the same thing stage by
-stage.
+See it: **`/summary`** carries the pipeline diagram, eight real turns, and a Run button
+on each of the five scenarios — they execute against the deployment you are reading,
+not a recording. **`/demo/stages`** is the same pipeline stage by stage, in depth, with
+a live trace overlaid.
 
 ### Five guardrail families
 
 | Family | What it does | Engine |
 |---|---|---|
-| **Content** | hate, violence, insults, misconduct, self-harm, sexual + prompt injection | pattern layer → Claude judge |
+| **Content** | hate, violence, insults, misconduct, self-harm, sexual + prompt injection | pattern layer → local classifier → Claude judge |
 | **Word** | profanity, custom terms, custom phrases, allowlist exemptions | Aho–Corasick, one pass over the whole lexicon |
 | **Sensitive info** | email, phone, SSN, card, IBAN, Aadhaar, PAN, IP, DOB, custom regex | regex + checksum gate, AES-256-GCM vault |
 | **Grounding** | factual consistency and relevance against retrieved context | Claude judge, claim-level |
@@ -63,6 +64,80 @@ Plus two subsystems with their own parameters and their own trust boundary:
 |---|---|---|
 | **Ingestion** | extract, scan, mask, chunk, index — or quarantine | BM25 index · rails at `ingest.document` |
 | **Agent & tools** | tool calls with a rail on the arguments and on the result, and an approval gate in front of every write | Claude tool use · `agent.tool` / `agent.data` |
+
+---
+
+## How the pipeline works
+
+Every checkpoint above is the same function, `Engine.evaluate(text, surface)`, called on
+a different surface. A rail never knows which surface it is on — the surface decides
+only *which* rails run and *how strict* they are. Adding a trust boundary is a new
+surface, not a new pipeline.
+
+**The job list comes from the severity matrix.** A cell set to `off` means the rail is
+never constructed for that surface, which is why turning `content` off at `agent.tool`
+took that stage from ~3,000ms to 4ms — the job never entered the list.
+
+```python
+jobs = []
+if p.enabled("words", surface):  jobs.append(word_rail)
+if p.enabled("pii",   surface):  jobs.append(pii_rail)
+...
+```
+
+**Rails in a stage run concurrently, against one shared deadline.**
+
+```python
+with futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
+    for fut in futures.as_completed(pending, timeout=budget):
+        results.append(fut.result())
+except futures.TimeoutError:
+    for name in unfinished:                      # whatever did not finish
+        results.append(RailResult(verdict=BLOCK, error="latency budget exceeded"))
+```
+
+Two consequences worth planning around. A stage costs its **slowest** rail, not the sum
+— so replacing one slow rail often saves nothing, because a sibling is still holding
+the stage open. And the timeout **fails closed per rail**, whatever `policy.fail_mode`
+says: "we did not finish checking" is not "there was nothing to find".
+
+**Verdicts combine by precedence, never by vote.**
+
+```python
+verdict = precedence([r.verdict for r in results])      # block > mask > flag > pass
+```
+
+Six rails passing and one blocking is a block. No averaging, no majority — one
+permissive rail can never overrule a restrictive one.
+
+**Masking composes, and that took a real bug to get right.** Each rail computes its
+replacement from the text *it was given*, so two masking rails on one request each
+rewrote the original and whichever wrote last silently won — a blocked word next to an
+SSN came out unmasked. A later masking rail is now re-run against the text as it stands.
+That is only safe because none of the text-rewriting rails is model-backed, so the
+second pass costs nothing.
+
+### Inside one rail
+
+```
+structural gate     0.2ms      no capitalised word? no model is called at all
+deterministic       0.1ms      INJECTION_PATTERNS, checksums, the word automaton
+local model      90–300ms      a confident hit may block — never clear
+Claude judge      1.8–4s       everything still undecided
+```
+
+The rule the middle tier follows: **a local model may end a request early only by
+blocking it, never by clearing it.** "This model found nothing it was trained to find"
+and "there is nothing here" are different claims, and only one of them is safe to act
+on. `content.local_short_circuit_scope` locks that, and three measurements this belongs
+to are recorded in the rail docstrings — a toxicity model scoring a plain insult 0.75 on
+*sexual*, an injection model scoring a shipped demo prompt 0.991 against 1.000 for a
+real attack, and Presidio masking "Birth" in "Birth and death records".
+
+Anything in a trace over a second is a judge call. Everything under a millisecond is
+ordinary code — and that is most of the checks. Which layer settled a rail is recorded
+in the trace beside its verdict, so the split is auditable rather than assumed; see
+[Tracing](#tracing) for why those numbers can be trusted.
 
 ---
 
