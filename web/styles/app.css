@@ -50,7 +50,20 @@ code {
 }
 .shell.collapsed .sidebar {
   width: 0; padding-left: 0; padding-right: 0; overflow: hidden; border-right: 0;
+  /* Width alone leaves the links focusable — tab still walked into a sidebar
+     nobody can see. */
+  visibility: hidden;
 }
+
+.side-restore {
+  position: fixed; top: 12px; left: 12px; z-index: 60;
+  display: none; place-items: center; width: 32px; height: 32px;
+  border-radius: 9px; cursor: pointer;
+  border: 1px solid var(--border); background: var(--surface); color: var(--ink-2);
+  box-shadow: var(--shadow);
+}
+.shell.collapsed .side-restore { display: grid; }
+.side-restore:hover { border-color: var(--accent); color: var(--accent-ink); }
 
 .side-top { display: flex; align-items: center; gap: 6px; padding: 4px 6px 10px; }
 /* Mark in brand colour, wordmark in ink — the way Claude's own sidebar reads,

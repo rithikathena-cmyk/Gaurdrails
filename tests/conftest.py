@@ -93,3 +93,23 @@ def anonymous(sandbox, monkeypatch, tmp_path):
 
     with TestClient(create_app()) as c:
         yield c
+
+@pytest.fixture(autouse=True)
+def isolate_directory(monkeypatch, tmp_path):
+    """Keep the real user directory and transcripts out of the tests.
+
+    `directory` and `history` are module-level singletons loaded at import from
+    data/. Without this a limit an operator set on a live account — or tokens
+    they spent — decides whether a test passes. That is exactly how a suite
+    starts failing for reasons nobody can reproduce.
+    """
+    from server import auth, history as history_module
+    from server.auth import _default_users
+
+    monkeypatch.setattr(auth, "USERS_PATH", tmp_path / "users.json")
+    monkeypatch.setattr(auth.directory, "users", _default_users())
+    monkeypatch.setattr(auth.directory, "_sessions", {})
+
+    monkeypatch.setattr(history_module.history, "path", tmp_path / "history.json")
+    monkeypatch.setattr(history_module.history, "_turns", {})
+    yield

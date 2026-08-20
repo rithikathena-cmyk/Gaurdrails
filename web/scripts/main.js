@@ -23,7 +23,18 @@ $("#theme").addEventListener("click", () => {
   localStorage.setItem("gc-theme", next);
 });
 
-$("#collapse").addEventListener("click", () => $(".shell").classList.toggle("collapsed"));
+function setSidebar(collapsed) {
+  $(".shell").classList.toggle("collapsed", collapsed);
+  localStorage.setItem("gc-sidebar", collapsed ? "collapsed" : "open");
+  // Focus follows the control that replaces the one you just used, so a
+  // keyboard user is not left with focus on a hidden button.
+  ($(collapsed ? "#expand" : "#collapse"))?.focus({ preventScroll: true });
+}
+$("#collapse").addEventListener("click", () => setSidebar(true));
+$("#expand").addEventListener("click", () => setSidebar(false));
+if (localStorage.getItem("gc-sidebar") === "collapsed") {
+  $(".shell").classList.add("collapsed");
+}
 
 /* ── navigation ── */
 function navigate(view) {

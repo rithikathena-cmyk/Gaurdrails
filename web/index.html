@@ -12,6 +12,17 @@
 
 <div class="shell">
 
+  <!-- The way back. The collapse control lives inside the sidebar, so once the
+       sidebar is gone so is it; this is the only thing on screen that can
+       bring it back. Visible only while collapsed. -->
+  <button class="side-restore" id="expand" title="Show sidebar" aria-label="Show sidebar">
+    <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+      <rect x="1.5" y="2.5" width="13" height="11" rx="2" stroke="currentColor" stroke-width="1.4"/>
+      <line x1="6" y1="2.5" x2="6" y2="13.5" stroke="currentColor" stroke-width="1.4"/>
+    </svg>
+  </button>
+
+
   <!-- ══════════════════ SIDEBAR ══════════════════ -->
   <aside class="sidebar">
     <div class="side-top">
