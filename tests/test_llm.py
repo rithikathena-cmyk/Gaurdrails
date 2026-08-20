@@ -57,3 +57,26 @@ def test_generation_shape_has_no_format_block():
 
 def test_older_model_generation_sends_no_output_config():
     assert _tuning("claude-haiku-4-5", "medium") == {}
+
+
+def test_a_key_with_a_trailing_newline_still_works(monkeypatch):
+    """Pasting a key into a hosting dashboard picks up a newline more often
+    than not, and httpx will not put a newline in a header. It surfaced as
+    `APIConnectionError` — indistinguishable from a firewall — and every rail
+    failed closed, so the deployment refused every request over one invisible
+    character."""
+    from backend.guardrails.llm import Claude
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key\n")
+    assert Claude().client.api_key == "sk-ant-test-key"
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "  sk-ant-test-key  ")
+    assert Claude().client.api_key == "sk-ant-test-key"
+
+
+def test_a_key_that_is_only_whitespace_is_no_key_at_all(monkeypatch):
+    from backend.guardrails.llm import Claude, LLMError
+
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "   \n")
+    with pytest.raises(LLMError, match="not set"):
+        Claude()

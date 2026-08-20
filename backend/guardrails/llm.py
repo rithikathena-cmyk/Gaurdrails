@@ -161,7 +161,13 @@ def _check_refusal(message: Any) -> None:
 class Claude:
     def __init__(self, api_key: str | None = None, *, model: str = DEFAULT_MODEL,
                  judge_model: str = DEFAULT_MODEL, use_fallbacks: bool = True) -> None:
-        key = api_key or os.getenv("ANTHROPIC_API_KEY")
+        # Stripped, because a key pasted into a hosting dashboard or echoed into
+        # a file arrives with a trailing newline more often than not. httpx will
+        # not put a newline in a header, so the failure surfaced as
+        # `APIConnectionError` — indistinguishable from a firewall until you
+        # read the cause underneath. Every rail then failed closed and the
+        # deployment refused every request, over one invisible character.
+        key = (api_key or os.getenv("ANTHROPIC_API_KEY") or "").strip()
         if not key:
             raise LLMError(
                 "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key."
