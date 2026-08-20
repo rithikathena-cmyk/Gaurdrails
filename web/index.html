@@ -69,6 +69,16 @@
         </svg>
         Parameters
       </button>
+      <button class="nav-item" role="tab" data-view="people" aria-selected="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="6.2" cy="5.6" r="2.5" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M1.8 13.4c.5-2.2 2.3-3.4 4.4-3.4s3.9 1.2 4.4 3.4" stroke="currentColor"
+                stroke-width="1.4" stroke-linecap="round"/>
+          <path d="M11.2 3.4a2.2 2.2 0 0 1 0 4.3M12.4 10.4c1.2.4 2 1.4 2.3 3"
+                stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
+        </svg>
+        People
+      </button>
 
       <div class="nav-rule"></div>
 
@@ -88,6 +98,18 @@
       <div class="recent" id="recent"></div>
     </div>
 
+    <div class="side-foot">
+      <div class="status">
+        <span class="dot" id="status-dot"></span>
+        <span id="status-text">connecting…</span>
+      </div>
+      <button class="icon-btn" id="theme" title="Toggle theme" aria-label="Toggle theme">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"
+                stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
+        </svg>
+      </button>
+    </div>
     <div class="side-user" id="side-user" hidden>
       <span class="who-avatar" id="who-avatar"></span>
       <span class="who-text">
@@ -98,19 +120,6 @@
         <svg width="15" height="15" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M6 2.5H3.5v11H6M10 5l3 3-3 3M13 8H6.5" stroke="currentColor"
                 stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"/>
-        </svg>
-      </button>
-    </div>
-
-    <div class="side-foot">
-      <div class="status">
-        <span class="dot" id="status-dot"></span>
-        <span id="status-text">connecting…</span>
-      </div>
-      <button class="icon-btn" id="theme" title="Toggle theme" aria-label="Toggle theme">
-        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
-          <path d="M13.2 9.6A5.6 5.6 0 0 1 6.4 2.8a5.6 5.6 0 1 0 6.8 6.8Z"
-                stroke="currentColor" stroke-width="1.4" stroke-linejoin="round"/>
         </svg>
       </button>
     </div>
@@ -278,6 +287,66 @@
           <code>config/policy.yaml</code> is never machine-written, so your baseline and its
           comments survive intact and “what did we change” stays a one-file diff.
         </div>
+      </div>
+    </section>
+
+    <section class="view" id="view-people">
+      <div class="page">
+        <header class="page-head">
+          <h1>People</h1>
+          <p>Who holds an account, what each may spend, and which model they get.
+             A budget is a ceiling on model tokens, counted from what the model
+             actually reported — not an estimate — so it agrees with the bill.
+             <em>No ceiling</em> is the default and means exactly that.</p>
+        </header>
+
+        <div class="u-stats">
+          <div class="u-stat"><b id="u-total">0</b><span>accounts</span></div>
+          <div class="u-stat"><b id="u-admins">0</b><span>operators</span></div>
+          <div class="u-stat"><b id="u-citizens">0</b><span>citizens</span></div>
+          <div class="u-stat"><b id="u-spent">0</b><span>tokens spent</span></div>
+          <div class="u-stat"><b id="u-capped">0</b><span>with a ceiling</span></div>
+          <span class="u-over" id="u-over" hidden></span>
+        </div>
+
+        <div class="u-msg" id="u-msg" role="status" hidden></div>
+
+        <div class="card u-table-card">
+          <div class="u-scroll">
+            <table class="u-table">
+              <thead>
+                <tr><th>Person</th><th>Role</th><th>Model</th>
+                    <th>Budget</th><th>Limit and actions</th></tr>
+              </thead>
+              <tbody id="u-rows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <form class="card u-new" id="new-user">
+          <h2>Add someone</h2>
+          <div class="u-fields">
+            <label>Username
+              <input id="nu-name" required maxlength="32" autocomplete="off"
+                     placeholder="r.kumar" pattern="[A-Za-z0-9._-]+"></label>
+            <label>Display name
+              <input id="nu-display" maxlength="48" autocomplete="off"
+                     placeholder="R. Kumar"></label>
+            <label>Password
+              <input id="nu-pass" type="password" required minlength="4"
+                     autocomplete="new-password"></label>
+            <label>Role <select id="nu-role"></select></label>
+            <label>Model <select id="nu-model"></select></label>
+            <label>Token limit
+              <input id="nu-limit" type="number" min="0" step="1000" value="0"
+                     placeholder="0"></label>
+          </div>
+          <div class="u-new-foot">
+            <button class="u-btn primary" type="submit">Add person</button>
+            <span class="u-sub">A limit of 0 means no ceiling. The password is shown to
+              nobody — give it to them yourself.</span>
+          </div>
+        </form>
       </div>
     </section>
 

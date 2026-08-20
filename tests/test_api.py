@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from guardrails.knowledge.seed import CORPUS
+from server.auth import VIEW_PERMISSION
 
 
 @pytest.fixture
@@ -393,7 +394,8 @@ def test_a_citizen_can_still_use_the_thing_they_came_for(citizen):
 def test_an_admin_holds_every_permission(client):
     body = client.get("/api/auth/me").json()["user"]
     assert body["role"] == "admin"
-    assert set(body["views"]) == {"chat", "trace", "docs", "params"}
+    # Derived, not listed: adding a view should not break an unrelated test.
+    assert set(body["views"]) == set(VIEW_PERMISSION)
 
 
 def test_signing_out_ends_the_session(client):

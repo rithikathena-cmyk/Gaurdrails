@@ -13,12 +13,14 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from guardrails import AgentRunner, LLMError
 from guardrails.agent import TOOLS
 
+from ..auth import User, current_user, directory
+from .chat import check_budget, tokens_in
 from ..state import state
 
 router = APIRouter()
@@ -118,8 +120,9 @@ def tools() -> dict[str, Any]:
 
 
 @router.post("/agent/chat")
-def agent_chat(req: AgentRequest) -> dict[str, Any]:
+def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     runner = _runner()
+    check_budget(user)
     try:
         result = runner.run(
             req.message, history=state.history(req.session_id), session_id=req.session_id
@@ -131,11 +134,13 @@ def agent_chat(req: AgentRequest) -> dict[str, Any]:
     # agent has actually answered.
     if not result.blocked and result.approval is None:
         state.remember(req.session_id, req.message, result.reply)
-    return _payload(result)
+    body = _payload(result)
+    directory.spend(user.name, tokens_in(body.get("trace") or {}))
+    return body
 
 
 @router.post("/agent/approve")
-def approve(req: ApprovalRequest) -> dict[str, Any]:
+def approve(req: ApprovalRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     runner = _runner()
     pending = state.claim(req.token)
     if pending is None:
@@ -154,4 +159,5 @@ def approve(req: ApprovalRequest) -> dict[str, Any]:
     body = _payload(result)
     body["approved"] = req.approved
     body["resumed_from"] = pending.origin_request_id
+    directory.spend(user.name, tokens_in(body.get("trace") or {}))
     return body

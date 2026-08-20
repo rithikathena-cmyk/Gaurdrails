@@ -8,7 +8,7 @@ forget to ask.
 from fastapi import APIRouter, Depends
 
 from ..auth import require
-from . import agent, chat, documents, params, scenarios, session, system
+from . import agent, chat, documents, params, scenarios, session, system, users
 
 api = APIRouter(prefix="/api")
 
@@ -23,6 +23,8 @@ api.include_router(documents.router, tags=["documents"],
                    dependencies=[Depends(require("documents"))])
 api.include_router(scenarios.router, tags=["scenarios"],
                    dependencies=[Depends(require("scenarios"))])
+api.include_router(users.router, tags=["users"],
+                   dependencies=[Depends(require("users"))])
 api.include_router(params.router, tags=["parameters"],
                    dependencies=[Depends(require("parameters"))])
 

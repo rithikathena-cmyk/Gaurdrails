@@ -193,7 +193,7 @@ class Claude:
     # Assistant generation
     # -----------------------------------------------------------------
     def generate(self, system: str, messages: list[dict[str, Any]], *,
-                 max_tokens: int = 4096) -> Generation:
+                 max_tokens: int = 4096, model: str | None = None) -> Generation:
         """Non-streaming on purpose.
 
         Output rails need the complete response before anything reaches the
@@ -201,14 +201,18 @@ class Claude:
         Streaming and inline output rails are mutually exclusive; this stack
         chooses the rails.
         """
+        # A per-request override exists so an operator can assign one person a
+        # cheaper model without standing up a second engine — which would mean
+        # a second vault, and tokens minted in one that the other cannot reveal.
+        use = model or self.model
         kwargs: dict[str, Any] = {
-            "model": self.model,
+            "model": use,
             "max_tokens": max_tokens,
             "system": [
                 {"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}
             ],
             "messages": messages,
-            **_tuning(self.model, "medium"),
+            **_tuning(use, "medium"),
         }
 
         try:

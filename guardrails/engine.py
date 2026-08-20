@@ -509,7 +509,7 @@ class Engine:
 
     # -----------------------------------------------------------------
     def converse(self, question: str, history: list[dict[str, Any]] | None = None,
-                 session_id: str = "") -> ConversationResult:
+                 session_id: str = "", *, model: str | None = None) -> ConversationResult:
         """Run a request and apply the human-review trigger.
 
         `_converse` has several early returns — a blocked prompt, a model
@@ -517,7 +517,7 @@ class Engine:
         than at each of those sites means a new return path cannot forget to
         consult the trigger.
         """
-        result = self._converse(question, history, session_id)
+        result = self._converse(question, history, session_id, model=model)
         result.human_review, result.review_reason = self._review(
             result.trace, result.trace.verdict
         )
@@ -528,7 +528,7 @@ class Engine:
         return result
 
     def _converse(self, question: str, history: list[dict[str, Any]] | None = None,
-                  session_id: str = "") -> ConversationResult:
+                  session_id: str = "", *, model: str | None = None) -> ConversationResult:
         p = self.policy
         tracer = Tracer(session_id=session_id)
         history = history or []
@@ -667,7 +667,8 @@ class Engine:
                     )
                     try:
                         gen = self.llm.generate(
-                            SYSTEM_PROMPT, [*history, {"role": "user", "content": user_turn}]
+                            SYSTEM_PROMPT, [*history, {"role": "user", "content": user_turn}],
+                            model=model,
                         )
                         reply = gen.text
                         r.verdict = Verdict.PASS

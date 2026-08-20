@@ -45,7 +45,7 @@ class StubClaude:
             return {"injection": 0.0, "technique": "none", "rationale": "stub"}
         return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}
 
-    def generate(self, system, messages, *, max_tokens=4096):
+    def generate(self, system, messages, *, max_tokens=4096, model=None):
         from guardrails.llm import Generation
 
         self.generations += 1

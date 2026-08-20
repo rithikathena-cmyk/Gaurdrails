@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import logging
 import json
 import os
 import secrets
 import threading
 import time
+from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -38,6 +40,18 @@ PBKDF2_ROUNDS = 240_000
 # One permission per thing worth protecting, rather than a boolean `is_admin`.
 # The difference shows the moment somebody needs a reviewer who can read traces
 # but not edit thresholds.
+log = logging.getLogger("guardrails.server")
+
+#: Models an operator may assign to a person. "" means the deployment default,
+#: so an unset account follows the server rather than pinning a version forever.
+ASSIGNABLE_MODELS: list[dict[str, str]] = [
+    {"key": "", "label": "Deployment default", "note": "follows the server setting"},
+    {"key": "claude-opus-5", "label": "Opus 5", "note": "most capable, needed for agent work"},
+    {"key": "claude-sonnet-5", "label": "Sonnet 5", "note": "balanced"},
+    {"key": "claude-haiku-4-5", "label": "Haiku 4.5", "note": "fastest and cheapest"},
+]
+MODEL_KEYS = {m["key"] for m in ASSIGNABLE_MODELS}
+
 PERMISSIONS: dict[str, str] = {
     "chat": "Ask the assistant, in chat or agent mode",
     "traces": "Read the full trace of any request",
@@ -45,6 +59,7 @@ PERMISSIONS: dict[str, str] = {
     "parameters": "Read and change the control surface",
     "scenarios": "Run the evaluation scenarios",
     "audit": "Read the policy and verify the audit chain",
+    "users": "Add people and set what they may spend",
 }
 
 ROLES: dict[str, dict[str, Any]] = {
@@ -69,6 +84,7 @@ VIEW_PERMISSION = {
     "trace": "traces",
     "docs": "documents",
     "params": "parameters",
+    "people": "users",
 }
 
 
@@ -97,6 +113,25 @@ class User:
     role: str
     password_hash: str
     display: str = ""
+    #: Total model tokens this person may spend. 0 means no ceiling — an
+    #: explicit choice, not an unset field, so it reads the same in the API.
+    token_limit: int = 0
+    tokens_used: int = 0
+    #: "" follows the deployment default rather than pinning a model.
+    model: str = ""
+
+    @property
+    def unlimited(self) -> bool:
+        return self.token_limit <= 0
+
+    @property
+    def tokens_left(self) -> int | None:
+        """None when there is no ceiling — not 0, which would read as spent."""
+        return None if self.unlimited else max(0, self.token_limit - self.tokens_used)
+
+    @property
+    def over_budget(self) -> bool:
+        return not self.unlimited and self.tokens_used >= self.token_limit
 
     @property
     def permissions(self) -> list[str]:
@@ -113,6 +148,14 @@ class User:
             "role_label": ROLES.get(self.role, {}).get("label", self.role),
             "permissions": self.permissions,
             "views": [v for v, p in VIEW_PERMISSION.items() if self.can(p)],
+            "token_limit": self.token_limit,
+            "tokens_used": self.tokens_used,
+            "tokens_left": self.tokens_left,
+            "over_budget": self.over_budget,
+            "model": self.model,
+            "model_label": next(
+                (m["label"] for m in ASSIGNABLE_MODELS if m["key"] == self.model),
+                self.model or "Deployment default"),
         }
 
 
@@ -153,13 +196,137 @@ class Session:
         return time.time() - self.created_at > SESSION_TTL_S
 
 
+#: Where added accounts and spend counters live. Under `data/`, which is
+#: gitignored — password hashes are deployment state, not source.
+USERS_PATH = Path(os.getenv("GUARDRAIL_USERS_FILE", "data/users.json"))
+
+
 class Directory:
-    """Users and their live sessions. In memory: a restart signs everyone out."""
+    """Users and their live sessions.
+
+    Sessions are in memory, so a restart signs everyone out. Users are not:
+    an account somebody added, and the tokens they have spent against their
+    budget, survive a restart or the feature would be a toy.
+    """
 
     def __init__(self) -> None:
         self.users = _default_users()
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
+        self._load()
+
+    # ---- persistence ---------------------------------------------
+    def _load(self) -> None:
+        if not USERS_PATH.exists():
+            return
+        try:
+            raw = json.loads(USERS_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            log.warning("users file unreadable — falling back to defaults")
+            return
+        for entry in raw.get("users", []):
+            name = str(entry.get("name", "")).strip().lower()
+            if not name:
+                continue
+            self.users[name] = User(
+                name=name,
+                role=entry.get("role", "user"),
+                password_hash=entry.get("password_hash", ""),
+                display=entry.get("display", ""),
+                token_limit=int(entry.get("token_limit", 0)),
+                tokens_used=int(entry.get("tokens_used", 0)),
+                model=entry.get("model", ""),
+            )
+
+    def _save(self) -> None:
+        """Called with the lock held."""
+        USERS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        payload = {"version": 1, "users": [
+            {"name": u.name, "role": u.role, "password_hash": u.password_hash,
+             "display": u.display, "token_limit": u.token_limit,
+             "tokens_used": u.tokens_used, "model": u.model}
+            for u in self.users.values()
+        ]}
+        tmp = USERS_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        tmp.replace(USERS_PATH)
+
+    # ---- administration ------------------------------------------
+    def add_user(self, name: str, password: str, role: str, display: str = "",
+                 token_limit: int = 0, model: str = "") -> User:
+        name = (name or "").strip().lower()
+        if not name:
+            raise ValueError("a username is required")
+        if not name.replace("-", "").replace("_", "").replace(".", "").isalnum():
+            raise ValueError("username may contain letters, digits, - _ . only")
+        if role not in ROLES:
+            raise ValueError(f"unknown role {role!r} — one of {sorted(ROLES)}")
+        if len(password or "") < 4:
+            raise ValueError("password must be at least 4 characters")
+        if model not in MODEL_KEYS:
+            raise ValueError(f"unknown model {model!r}")
+        with self._lock:
+            if name in self.users:
+                raise ValueError(f"{name} already exists")
+            user = User(name=name, role=role, password_hash=hash_password(password),
+                        display=(display or "").strip(),
+                        token_limit=max(0, int(token_limit)), model=model)
+            self.users[name] = user
+            self._save()
+        return user
+
+    def remove_user(self, name: str) -> bool:
+        name = (name or "").strip().lower()
+        with self._lock:
+            if name not in self.users:
+                return False
+            self.users.pop(name)
+            # Their live sessions go with them, or a deleted account keeps working
+            # until its cookie expires.
+            for token in [t for t, sess in self._sessions.items() if sess.user == name]:
+                self._sessions.pop(token, None)
+            self._save()
+        return True
+
+    def set_token_limit(self, name: str, limit: int) -> User | None:
+        with self._lock:
+            user = self.users.get((name or "").strip().lower())
+            if user is None:
+                return None
+            user.token_limit = max(0, int(limit))
+            self._save()
+        return user
+
+    def set_model(self, name: str, model: str) -> User | None:
+        if model not in MODEL_KEYS:
+            raise ValueError(f"unknown model {model!r}")
+        with self._lock:
+            user = self.users.get((name or "").strip().lower())
+            if user is None:
+                return None
+            user.model = model
+            self._save()
+        return user
+
+    def reset_usage(self, name: str) -> User | None:
+        with self._lock:
+            user = self.users.get((name or "").strip().lower())
+            if user is None:
+                return None
+            user.tokens_used = 0
+            self._save()
+        return user
+
+    def spend(self, name: str, tokens: int) -> None:
+        """Record what a request cost. Never refuses — the check happens first."""
+        if tokens <= 0:
+            return
+        with self._lock:
+            user = self.users.get((name or "").strip().lower())
+            if user is None:
+                return
+            user.tokens_used += int(tokens)
+            self._save()
 
     # ---- authentication ------------------------------------------
     def authenticate(self, name: str, password: str) -> User | None:
@@ -201,6 +368,13 @@ class Directory:
     def _prune(self) -> None:
         for token in [t for t, s in self._sessions.items() if s.expired]:
             self._sessions.pop(token, None)
+
+    def sessions_for(self, name: str) -> int:
+        """How many live sessions this account has open."""
+        name = (name or "").strip().lower()
+        with self._lock:
+            self._prune()
+            return sum(1 for s in self._sessions.values() if s.user == name)
 
     @property
     def active(self) -> int:

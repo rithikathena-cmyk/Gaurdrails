@@ -33,6 +33,18 @@ export const api = {
   traces:      ()               => request("/api/traces"),
   auditVerify: ()               => request("/api/audit/verify"),
 
+  /* people */
+  users:       ()               => request("/api/users"),
+  addUser:     (body)           => request("/api/users", {
+                                    method: "POST", body: JSON.stringify(body) }),
+  setUser:     (name, body)     => request(`/api/users/${encodeURIComponent(name)}`, {
+                                    method: "PATCH", body: JSON.stringify(body) }),
+  resetUsage:  (name)           => request(
+                                    `/api/users/${encodeURIComponent(name)}/reset-usage`,
+                                    { method: "POST" }),
+  deleteUser:  (name)           => request(`/api/users/${encodeURIComponent(name)}`, {
+                                    method: "DELETE" }),
+
   chat: (message, sessionId) =>
     request("/api/chat", {
       method: "POST",

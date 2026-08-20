@@ -106,7 +106,7 @@ class StubClaude:
         return {c: self.content.get(c, 0.0) for c in props if c != "rationale"} | {
             "rationale": "stub"}
 
-    def generate(self, system, messages, *, max_tokens=4096):
+    def generate(self, system, messages, *, max_tokens=4096, model=None):
         return Generation(text=self.reply, model=self.model)
 
 

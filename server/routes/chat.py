@@ -9,7 +9,7 @@ from pydantic import BaseModel, Field
 
 from guardrails import Engine, LLMError
 
-from ..auth import User, current_user, require
+from ..auth import User, current_user, directory, require
 from ..state import state
 
 router = APIRouter()
@@ -64,12 +64,44 @@ def samples() -> dict[str, Any]:
     return {"samples": SAMPLES}
 
 
+def tokens_in(trace: dict[str, Any]) -> int:
+    """What the model actually reported for this request.
+
+    Summed from `llm.call` rails rather than estimated from the prompt, because
+    an estimate drifts from the bill — and a budget that disagrees with the
+    invoice is worse than no budget.
+    """
+    total = 0
+    for stage in trace.get("stages", []):
+        for rail in stage.get("rails", []):
+            meta = rail.get("meta") or {}
+            total += int(meta.get("input_tokens", 0)) + int(meta.get("output_tokens", 0))
+    return total
+
+
+def check_budget(user: User) -> None:
+    """Refuse before spending, not after.
+
+    429 rather than 403: the request is well-formed and the caller is
+    authorised — they have simply used their allowance.
+    """
+    if user.over_budget:
+        raise HTTPException(429, detail={
+            "kind": "budget",
+            "message": (f"{user.display or user.name} has used "
+                        f"{user.tokens_used:,} of {user.token_limit:,} tokens. "
+                        "An operator can raise the limit or reset the count."),
+        })
+
+
 @router.post("/chat")
-def chat(req: ChatRequest) -> dict[str, Any]:
+def chat(req: ChatRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     engine = _engine()
+    check_budget(user)
     try:
         result = engine.converse(
-            req.message, history=state.history(req.session_id), session_id=req.session_id
+            req.message, history=state.history(req.session_id),
+            session_id=req.session_id, model=user.model or None,
         )
     except LLMError as exc:
         raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
@@ -80,6 +112,7 @@ def chat(req: ChatRequest) -> dict[str, Any]:
 
     trace = result.trace.to_dict()
     state.record(trace)
+    directory.spend(user.name, tokens_in(trace))
 
     return {
         "reply": result.reply,
