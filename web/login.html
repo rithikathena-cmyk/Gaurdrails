@@ -379,8 +379,10 @@ async function signIn(username, password, card) {
     });
     const body = await res.json();
     if (!res.ok) throw new Error(body?.error?.message || "Sign-in failed.");
-    // Never land a citizen on a page they cannot open.
-    location.href = body.user.permissions.includes("traces") ? next : "/console";
+    // `next` is where they were headed before the gate stopped them. Anything
+    // they cannot open still redirects on arrival, so this only has to be
+    // sensible, not clairvoyant.
+    location.href = next;
   } catch (err) {
     say("err", esc(err.message));
     busy = false;

@@ -49,13 +49,12 @@ def create_app() -> FastAPI:
     def home(gc_session: str | None = Cookie(default=None)):
         """The landing page: what the stack is, drawn as one pipeline.
 
-        An operator's overview, not a citizen's. It links to the control
-        surface, the document store and the architecture view — all of which
-        would refuse a citizen — and it carries the scenario reference, so it
-        gates on the same permission the scenarios themselves do. A citizen
-        who lands here is sent to the one screen they do hold.
+        Signed in, and nothing more. It once gated on the scenarios permission
+        because it advertised four screens a citizen cannot open; those are
+        gone, and what is left — the pipeline, the scenario reference, a link
+        to the console — is the same for everybody who works here.
         """
-        return _gate(gc_session, "/", "scenarios") or FileResponse(WEB / "home.html")
+        return _gate(gc_session, "/") or FileResponse(WEB / "home.html")
 
     @app.get("/console", include_in_schema=False)
     def console(gc_session: str | None = Cookie(default=None)):
