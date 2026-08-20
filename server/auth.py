@@ -6,11 +6,13 @@ curl away. So the role resolves to a permission set here, every route that
 matters declares which permission it needs, and the frontend filters its nav
 from the same answer the server enforces — one source, two consumers.
 
-What this is **not**: an identity system. Users live in memory, there is no
-password policy, no lockout, no rate limiting, and no revocation beyond the
-process. It exists so the console has a principal to enforce against and the
-audit log has a name to record. Put a real IdP in front of it before this
-faces anything but localhost.
+What this is **not**: an identity system. There is no password policy, no
+lockout, and no rate limiting. Accounts and sessions are two JSON files under
+`data/`, which makes that directory credential material — a token in
+`sessions.json` is a signed-in browser, so treat it the way you would treat the
+password hashes sitting beside it. It exists so the console has a principal to
+enforce against and the audit log has a name to record. Put a real IdP in front
+of it before this faces anything but localhost.
 """
 
 from __future__ import annotations
@@ -301,13 +303,27 @@ class Session:
 #: gitignored — password hashes are deployment state, not source.
 USERS_PATH = Path(os.getenv("GUARDRAIL_USERS_FILE", "data/users.json"))
 
+#: Live sessions. Beside the password hashes, and as sensitive as they are —
+#: a token in this file is a signed-in browser. Delete it to sign everyone out.
+SESSIONS_PATH = Path(os.getenv("GUARDRAIL_SESSIONS_FILE", "data/sessions.json"))
+
 
 class Directory:
-    """Users and their live sessions.
+    """Users and their live sessions, both of which outlive the process.
 
-    Sessions are in memory, so a restart signs everyone out. Users are not:
-    an account somebody added, and the tokens they have spent against their
-    budget, survive a restart or the feature would be a toy.
+    Sessions used to be memory-only, and the reasoning was sound: a session
+    table that never touches disk cannot be stolen from disk. What that missed
+    is that the cookie is a persistent one — `max_age=SESSION_TTL_S`, eight
+    hours — so the browser goes on presenting a credential the server has
+    already forgotten. Every restart turned every open tab into a redirect to
+    the sign-in page, mid-task, with nothing to explain it. A deploy should not
+    sign out the people using the thing.
+
+    They live in `data/` beside the password hashes, so the file is already as
+    sensitive as that directory: treat it as credential material, keep it off
+    shared disks, and delete it to sign everyone out at once. Expiry is still
+    enforced on load and on read, so a stale file grants nothing — the eight
+    hours run from sign-in, not from restart.
     """
 
     def __init__(self) -> None:
@@ -315,6 +331,7 @@ class Directory:
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
         self._load()
+        self._load_sessions()
 
     # ---- persistence ---------------------------------------------
     def _load(self) -> None:
@@ -367,6 +384,52 @@ class Directory:
         tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
         tmp.replace(USERS_PATH)
 
+    # ---- sessions ------------------------------------------------
+    def _load_sessions(self) -> None:
+        """Restore live sessions, dropping the ones that expired while down.
+
+        A session belonging to a user who no longer exists is dropped too —
+        `remove_user` clears them, but a file written before that ran should not
+        resurrect an account's access.
+        """
+        if not SESSIONS_PATH.exists():
+            return
+        try:
+            raw = json.loads(SESSIONS_PATH.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            log.warning("session file unreadable — everyone signs in again")
+            return
+        restored = 0
+        for entry in raw.get("sessions", []):
+            token, user = str(entry.get("token", "")), str(entry.get("user", ""))
+            if not token or user not in self.users:
+                continue
+            session = Session(token=token, user=user,
+                              created_at=float(entry.get("created_at", 0.0)))
+            if session.expired:
+                continue
+            self._sessions[token] = session
+            restored += 1
+        if restored:
+            log.info("restored %d session(s)", restored)
+
+    def _save_sessions(self) -> None:
+        """Called with the lock held. Same atomic replace the user file uses."""
+        try:
+            SESSIONS_PATH.parent.mkdir(parents=True, exist_ok=True)
+            payload = {"version": 1, "sessions": [
+                {"token": s.token, "user": s.user, "created_at": s.created_at}
+                for s in self._sessions.values() if not s.expired
+            ]}
+            tmp = SESSIONS_PATH.with_suffix(".tmp")
+            tmp.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            tmp.replace(SESSIONS_PATH)
+        except OSError as exc:
+            # A read-only or full disk should not fail the sign-in that
+            # triggered this. The session still works; it just will not
+            # survive a restart, which is where this started.
+            log.warning("could not persist sessions: %s", exc)
+
     # ---- administration ------------------------------------------
     def add_user(self, name: str, password: str, role: str, display: str = "",
                  token_limit: int = 0, model: str = "", daily_limit: int = 0,
@@ -404,6 +467,7 @@ class Directory:
             # until its cookie expires.
             for token in [t for t, sess in self._sessions.items() if sess.user == name]:
                 self._sessions.pop(token, None)
+            self._save_sessions()
             self._save()
         return True
 
@@ -493,6 +557,7 @@ class Directory:
         with self._lock:
             self._prune()
             self._sessions[token] = Session(token=token, user=user.name)
+            self._save_sessions()
         return token
 
     def close_session(self, token: str | None) -> None:
@@ -500,6 +565,7 @@ class Directory:
             return
         with self._lock:
             self._sessions.pop(token, None)
+            self._save_sessions()
 
     def resolve(self, token: str | None) -> User | None:
         if not token:

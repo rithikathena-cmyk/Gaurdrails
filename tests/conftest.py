@@ -131,6 +131,9 @@ def isolate_directory(monkeypatch, tmp_path):
     from server.auth import _default_users
 
     monkeypatch.setattr(auth, "USERS_PATH", tmp_path / "users.json")
+    # Sessions persist now, so the path needs redirecting too or a test run
+    # writes live tokens into the developer's own data/ directory.
+    monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
     monkeypatch.setattr(auth.directory, "users", _default_users())
     monkeypatch.setattr(auth.directory, "_sessions", {})
 

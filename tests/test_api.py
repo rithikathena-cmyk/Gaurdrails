@@ -397,6 +397,62 @@ def test_the_door_is_at_the_root_and_a_live_session_moves_past_it(citizen, clien
         assert r.headers["location"] == "/summary"
 
 
+def test_a_session_outlives_the_process(sandbox, monkeypatch, tmp_path):
+    """A restart must not sign everybody out.
+
+    The cookie is a persistent one — eight hours — so a memory-only session
+    table meant the browser went on presenting a credential the server had
+    forgotten, and every deploy turned an open tab into a redirect to sign-in
+    mid-task. Rebuilding the Directory here is what a restart does to it.
+    """
+    from server import auth
+    from server.auth import Directory
+
+    monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
+    first = Directory()
+    token = first.open_session(first.users["admin"])
+    assert first.resolve(token) is not None
+
+    restarted = Directory()                      # the process came back
+    user = restarted.resolve(token)
+    assert user is not None and user.name == "admin"
+
+
+def test_an_expired_session_is_not_resurrected_by_the_file(sandbox, monkeypatch, tmp_path):
+    """The eight hours run from sign-in, not from restart, so a stale file
+    grants nothing. Expiry is enforced on load as well as on read."""
+    import time as _time
+    from server import auth
+    from server.auth import Directory, Session
+
+    monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
+    first = Directory()
+    token = first.open_session(first.users["admin"])
+    # Age it past the TTL and write that state out, as a long-down server would.
+    first._sessions[token].created_at = _time.time() - auth.SESSION_TTL_S - 1  # noqa: SLF001
+    first._save_sessions()                                                     # noqa: SLF001
+
+    assert Directory().resolve(token) is None
+
+
+def test_a_session_for_a_deleted_account_is_not_restored(sandbox, monkeypatch, tmp_path):
+    """`remove_user` clears live sessions, but a file written before that ran
+    must not hand the account back on the next restart."""
+    from server import auth
+    from server.auth import Directory
+
+    monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
+    first = Directory()
+    first.add_user("temp", "temp-password", "user")
+    token = first.open_session(first.users["temp"])
+    first._save_sessions()                        # noqa: SLF001
+
+    restarted = Directory()
+    restarted.users.pop("temp")                   # the account is gone
+    restarted._load_sessions()                    # noqa: SLF001
+    assert restarted.resolve(token) is None
+
+
 def test_the_old_login_path_still_lands_somewhere(anonymous, citizen):
     """A bookmark should not fall through to the static mount and 404."""
     for who in (anonymous, citizen):
