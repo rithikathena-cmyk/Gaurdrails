@@ -81,6 +81,22 @@ Rules:
 - If the page has no readable text, return nothing at all."""
 
 
+def _why(exc: Exception) -> str:
+    """The underlying reason a connection failed, not just that it did.
+
+    `APIConnectionError` covers DNS failure, a refused connection, a TLS
+    problem and a timeout, and they need completely different fixes. httpx
+    carries the real cause underneath, so a deployment that cannot reach the
+    API says which of those it is instead of leaving somebody to guess.
+    """
+    cause = exc.__cause__ or exc.__context__
+    seen = []
+    while cause is not None and len(seen) < 4:
+        seen.append(f"{type(cause).__name__}: {cause}".strip().rstrip(":"))
+        cause = cause.__cause__ or cause.__context__
+    return " <- ".join(seen) if seen else str(exc) or "no further detail"
+
+
 class LLMError(RuntimeError):
     pass
 
@@ -178,7 +194,7 @@ class Claude:
         except anthropic.APIStatusError as exc:
             raise LLMError(f"judge call failed ({exc.status_code}): {exc.message}") from exc
         except anthropic.APIConnectionError as exc:
-            raise LLMError(f"judge call failed: no connection to the API") from exc
+            raise LLMError(f"judge call failed: cannot reach the API — {_why(exc)}") from exc
 
         _check_refusal(msg)
         raw = _text_of(msg)
@@ -232,8 +248,8 @@ class Claude:
             raise LLMError("rate limited by the API — retry shortly") from exc
         except anthropic.APIStatusError as exc:
             raise LLMError(f"generation failed ({exc.status_code}): {exc.message}") from exc
-        except anthropic.APIConnectionError:
-            raise LLMError("generation failed: no connection to the API") from None
+        except anthropic.APIConnectionError as exc:
+            raise LLMError(f"generation failed: cannot reach the API — {_why(exc)}") from exc
 
         _check_refusal(msg)
 
@@ -284,8 +300,8 @@ class Claude:
             )
         except anthropic.APIStatusError as exc:
             raise LLMError(f"transcription failed ({exc.status_code}): {exc.message}") from exc
-        except anthropic.APIConnectionError:
-            raise LLMError("transcription failed: no connection to the API") from None
+        except anthropic.APIConnectionError as exc:
+            raise LLMError(f"transcription failed: cannot reach the API — {_why(exc)}") from exc
 
         _check_refusal(msg)
         return _text_of(msg).strip()
@@ -318,8 +334,8 @@ class Claude:
             raise LLMError("rate limited by the API — retry shortly") from exc
         except anthropic.APIStatusError as exc:
             raise LLMError(f"agent step failed ({exc.status_code}): {exc.message}") from exc
-        except anthropic.APIConnectionError:
-            raise LLMError("agent step failed: no connection to the API") from None
+        except anthropic.APIConnectionError as exc:
+            raise LLMError(f"agent step failed: cannot reach the API — {_why(exc)}") from exc
 
         _check_refusal(msg)
 
