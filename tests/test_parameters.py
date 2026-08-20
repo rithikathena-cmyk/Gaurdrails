@@ -19,10 +19,10 @@ from pathlib import Path
 
 import pytest
 
-from guardrails import AuditLog, Engine, Surface, Tracer, load
-from guardrails.llm import Generation
-from guardrails.registry import ADJUSTABLE
-from guardrails.types import Verdict
+from backend.guardrails import AuditLog, Engine, Surface, Tracer, load
+from backend.guardrails.llm import Generation
+from backend.guardrails.registry import ADJUSTABLE
+from backend.guardrails.types import Verdict
 from tests.conftest import REPO
 
 # Built with an f-string in engine.py rather than written literally.
@@ -37,7 +37,7 @@ def test_no_orphaned_parameters():
     """A parameter with no consumer looks configurable and does nothing."""
     sources = {
         p: p.read_text(encoding="utf-8")
-        for p in list((REPO / "guardrails").rglob("*.py")) + list((REPO / "server").rglob("*.py"))
+        for p in list((REPO / "backend").rglob("*.py"))
         if p.name != "registry.py"
     }
     orphans = [
@@ -54,7 +54,7 @@ def test_no_dead_rail_config():
     `grounding.require_citations` survived unimplemented.
     """
     dead: list[str] = []
-    for path in (REPO / "guardrails" / "rails").glob("*.py"):
+    for path in (REPO / "backend" / "guardrails" / "rails").glob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for cls in [n for n in ast.walk(tree) if isinstance(n, ast.ClassDef)]:
             stored, read = set(), set()
@@ -141,7 +141,7 @@ def _tmp_cwd(tmp_path, monkeypatch):
 # ═══════════════════════════════════════════════════════════════════
 def test_profanity_enabled_gates_the_base_lexicon(sandbox):
     """Regression: this was declared and never read — toggling it did nothing."""
-    from guardrails.config import save_overrides
+    from backend.guardrails.config import save_overrides
 
     on = load(sandbox / "policy.yaml")
     assert "idiot" in on.lexicons["blocklist"]
@@ -153,7 +153,7 @@ def test_profanity_enabled_gates_the_base_lexicon(sandbox):
 
 def test_profanity_off_keeps_your_own_terms(sandbox):
     """Turning off the shared baseline must not discard rules you wrote."""
-    from guardrails.config import save_overrides
+    from backend.guardrails.config import save_overrides
 
     save_overrides(load(sandbox / "policy.yaml"),
                    {"words.profanity.enabled": False, "words.custom_terms": ["widget"]})

@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails.rails.pii import PIIRail, Vault
-from guardrails.types import RailResult, Verdict
+from backend.guardrails.rails.pii import PIIRail, Vault
+from backend.guardrails.types import RailResult, Verdict
 
 ENTITIES = ["EMAIL_ADDRESS", "US_SSN", "CREDIT_CARD", "PHONE_NUMBER", "AADHAAR"]
 

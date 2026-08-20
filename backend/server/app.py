@@ -13,7 +13,8 @@ from .auth import directory
 from .routes import api
 from .state import state
 
-ROOT = Path(__file__).resolve().parent.parent
+# backend/server/app.py -> backend/server -> backend -> the repo root.
+ROOT = Path(__file__).resolve().parent.parent.parent
 # The browser half lives under frontend/. Nothing in guardrails/ or server/
 # reads it except these two paths and the mount below.
 FRONTEND = ROOT / "frontend"

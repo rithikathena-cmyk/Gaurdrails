@@ -7,8 +7,8 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails.knowledge.seed import CORPUS
-from server.auth import VIEW_PERMISSION
+from backend.guardrails.knowledge.seed import CORPUS
+from backend.server.auth import VIEW_PERMISSION
 
 
 # ── system ─────────────────────────────────────────────────────────
@@ -405,8 +405,8 @@ def test_a_session_outlives_the_process(sandbox, monkeypatch, tmp_path):
     forgotten, and every deploy turned an open tab into a redirect to sign-in
     mid-task. Rebuilding the Directory here is what a restart does to it.
     """
-    from server import auth
-    from server.auth import Directory
+    from backend.server import auth
+    from backend.server.auth import Directory
 
     monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
     first = Directory()
@@ -422,8 +422,8 @@ def test_an_expired_session_is_not_resurrected_by_the_file(sandbox, monkeypatch,
     """The eight hours run from sign-in, not from restart, so a stale file
     grants nothing. Expiry is enforced on load as well as on read."""
     import time as _time
-    from server import auth
-    from server.auth import Directory, Session
+    from backend.server import auth
+    from backend.server.auth import Directory, Session
 
     monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
     first = Directory()
@@ -438,8 +438,8 @@ def test_an_expired_session_is_not_resurrected_by_the_file(sandbox, monkeypatch,
 def test_a_session_for_a_deleted_account_is_not_restored(sandbox, monkeypatch, tmp_path):
     """`remove_user` clears live sessions, but a file written before that ran
     must not hand the account back on the next restart."""
-    from server import auth
-    from server.auth import Directory
+    from backend.server import auth
+    from backend.server.auth import Directory
 
     monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
     first = Directory()

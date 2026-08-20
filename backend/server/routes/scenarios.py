@@ -12,7 +12,7 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException
 
-from guardrails import LLMError, scenarios as sc
+from backend.guardrails import LLMError, scenarios as sc
 
 from ..state import state
 

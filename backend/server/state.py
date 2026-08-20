@@ -15,7 +15,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any
 
-from guardrails import (
+from backend.guardrails import (
     AgentRunner,
     AuditLog,
     Claude,

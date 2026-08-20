@@ -16,8 +16,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from guardrails import AgentRunner, LLMError
-from guardrails.agent import TOOLS
+from backend.guardrails import AgentRunner, LLMError
+from backend.guardrails.agent import TOOLS
 
 from ..auth import User, cost_micros, current_user, directory
 from ..history import history

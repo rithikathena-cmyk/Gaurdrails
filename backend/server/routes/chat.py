@@ -7,7 +7,7 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from guardrails import Engine, LLMError
+from backend.guardrails import Engine, LLMError
 
 from ..auth import User, cost_micros, current_user, directory, require
 from ..history import history

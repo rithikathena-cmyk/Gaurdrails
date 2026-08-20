@@ -14,10 +14,10 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails.rails import presidio_ner
-from guardrails.rails.entities import EntityRail
-from guardrails.rails.pii import Vault
-from guardrails.types import Detection, RailResult, Verdict
+from backend.guardrails.rails import presidio_ner
+from backend.guardrails.rails.entities import EntityRail
+from backend.guardrails.rails.pii import Vault
+from backend.guardrails.types import Detection, RailResult, Verdict
 
 pytestmark = pytest.mark.presidio
 

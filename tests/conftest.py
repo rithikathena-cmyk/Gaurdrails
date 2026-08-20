@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 from fastapi.testclient import TestClient
 
-from guardrails import AuditLog, Engine, load
-from guardrails.rails import (
+from backend.guardrails import AuditLog, Engine, load
+from backend.guardrails.rails import (
     deberta_injection_check,
     groundedness_check,
     toxicity_check,
@@ -78,9 +78,9 @@ def client(sandbox, monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)          # keep audit + changelog out of the repo
 
-    from server.app import create_app
-    from server.routes import params as params_routes
-    from server.state import state as app_state
+    from backend.server.app import create_app
+    from backend.server.routes import params as params_routes
+    from backend.server.state import state as app_state
 
     params_routes.CHANGELOG = tmp_path / "config-changes.log"
     app_state.corpus.path = tmp_path / "corpus.json"   # never touch data/
@@ -99,8 +99,8 @@ def citizen(sandbox, monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    from server.app import create_app
-    from server.state import state as app_state
+    from backend.server.app import create_app
+    from backend.server.state import state as app_state
 
     app_state.corpus.path = tmp_path / "corpus.json"
     app_state.corpus.reset()
@@ -113,7 +113,7 @@ def citizen(sandbox, monkeypatch, tmp_path):
 def anonymous(sandbox, monkeypatch, tmp_path):
     monkeypatch.setenv("GUARDRAIL_CONFIG", str(sandbox / "policy.yaml"))
     monkeypatch.chdir(tmp_path)
-    from server.app import create_app
+    from backend.server.app import create_app
 
     with TestClient(create_app()) as c:
         yield c
@@ -127,8 +127,8 @@ def isolate_directory(monkeypatch, tmp_path):
     they spent — decides whether a test passes. That is exactly how a suite
     starts failing for reasons nobody can reproduce.
     """
-    from server import auth, history as history_module
-    from server.auth import _default_users
+    from backend.server import auth, history as history_module
+    from backend.server.auth import _default_users
 
     monkeypatch.setattr(auth, "USERS_PATH", tmp_path / "users.json")
     # Sessions persist now, so the path needs redirecting too or a test run
@@ -157,7 +157,7 @@ def no_local_ner(monkeypatch, request):
     """
     if request.node.get_closest_marker("presidio"):
         return
-    from guardrails.rails import presidio_ner
+    from backend.guardrails.rails import presidio_ner
 
     monkeypatch.setattr(presidio_ner, "engine", lambda: None)
 
@@ -174,7 +174,7 @@ def ignore_live_overrides(monkeypatch, tmp_path):
     overrides path, so the tests that are *about* the overrides layer still
     exercise it.
     """
-    from guardrails import config as config_module
+    from backend.guardrails import config as config_module
 
     real = config_module.overrides_path_for
     repo_policy = (REPO / "config" / "policy.yaml").resolve()

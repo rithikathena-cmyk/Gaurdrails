@@ -14,8 +14,8 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from guardrails import Engine, IngestError, LLMError
-from guardrails.knowledge import extension, extract
+from backend.guardrails import Engine, IngestError, LLMError
+from backend.guardrails.knowledge import extension, extract
 
 from ..state import state
 

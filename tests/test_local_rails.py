@@ -16,10 +16,10 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails.rails import deberta_injection_check, groundedness_check, toxicity_check
-from guardrails.rails.content import ContentRail, PromptAttackRail
-from guardrails.rails.grounding import GroundingRail
-from guardrails.types import RailResult, Verdict
+from backend.guardrails.rails import deberta_injection_check, groundedness_check, toxicity_check
+from backend.guardrails.rails.content import ContentRail, PromptAttackRail
+from backend.guardrails.rails.grounding import GroundingRail
+from backend.guardrails.types import RailResult, Verdict
 
 CATEGORIES = ["hate", "violence", "insults", "misconduct", "self_harm", "sexual"]
 THRESHOLDS = {"hate": 0.70, "violence": 0.65, "insults": 0.75,

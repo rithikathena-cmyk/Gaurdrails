@@ -281,60 +281,67 @@ didn't finish checking" is not the same as "the check errored".
 ├── requirements.txt
 ├── .env.example              copy to .env, add your key
 │
-├── guardrails/               the library. No HTTP, no UI, no globals
-│   ├── registry.py           every parameter declared once — the source of truth
-│   ├── config.py             YAML load, validation, the overrides layer
-│   ├── types.py              Verdict, RailResult, Trace, verdict precedence
-│   ├── engine.py             the pipeline: evaluate(), converse(), ingest()
-│   ├── llm.py                Claude client — judges, generation, tool turns
-│   ├── prompts.py            the contract every judge prompt inherits
-│   ├── explain.py            verdicts turned into something a citizen can read
-│   ├── tracing.py            Tracer, and the hash-chained AuditLog
+├── backend/                     the server side of the wire
 │   │
-│   ├── rails/                DECIDE ABOUT TEXT — read a string, return a verdict
-│   │   ├── normalize.py      NFKC → invisibles → homoglyphs (locked on)
-│   │   ├── words.py          Aho–Corasick, pure Python
-│   │   ├── pii.py            recognizers, checksums, allowlist, AES-256-GCM vault
-│   │   ├── entities.py       names and addresses: gate → presidio → judge
-│   │   ├── presidio_ner.py   the local NER layer entities.py calls
-│   │   ├── policy.py         named regex rule sets
-│   │   ├── content.py        content safety, and prompt injection
-│   │   ├── scope.py          vocabulary first, judge second
-│   │   ├── grounding.py      claim-level consistency and relevance
-│   │   └── adjudicator.py    rules on a verdict decided by a hair
+│   ├── guardrails/              the library. No HTTP, no UI, no globals
+│   │   ├── registry.py          every parameter declared once — the source of truth
+│   │   ├── config.py            YAML load, validation, the overrides layer
+│   │   ├── types.py             Verdict, RailResult, Trace, verdict precedence
+│   │   ├── engine.py            the pipeline: evaluate(), converse(), ingest()
+│   │   ├── llm.py               Claude client — judges, generation, tool turns
+│   │   ├── prompts.py           the contract every judge prompt inherits
+│   │   ├── explain.py           verdicts turned into something a citizen can read
+│   │   ├── tracing.py           Tracer, and the hash-chained AuditLog
+│   │   │
+│   │   ├── rails/               DECIDE ABOUT TEXT — read a string, return a verdict
+│   │   │   ├── normalize.py     NFKC → invisibles → homoglyphs (locked on)
+│   │   │   ├── words.py         Aho–Corasick, pure Python
+│   │   │   ├── pii.py           recognizers, checksums, allowlist, AES-256-GCM vault
+│   │   │   ├── entities.py      names and addresses: gate → presidio → judge
+│   │   │   ├── presidio_ner.py  the local NER layer entities.py calls
+│   │   │   ├── _local.py        background loader shared by the local models
+│   │   │   ├── toxicity_check.py      toxic-bert, under the content judge
+│   │   │   ├── deberta_injection_check.py  off by default — see the docstring
+│   │   │   ├── groundedness_check.py  NLI, pre-screens claims for the judge
+│   │   │   ├── policy.py        named regex rule sets
+│   │   │   ├── content.py       content safety, and prompt injection
+│   │   │   ├── scope.py         vocabulary first, judge second
+│   │   │   ├── grounding.py     claim-level consistency and relevance
+│   │   │   └── adjudicator.py   rules on a verdict decided by a hair
+│   │   │
+│   │   ├── agent/               DECIDES WHAT TO DO NEXT — the only such place
+│   │   │   ├── tools.py         what it may call, and what each may see unmasked
+│   │   │   └── runner.py        the loop, and the rails on every edge of it
+│   │   │
+│   │   ├── knowledge/           what the answers are grounded in
+│   │   │   ├── seed.py          twenty-five built-in documents
+│   │   │   └── ingest.py        extract → chunk → mask → BM25 index
+│   │   │
+│   │   └── evaluation/          does it still work, and how well
+│   │       ├── suite.py         labelled scoring: recall, MRR, FP and FN apart
+│   │       ├── compare.py       judge-only against local+judge, same cases
+│   │       └── scenarios.py     five end-to-end runs against the real stack
 │   │
-│   ├── agent/                DECIDES WHAT TO DO NEXT — the only such place
-│   │   ├── tools.py          what it may call, and what each may see unmasked
-│   │   └── runner.py         the loop, and the rails on every edge of it
-│   │
-│   ├── knowledge/            what the answers are grounded in
-│   │   ├── seed.py           twenty-five built-in documents
-│   │   └── ingest.py         extract → chunk → mask → BM25 index
-│   │
-│   └── evaluation/           does it still work, and how well
-│       ├── suite.py          labelled scoring: recall, MRR, FP and FN apart
-│       └── scenarios.py      five end-to-end runs against the real stack
-│
-├── server/                   HTTP only. Holds no guardrail logic
-│   ├── app.py                app factory, page routes, sign-in gates
-│   ├── auth.py               users, roles, permissions, budgets, pricing
-│   ├── state.py              engine lifecycle, sessions, trace ring
-│   ├── history.py            durable transcripts, per person
-│   └── routes/               one module per concern; permission declared here
-│       ├── session.py        sign in, sign out, who am I
-│       ├── system.py         health, policy, audit
-│       ├── chat.py           chat turns, traces, token accounting
-│       ├── agent.py          agent turns and approvals
-│       ├── documents.py      ingestion, listing, deletion
-│       ├── history.py        transcripts — authorised per request, not per router
-│       ├── users.py          accounts, budgets, model assignment
-│       ├── params.py         registry read, and validated edits
-│       └── scenarios.py      run a scenario against the live stack
+│   └── server/                  HTTP only. Holds no guardrail logic
+│       ├── app.py               app factory, page routes, sign-in gates
+│       ├── auth.py              users, roles, permissions, budgets, pricing
+│       ├── state.py             engine lifecycle, sessions, trace ring
+│       ├── history.py           durable transcripts, per person
+│       └── routes/              one module per concern; permission declared here
+│           ├── session.py       sign in, sign out, who am I
+│           ├── system.py        health, policy, audit
+│           ├── chat.py          chat turns, traces, token accounting
+│           ├── agent.py         agent turns and approvals
+│           ├── documents.py     ingestion, listing, deletion
+│           ├── history.py       transcripts — authorised per request
+│           ├── users.py         accounts, budgets, model assignment
+│           ├── params.py        registry read, and validated edits
+│           └── scenarios.py     run a scenario against the live stack
 │
 ├── frontend/                 everything the browser loads. No build step
 │   └── web/                  the console, ES modules
-│       ├── home.html         landing page and pipeline diagram          (/)
-│       ├── login.html        split-screen sign-in, role tiles      (/login)
+│       ├── home.html         the summary: pipeline and scenarios  (/summary)
+│       ├── login.html        split-screen sign-in, role tiles           (/)
 │       ├── index.html        the console itself                  (/console)
 │       ├── styles/           tokens.css (palette, both themes) · app.css
 │       └── scripts/
@@ -359,7 +366,7 @@ didn't finish checking" is not the same as "the check errored".
 ├── eval/
 │   └── suite.yaml            labelled cases: retrieval, rails, answers
 │
-├── tests/                    391 tests, no API key needed
+├── tests/                    476 tests, no API key needed
 │   ├── conftest.py           policy sandbox, and the signed-in clients
 │   ├── test_engine · test_registry · test_config · test_parameters
 │   ├── test_words · test_pii · test_checksums · test_scope_entities
@@ -402,7 +409,7 @@ python run.py --ask "..."     # one request through the stack, printed as a trac
 python frontend/demo/flow.py           # the same request, drawn as a flow chart
 python frontend/demo/flow.py --sample injection
 python run.py --eval          # score against the labelled suite
-python -m pytest tests/ -q    # 309 tests, no API key required
+python -m pytest tests/ -q    # 476 tests, no API key required
 ```
 
 Then open **http://127.0.0.1:8000** — the pipeline diagram, with the console at

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails.llm import _tuning, supports_adaptive
+from backend.guardrails.llm import _tuning, supports_adaptive
 
 
 @pytest.mark.parametrize("model", [

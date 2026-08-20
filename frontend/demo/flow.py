@@ -313,7 +313,7 @@ def summary(data, trace: dict) -> None:
 def samples() -> dict[str, str]:
     """Mirrors the four prompts the Chat view offers, taken from the server itself."""
     try:
-        from server.routes.chat import SAMPLES
+        from backend.server.routes.chat import SAMPLES
 
         texts = [s["text"] for s in SAMPLES]
         return dict(zip(("clean", "pii", "injection", "ungrounded"), texts))
@@ -369,7 +369,7 @@ def main() -> int:
 
     load_dotenv(ROOT / ".env")
 
-    from guardrails import AuditLog, Claude, ConfigError, Engine, LLMError, load
+    from backend.guardrails import AuditLog, Claude, ConfigError, Engine, LLMError, load
 
     try:
         policy = load(args.config)

@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails import AuditLog, Corpus, Engine, load
-from guardrails.evaluation.suite import (
+from backend.guardrails import AuditLog, Corpus, Engine, load
+from backend.guardrails.evaluation.suite import (
     AnswerCase,
     EvalError,
     RailCase,

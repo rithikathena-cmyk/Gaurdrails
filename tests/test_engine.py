@@ -6,8 +6,8 @@ happens to be present, a keyless deployment is unguarded and looks fine.
 
 from __future__ import annotations
 
-from guardrails.tracing import AuditLog, Tracer
-from guardrails.types import Verdict, precedence
+from backend.guardrails.tracing import AuditLog, Tracer
+from backend.guardrails.types import Verdict, precedence
 
 
 # ── precedence (locked) ────────────────────────────────────────────
@@ -110,7 +110,7 @@ def test_concurrent_writes_do_not_fork_the_audit_chain(tmp_path):
     ignore the alarm that matters."""
     import concurrent.futures as futures
 
-    from guardrails.tracing import AuditLog, Tracer
+    from backend.guardrails.tracing import AuditLog, Tracer
 
     log = AuditLog(tmp_path / "audit.log")
 

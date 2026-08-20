@@ -30,8 +30,8 @@ def two_users(sandbox, monkeypatch, tmp_path):
     monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
     monkeypatch.chdir(tmp_path)
 
-    from server.app import create_app
-    from server.state import state as app_state
+    from backend.server.app import create_app
+    from backend.server.state import state as app_state
 
     app_state.corpus.path = tmp_path / "corpus.json"
     app_state.corpus.reset()
@@ -144,7 +144,7 @@ def test_a_foreign_token_in_the_reply_is_refused_and_recorded(monkeypatch):
 
 
 def evaluate_prompt(engine, text: str, principal: str) -> str:
-    from guardrails import Surface, Tracer
+    from backend.guardrails import Surface, Tracer
 
     return engine.evaluate(text, Surface.USER_PROMPT, Tracer(), "Prompt rails",
                            owner=principal).text
@@ -163,7 +163,7 @@ def test_one_person_cannot_approve_another_persons_write(two_users):
     Holding the token cannot be sufficient, or any signed-in user who learned
     one could authorise somebody else's destructive call.
     """
-    from guardrails.agent.runner import PendingApproval
+    from backend.guardrails.agent.runner import PendingApproval
 
     _, _, state = two_users
     pending = PendingApproval(
@@ -178,7 +178,7 @@ def test_one_person_cannot_approve_another_persons_write(two_users):
 
 
 def test_an_unowned_claim_does_not_match_an_owned_approval(two_users):
-    from guardrails.agent.runner import PendingApproval
+    from backend.guardrails.agent.runner import PendingApproval
 
     _, _, state = two_users
     state.park(PendingApproval(

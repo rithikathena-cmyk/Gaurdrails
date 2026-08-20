@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from guardrails.rails.normalize import normalize
-from guardrails.rails.words import Automaton, WordRail
-from guardrails.types import RailResult, Verdict
+from backend.guardrails.rails.normalize import normalize
+from backend.guardrails.rails.words import Automaton, WordRail
+from backend.guardrails.types import RailResult, Verdict
 
 
 def _result() -> RailResult:

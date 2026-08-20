@@ -1,6 +1,6 @@
 """An out-of-the-box guardrail stack for LLM applications.
 
-    from guardrails import Engine, load, Claude
+    from backend.guardrails import Engine, load, Claude
 
     policy = load("config/policy.yaml")
     engine = Engine(policy, Claude())

@@ -29,11 +29,11 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from guardrails import AuditLog, Corpus, Engine, load
-from guardrails.config import save_overrides
-from guardrails.knowledge.seed import CORPUS
-from guardrails.tracing import Tracer
-from guardrails.types import Surface, Verdict
+from backend.guardrails import AuditLog, Corpus, Engine, load
+from backend.guardrails.config import save_overrides
+from backend.guardrails.knowledge.seed import CORPUS
+from backend.guardrails.tracing import Tracer
+from backend.guardrails.types import Surface, Verdict
 from tests.conftest import REPO
 
 POLICY = REPO / "config" / "policy.yaml"

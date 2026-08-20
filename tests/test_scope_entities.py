@@ -10,12 +10,12 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails import AuditLog, Corpus, Engine, load
-from guardrails.rails.entities import EntityRail
-from guardrails.rails.pii import Vault
-from guardrails.rails.scope import ScopeRail
-from guardrails.tracing import Tracer
-from guardrails.types import RailResult, Surface, Verdict
+from backend.guardrails import AuditLog, Corpus, Engine, load
+from backend.guardrails.rails.entities import EntityRail
+from backend.guardrails.rails.pii import Vault
+from backend.guardrails.rails.scope import ScopeRail
+from backend.guardrails.tracing import Tracer
+from backend.guardrails.types import RailResult, Surface, Verdict
 from tests.conftest import REPO
 
 

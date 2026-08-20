@@ -22,9 +22,9 @@ import pytest
 
 
 
-from guardrails import AuditLog, Corpus, Engine, IngestError, load
+from backend.guardrails import AuditLog, Corpus, Engine, IngestError, load
 
-from guardrails.knowledge import (
+from backend.guardrails.knowledge import (
 
     OCRUnavailable,
 
@@ -39,7 +39,7 @@ from guardrails.knowledge import (
 
 )
 
-from guardrails.knowledge.seed import CORPUS
+from backend.guardrails.knowledge.seed import CORPUS
 from tests.conftest import REPO
 
 

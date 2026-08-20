@@ -6,7 +6,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from guardrails import AuditLog
+from backend.guardrails import AuditLog
 
 from ..auth import require
 from ..state import state

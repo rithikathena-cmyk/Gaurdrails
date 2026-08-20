@@ -17,9 +17,9 @@ from typing import Any
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
-from guardrails import as_payload
-from guardrails.config import ConfigError, reset_overrides, save_overrides
-from guardrails.registry import ADJUSTABLE
+from backend.guardrails import as_payload
+from backend.guardrails.config import ConfigError, reset_overrides, save_overrides
+from backend.guardrails.registry import ADJUSTABLE
 
 from ..state import state
 

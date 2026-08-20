@@ -30,8 +30,8 @@ logging.basicConfig(level=logging.INFO, format="%(levelname)-7s %(name)s: %(mess
 
 
 def cmd_check(path: str) -> int:
-    from guardrails import ConfigError, load
-    from guardrails.registry import ADJUSTABLE, LOCKED
+    from backend.guardrails import ConfigError, load
+    from backend.guardrails.registry import ADJUSTABLE, LOCKED
 
     try:
         policy = load(path)
@@ -45,7 +45,7 @@ def cmd_check(path: str) -> int:
     # Every surface the registry declares, not a hardcoded three — a new surface
     # that does not appear here is a column nobody reviews.
     print("\n  severity matrix")
-    from guardrails.registry import SURFACES
+    from backend.guardrails.registry import SURFACES
 
     width = max(len(s["label"]) for s in SURFACES) + 2
     print("    " + "family".ljust(12) + "".join(s["label"].ljust(width) for s in SURFACES))
@@ -58,7 +58,7 @@ def cmd_check(path: str) -> int:
 
 
 def cmd_ask(path: str, question: str) -> int:
-    from guardrails import AuditLog, Claude, Engine, LLMError, load
+    from backend.guardrails import AuditLog, Claude, Engine, LLMError, load
 
     policy = load(path)
     llm = None
@@ -101,8 +101,8 @@ def cmd_eval(path: str, suite_path: str, answers: bool, json_out: str) -> int:
     Retrieval and rails are deterministic and free; answers cost a model call
     per question, so they are opt-in rather than a surprise.
     """
-    from guardrails import AuditLog, Claude, Corpus, Engine, LLMError, load
-    from guardrails.evaluation import EvalError, load_suite, run
+    from backend.guardrails import AuditLog, Claude, Corpus, Engine, LLMError, load
+    from backend.guardrails.evaluation import EvalError, load_suite, run
 
     policy = load(path)
     try:
@@ -164,9 +164,9 @@ def cmd_compare(path: str, suite_path: str) -> int:
     Exits non-zero on a regression, so this can gate a change rather than
     merely describe one.
     """
-    from guardrails import AuditLog, Claude, LLMError, load
-    from guardrails.evaluation import compare
-    from guardrails.evaluation.suite import load_suite
+    from backend.guardrails import AuditLog, Claude, LLMError, load
+    from backend.guardrails.evaluation import compare
+    from backend.guardrails.evaluation.suite import load_suite
 
     suite = load_suite(suite_path)
     policy = load(path)
@@ -227,7 +227,7 @@ def main() -> int:
     import uvicorn
 
     print(f"  http://{args.host}:{args.port}\n")
-    uvicorn.run("server.app:app", host=args.host, port=args.port, reload=args.reload,
+    uvicorn.run("backend.server.app:app", host=args.host, port=args.port, reload=args.reload,
                 log_level="info")
     return 0
 

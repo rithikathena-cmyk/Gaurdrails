@@ -15,11 +15,11 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails import AuditLog, Corpus, Engine, load
-from guardrails.rails.adjudicator import DOWNGRADE_FLOOR, Adjudicator
-from guardrails.llm import Generation
-from guardrails.tracing import Tracer
-from guardrails.types import RailResult, Surface, Verdict
+from backend.guardrails import AuditLog, Corpus, Engine, load
+from backend.guardrails.rails.adjudicator import DOWNGRADE_FLOOR, Adjudicator
+from backend.guardrails.llm import Generation
+from backend.guardrails.tracing import Tracer
+from backend.guardrails.types import RailResult, Surface, Verdict
 from tests.conftest import REPO
 
 
@@ -216,7 +216,7 @@ def test_the_ruling_reaches_the_trace(tmp_path):
 
 def test_the_adjudicator_is_declared_in_the_registry():
     """Every parameter declared once — the Parameters page reads this."""
-    from guardrails.registry import ADJUSTABLE, LOCKED
+    from backend.guardrails.registry import ADJUSTABLE, LOCKED
 
     assert "adjudicator.margin" in ADJUSTABLE
     assert "adjudicator.min_confidence" in ADJUSTABLE

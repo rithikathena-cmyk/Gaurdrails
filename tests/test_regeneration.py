@@ -13,8 +13,8 @@ import re
 
 import pytest
 
-from guardrails import AuditLog, Engine, load
-from guardrails.types import Verdict
+from backend.guardrails import AuditLog, Engine, load
+from backend.guardrails.types import Verdict
 from tests.conftest import REPO
 
 
@@ -46,7 +46,7 @@ class StubClaude:
         return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}
 
     def generate(self, system, messages, *, max_tokens=4096, model=None):
-        from guardrails.llm import Generation
+        from backend.guardrails.llm import Generation
 
         self.generations += 1
         self.retry_prompts.append(messages[-1]["content"])

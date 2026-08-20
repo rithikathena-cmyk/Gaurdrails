@@ -8,8 +8,8 @@ from __future__ import annotations
 
 import pytest
 
-from guardrails.explain import LEVELS, explain, summarise
-from guardrails.types import Detection, RailResult, Verdict
+from backend.guardrails.explain import LEVELS, explain, summarise
+from backend.guardrails.types import Detection, RailResult, Verdict
 from tests.test_parameters import StubClaude, engine_with, evaluate
 
 SSN = "my ssn is 796-33-9021"

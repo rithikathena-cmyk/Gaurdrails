@@ -5,8 +5,8 @@ from __future__ import annotations
 import pytest
 import yaml
 
-from guardrails import load
-from guardrails.config import ConfigError, reset_overrides, save_overrides
+from backend.guardrails import load
+from backend.guardrails.config import ConfigError, reset_overrides, save_overrides
 
 
 # ── loading ────────────────────────────────────────────────────────

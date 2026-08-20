@@ -6,7 +6,7 @@ Parameters page. These tests keep it honest.
 
 from __future__ import annotations
 
-from guardrails.registry import (
+from backend.guardrails.registry import (
     ADJUSTABLE,
     LOCK_META,
     LOCKED,
@@ -49,7 +49,7 @@ def test_enum_defaults_are_in_their_options():
 
 
 def test_every_parameter_belongs_to_a_declared_family():
-    from guardrails.registry import FAMILIES
+    from backend.guardrails.registry import FAMILIES
 
     for p in PARAMS:
         assert p.family in FAMILIES, f"{p.key} has an unknown family"

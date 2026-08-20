@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import pytest
 
-from server.history import HistoryStore
+from backend.server.history import HistoryStore
 
 
 @pytest.fixture
@@ -68,7 +68,7 @@ def test_one_persons_turns_never_appear_in_anothers(store):
 
 
 def test_the_oldest_turns_fall_off_rather_than_growing_forever(store, monkeypatch):
-    monkeypatch.setattr("server.history.MAX_TURNS_PER_USER", 5)
+    monkeypatch.setattr("backend.server.history.MAX_TURNS_PER_USER", 5)
     for i in range(9):
         add(store, "meera", question=f"q{i}")
     kept = [t["question"] for t in store.turns("meera")]
