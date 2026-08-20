@@ -374,3 +374,26 @@ def test_app_pages_redirect_to_the_door_and_remember_where_you_were(anonymous):
 def test_the_lifecycle_chart_is_an_operators_tool(citizen, client):
     assert citizen.get("/demo/stages", follow_redirects=False).status_code == 303
     assert client.get("/demo/stages", follow_redirects=False).status_code == 200
+
+
+def test_signing_in_again_sends_each_role_where_it_belongs(citizen, client):
+    """`/login` with a live session bounces rather than showing the form.
+
+    It used to bounce everybody to `/`, which is the operator's page — a tour of
+    seven screens a citizen cannot open and none of the one they can. The
+    citizen path is the whole point of the test; the operator one is here so a
+    later change cannot fix one by breaking the other.
+    """
+    r = citizen.get("/login", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/console"
+
+    r = client.get("/login", follow_redirects=False)
+    assert r.status_code == 303
+    assert r.headers["location"] == "/"
+
+
+def test_a_citizen_may_still_read_the_home_page_if_they_ask_for_it(citizen):
+    """Not sent there, but not barred from it either — it explains the service
+    they are using, and a session is all that page asks for."""
+    assert citizen.get("/", follow_redirects=False).status_code == 200

@@ -31,13 +31,31 @@ def create_app() -> FastAPI:
     app = FastAPI(title="Guardrail Console", version="1.0.0", lifespan=lifespan)
     app.include_router(api)
 
+    def _landing(user) -> str:
+        """Where signing in sends somebody with no destination in mind.
+
+        The home page is an operator's page: it walks the pipeline gate by gate
+        and explains the traces and the control surface. A citizen holds `chat`
+        and nothing else, so landing them there offers a tour of screens they
+        cannot open and none of the one they can. They came to ask a question.
+
+        `traces` is the test rather than the role, because the role list is
+        configurable and that permission is what the home page is about.
+
+        `login.html` makes the same decision for a caller who actually submits
+        the form. The two have to agree — this one is the path taken when a live
+        session skips the form entirely.
+        """
+        return "/" if user.can("traces") else "/console"
+
     @app.get("/login", include_in_schema=False)
     def login_page(gc_session: str | None = Cookie(default=None)):
         """Signing in while already signed in is a dead end. Somebody who has a
-        session gets sent where signing in would have sent them — the home
-        page. Sign out first to switch accounts."""
-        if directory.resolve(gc_session) is not None:
-            return RedirectResponse("/", status_code=303)
+        session gets sent where signing in would have sent them. Sign out first
+        to switch accounts."""
+        user = directory.resolve(gc_session)
+        if user is not None:
+            return RedirectResponse(_landing(user), status_code=303)
         return FileResponse(WEB / "login.html")
 
     def _gate(cookie: str | None, target: str, permission: str = ""):
