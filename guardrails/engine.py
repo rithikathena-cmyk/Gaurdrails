@@ -194,6 +194,7 @@ class Engine:
             confidence_threshold=float(p.get("pii.entity_confidence")),
             mask_strategy=str(p.get("pii.mask_strategy")),
             kinds=list(p.get("pii.entity_kinds") or []),
+            engine_mode=str(p.get("pii.entity_engine")),
         )
         # The adjudicator is not a rail: it reviews what the rails decided,
         # and only when one of them landed within a margin of its threshold.
@@ -258,6 +259,19 @@ class Engine:
             return res
 
     # -----------------------------------------------------------------
+    def _pii_spans(self, text: str):
+        """Where the deterministic rail would find identifiers in this text.
+
+        Recomputed rather than shared, because the rails run concurrently and
+        the entity rail cannot wait on a sibling's result. A second regex pass
+        costs a tenth of a millisecond; a dependency between two concurrent
+        jobs costs a deadlock the first time somebody reorders them.
+        """
+        try:
+            return [d for d, _ in self.pii_rail._detect(text)]  # noqa: SLF001
+        except Exception:  # noqa: BLE001 — an overlap hint is never worth a failure
+            return []
+
     def evaluate(self, text: str, surface: Surface, tracer: Tracer,
                  stage_name: str, subtitle: str = "") -> EvaluationResult:
         """Run every rail configured for one surface, concurrently."""
@@ -293,7 +307,8 @@ class Engine:
                 action = str(p.get(PII_ACTION_KEY[surface]))
                 jobs.append((
                     self.entity_rail.name, self.entity_rail.engine,
-                    lambda r, t, a=action: self.entity_rail.evaluate(t, a, r),
+                    lambda r, t, a=action: self.entity_rail.evaluate(
+                        t, a, r, prior=self._pii_spans(t)),
                 ))
 
             if p.enabled("policy", s) and self.policy_rail:

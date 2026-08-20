@@ -5,6 +5,12 @@ pyyaml>=6.0
 python-dotenv>=1.0.0
 cryptography>=43.0.0
 
+# Local NER for pii.entities. Optional: without it the rail falls back to the
+# judge, which is slower and costs a call but reads context better. Needs a
+# spaCy model too:  python -m spacy download en_core_web_sm
+presidio-analyzer>=2.2.0
+spacy>=3.7.0
+
 # ingestion: spreadsheets, PDF text layers, and rasterising scans for transcription
 openpyxl>=3.1.0
 pypdf>=5.0.0

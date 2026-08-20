@@ -248,6 +248,10 @@ pii:
 
   entity_kinds: [PERSON, ADDRESS, ORGANISATION]
 
+  # What finds names and addresses. Presidio is local NER; the judge reads
+  # context but costs a call. Together, the judge is asked only when Presidio
+  # comes back empty.
+  entity_engine: presidio+judge
   entity_confidence: 0.60
 
   mask_strategy: vault-token    # redact | replace | hash | partial | vault-token

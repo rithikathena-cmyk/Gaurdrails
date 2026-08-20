@@ -113,3 +113,23 @@ def isolate_directory(monkeypatch, tmp_path):
     monkeypatch.setattr(history_module.history, "path", tmp_path / "history.json")
     monkeypatch.setattr(history_module.history, "_turns", {})
     yield
+
+@pytest.fixture(autouse=True)
+def no_local_ner(monkeypatch, request):
+    """Keep the spaCy pipeline out of the suite unless a test asks for it.
+
+    Building it costs about eleven seconds and every analyse costs another,
+    which turns a seventeen-second run into three and a half minutes. It also
+    makes results depend on a language model version rather than on this code.
+
+    Stubbing the engine rather than editing the policy is deliberate: it is
+    exactly the state of a deployment where presidio is not installed, so the
+    fallback path gets exercised by every test that touches the rail.
+
+    A test marked `presidio` gets the real thing.
+    """
+    if request.node.get_closest_marker("presidio"):
+        return
+    from guardrails.rails import presidio_ner
+
+    monkeypatch.setattr(presidio_ner, "engine", lambda: None)

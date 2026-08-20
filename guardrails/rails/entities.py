@@ -27,6 +27,7 @@ from __future__ import annotations
 import re
 
 from ..prompts import judge_prompt
+from . import presidio_ner
 from ..types import Detection, RailResult, Verdict, action_verdict
 
 ENTITY_SCHEMA = {
@@ -97,12 +98,15 @@ class EntityRail:
     engine = "claude judge · named entities"
 
     def __init__(self, llm, vault, confidence_threshold: float, mask_strategy: str,
-                 kinds: list[str] | None = None) -> None:
+                 kinds: list[str] | None = None, engine_mode: str = "presidio+judge") -> None:
         self.llm = llm
         self.vault = vault
         self.min_conf = confidence_threshold
         self.strategy = mask_strategy
         self.kinds = {k.upper() for k in (kinds or KINDS)} & KINDS
+        #: presidio | judge | presidio+judge. Local NER is a second the request
+        #: does not spend on an API call, so it goes first where it is enabled.
+        self.engine_mode = engine_mode
 
     def _replacement(self, kind: str, raw: str) -> str:
         if self.strategy == "redact":
@@ -117,15 +121,21 @@ class EntityRail:
             return raw[0] + "*" * max(0, len(raw) - 1)
         return f"<{kind}:{self.vault.store(kind, raw)}>"
 
-    def evaluate(self, text: str, action: str, result: RailResult) -> RailResult:
+    def evaluate(self, text: str, action: str, result: RailResult,
+                 prior: list[Detection] | None = None) -> RailResult:
+        """`prior` is what the deterministic rail already claimed, so NER cannot
+        return a worse guess over the same characters."""
+        prior = prior or []
         result.unit = "count"
         result.threshold = 1.0
         result.meta = {"kinds_enabled": sorted(self.kinds), "strategy": self.strategy}
 
-        if not self.kinds or self.llm is None:
+        use_presidio = self.engine_mode in ("presidio", "presidio+judge")
+        use_judge = self.engine_mode in ("judge", "presidio+judge") and self.llm is not None
+        if not self.kinds or not (use_presidio or use_judge):
             result.verdict = Verdict.PASS
             result.meta["skipped"] = ("no kinds enabled" if not self.kinds
-                                      else "no model configured")
+                                      else "no entity engine configured")
             return result
 
         # The gate. Masked tokens are stripped first so their entity names do
@@ -137,16 +147,35 @@ class EntityRail:
                                reason="no capitalised candidate in the text")
             return result
 
-        found = self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
+        # Local NER first. It costs about a second of CPU rather than several
+        # of network, and on the ordinary case it finds the name and the judge
+        # is never asked.
+        items: list[dict] = []
+        layer = ""
+        if use_presidio:
+            items = presidio_ner.find(text, self.kinds, self.min_conf,
+                                      taken=[(d.start, d.end) for d in prior])
+            if items:
+                layer = "presidio"
+
+        # The judge is the fallback, not the default: asked only when the cheap
+        # layer found nothing and there is still a candidate in the text.
+        if not items and use_judge:
+            found = self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
+            items = list((found.get("entities") or [])[:40])
+            layer = "judge"
+
         spans: list[tuple[int, int, str, str, float]] = []
         dropped = 0
-        for item in (found.get("entities") or [])[:40]:
+        for item in items:
             raw = str(item.get("text", "")).strip()
             kind = str(item.get("kind", "")).strip().upper()
             conf = min(1.0, max(0.0, float(item.get("confidence", 0.0))))
             if not raw or kind not in self.kinds or conf < self.min_conf:
                 continue
-            start = text.find(raw)
+            start = item.get("start")
+            if start is None or text[start:start + len(raw)] != raw:
+                start = text.find(raw)
             if start < 0:
                 # Returned a span that is not in the text. Masking it would
                 # rewrite something else, so it is counted and discarded.
@@ -169,7 +198,8 @@ class EntityRail:
                       note="named entity")
             for start, end, kind, raw, conf in kept
         ]
-        result.meta.update(layer="judge", by_type=sorted({k for _, _, k, _, _ in kept}),
+        result.meta.update(layer=layer or "none",
+                           by_type=sorted({k for _, _, k, _, _ in kept}),
                            unverifiable_spans=dropped)
 
         if not kept:

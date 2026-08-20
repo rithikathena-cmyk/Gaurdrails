@@ -126,7 +126,7 @@ subgraph ENGINE["Engine — guardrails/engine.py"]
   R3["policy.rules<br/>security · privacy · compliance · use-case"]
   R4["prompt_attack<br/>pattern layer → Claude judge"]
   R5["content.safety<br/>Claude judge · 6 categories"]
-  R6["pii.entities<br/>structural gate → Claude judge · names, addresses"]
+  R6["pii.entities<br/>gate → presidio NER → Claude judge · names, addresses"]
   R7["scope.domain<br/>vocabulary → Claude judge"]
 
   E4["<b>4 · Policy decision</b><br/>precedence — block ▶ mask ▶ flag ▶ pass<br/>locked ordering"]
@@ -247,7 +247,7 @@ never reaches the pool for that surface.
 | `policy.rules` | named rule sets · regex | per rule | `pattern => block\|mask\|flag`; a rule with no action defaults to `flag`. |
 | `prompt_attack` | pattern set → Claude judge | `block` | A pattern hit ≥ 0.85 short-circuits the judge entirely — that is most of what keeps median latency down. |
 | `content.safety` | Claude judge · structured output | `block` | Six categories, each threshold scaled by the matrix cell (`high` = × 0.70). The judge sees one turn and no history: history is attacker-controlled. |
-| `pii.entities` | structural gate → Claude judge | `mask` | Names and addresses, which no regex can find. A text with no capitalised candidate never reaches the model. Spans are checked against the text before masking — a span the model invented would rewrite the wrong characters. |
+| `pii.entities` | gate → presidio NER → Claude judge | `mask` | Names and addresses, which no regex can find. Three layers: a text with no capitalised candidate reaches neither engine; local NER answers in ~27 ms against ~3.4 s for the judge, which is asked only when NER comes back empty. Every span is checked against the text before masking — one the model invented would rewrite the wrong characters. `pii.entity_engine` chooses. |
 | `scope.domain` | vocabulary → Claude judge | `flag` | A configured domain term settles it at 0 ms; the judge is asked only when nothing matches, so an unusually phrased question is not turned away for its wording. |
 
 Two failure modes are handled here and nowhere else:

@@ -350,6 +350,13 @@ PARAMS: list[Param] = [
        "Named entities a model looks for, on top of the regex recognizers. These "
        "are the identifiers a pattern cannot find — a person, a street address.",
        "set", ["PERSON", "ADDRESS", "ORGANISATION"]),
+    _a("pii.entity_engine", "pii",
+       "What finds names and addresses. Presidio is local NER — about a second of CPU "
+       "and no API call; the judge is slower but reads context. Together, the judge is "
+       "asked only when Presidio finds nothing.",
+       "enum", "presidio+judge",
+       options=["presidio+judge", "presidio", "judge", "off"]),
+
     _a("pii.entity_confidence", "pii",
        "How sure the entity model must be before a span is masked.",
        "float", 0.60, minimum=0, maximum=1, step=0.01),

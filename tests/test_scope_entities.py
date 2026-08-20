@@ -107,7 +107,7 @@ def test_scope_only_runs_on_what_the_user_asked(tmp_path):
 # ── named entities ─────────────────────────────────────────────────
 def test_text_with_no_capitalised_candidate_never_reaches_the_model():
     judge = CountingJudge()
-    rail = EntityRail(judge, Vault(), 0.6, "vault-token")
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="judge")
     result = rail.evaluate("what is the fee for a licence renewal", "mask",
                            blank("pii.entities"))
     assert result.verdict is Verdict.PASS
@@ -121,7 +121,7 @@ def test_a_name_and_an_address_are_masked_into_the_vault():
         {"text": "14 Anna Salai", "kind": "ADDRESS", "confidence": 0.9},
     ]})
     vault = Vault()
-    rail = EntityRail(judge, vault, 0.6, "vault-token")
+    rail = EntityRail(judge, vault, 0.6, "vault-token", engine_mode="judge")
     text = "My name is Meera Balan, I live at 14 Anna Salai."
     result = rail.evaluate(text, "mask", blank("pii.entities"))
     assert result.verdict is Verdict.MASK
@@ -134,7 +134,7 @@ def test_a_span_the_model_invented_is_dropped_rather_than_masked():
     judge = CountingJudge({"entities": [
         {"text": "Someone Not Present", "kind": "PERSON", "confidence": 0.99},
     ]})
-    rail = EntityRail(judge, Vault(), 0.6, "vault-token")
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="judge")
     result = rail.evaluate("A letter from Meera about her claim.", "mask",
                            blank("pii.entities"))
     assert result.verdict is Verdict.PASS
@@ -145,7 +145,7 @@ def test_low_confidence_entities_are_ignored():
     judge = CountingJudge({"entities": [
         {"text": "Meera", "kind": "PERSON", "confidence": 0.2},
     ]})
-    rail = EntityRail(judge, Vault(), 0.6, "vault-token")
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="judge")
     result = rail.evaluate("A letter from Meera.", "mask", blank("pii.entities"))
     assert result.verdict is Verdict.PASS
 
