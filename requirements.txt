@@ -1,6 +1,12 @@
 anthropic>=0.70.0
 fastapi>=0.115.0
 uvicorn[standard]>=0.32.0
+# Document upload posts multipart/form-data. FastAPI only raises about this when
+# the route is *built*, so a missing pin does not fail at import — it fails at
+# startup, and only on a clean install. It was present locally as somebody
+# else's transitive dependency, so the first clean build was the first time it
+# showed up.
+python-multipart>=0.0.9
 pyyaml>=6.0
 python-dotenv>=1.0.0
 cryptography>=43.0.0

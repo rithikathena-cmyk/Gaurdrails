@@ -144,7 +144,18 @@ Checked on this machine:
   content rail is then built judge-only.
 - The full suite passes: 476 tests.
 
-**Not checked:** the Docker image has never been built here — Docker Desktop was not
-running. The Dockerfile is written against `python:3.12-slim` and the code uses nothing
-newer than 3.10 syntax, but the first `docker build` is still the first real test of it.
-Run it locally before pushing to a platform.
+The image builds and runs:
+
+```
+docker build         858 MB image, exit 0
+container healthy    ~6s from start
+RAM serving traffic  178 MB   — inside Render's 512 MB
+a live PII request   verdict=mask, 25 rails, 15.8s, no raw value in the reply
+/ · /summary · /console   200, 200, 200
+```
+
+The first clean build found a real bug: `python-multipart` was missing from
+`requirements.txt`. FastAPI only raises about it when the upload route is *built*, so it
+does not fail at import — it fails at startup, and only where the package is genuinely
+absent. Locally it was present as somebody else's transitive dependency, so nothing had
+ever noticed. It is pinned now.
