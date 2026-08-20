@@ -143,8 +143,13 @@ function addAssistant(data) {
   const t = data.trace;
   const chips = [`<span class="chip ${data.verdict}">${data.verdict}</span>`];
 
+  // Every surface, not just the prompt. The chip counted `stage === "prompt"`
+  // while the violations panel reported the response, so one turn showed
+  // "2 values masked" beside a panel saying 4 — both true, neither reconcilable
+  // by the reader. The chip is now the turn's total and the panel breaks it
+  // down by where each came from, so the numbers add up.
   const masked = (data.detections || []).filter(
-    (d) => d.stage === "prompt" && !["blocked_term", "unsupported_claim"].includes(d.kind));
+    (d) => !["blocked_term", "unsupported_claim"].includes(d.kind));
   if (masked.length) {
     chips.push(`<span class="chip mask">${masked.length} value${masked.length > 1 ? "s" : ""} masked</span>`);
   }

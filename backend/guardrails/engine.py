@@ -540,7 +540,8 @@ class Engine:
 
         trace = tracer.finish(Verdict.BLOCK if quarantined else scan.verdict)
         self.audit.write(trace, detections)
-        violations = self._explain([r for r in scan.results if r.verdict is not Verdict.PASS])
+        violations = self._explain([r for r in scan.results if r.verdict is not Verdict.PASS],
+                                   "document")
         return IngestResult(
             document=doc, trace=trace, detections=detections,
             quarantined=quarantined, reason=reason,
@@ -675,10 +676,16 @@ class Engine:
                 r.unit = "count"
                 r.meta = {"chunks": len(chunks)}
 
+        # Hoisted so the violations built at the end can say a masked value came
+        # out of a retrieved document rather than out of the reader's own
+        # message. Those are other people's details, and that distinction is the
+        # whole reason for telling them at all.
+        rag_results: list[RailResult] = []
         if chunks and p.enabled("pii", "retrieval"):
             joined = "\n\n".join(chunks)
             rag = self.evaluate(joined, Surface.RETRIEVAL, tracer, "Retrieval rails",
                                 "scanning retrieved context", owner=principal)
+            rag_results = rag.results
             if rag.blocked:
                 chunks = []
                 tracer.note("retrieved context blocked — proceeding without it")
@@ -853,15 +860,21 @@ class Engine:
 
         # A delivered reply still carries violations: a masked SSN is something
         # the user should be told about even though nothing was refused.
-        violations = self._explain([r for r in ingress.results + egress.results
-                                    if r.verdict is not Verdict.PASS])
+        violations = (
+            self._explain([r for r in ingress.results if r.verdict is not Verdict.PASS],
+                          "prompt")
+            + self._explain([r for r in rag_results if r.verdict is not Verdict.PASS],
+                            "retrieved")
+            + self._explain([r for r in egress.results if r.verdict is not Verdict.PASS],
+                            "reply")
+        )
         return ConversationResult(
             reply=reply, trace=trace, chunks=chunks, detections=all_detections,
             violations=[v.to_dict() for v in violations],
         )
 
-    def _explain(self, rails: list[RailResult]) -> list[Violation]:
-        return explain(rails, str(self.policy.get("policy.disclosure")))
+    def _explain(self, rails: list[RailResult], origin: str = "prompt") -> list[Violation]:
+        return explain(rails, str(self.policy.get("policy.disclosure")), origin)
 
     def _refusal(self, rails: list[RailResult], request_id: str) -> tuple[str, list[Violation]]:
         """Build a refusal that says what happened, at the configured disclosure."""

@@ -471,8 +471,11 @@ class AgentRunner:
         digest = engine.audit.write(trace, detections)
         trace.stages[-1].rails[-1].meta["hash"] = digest[:16]
 
+        # These come from the response surface. Saying "in your message" here
+        # told a citizen she had sent a claim reference and a phone number that
+        # were in fact masked out of the assistant's own reply.
         violations = engine._explain(  # noqa: SLF001
-            [r for r in egress.results if r.verdict is not Verdict.PASS]
+            [r for r in egress.results if r.verdict is not Verdict.PASS], "reply"
         )
         return AgentResult(
             reply=reply, trace=trace, chunks=ctx.chunks, detections=detections,

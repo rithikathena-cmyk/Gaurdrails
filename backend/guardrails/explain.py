@@ -19,7 +19,7 @@ boundary, not a preference.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 from .types import RailResult, Verdict
 
@@ -93,39 +93,95 @@ def _join(items: list[str]) -> str:
 
 
 # ---------------------------------------------------------------------------
-def _pii(r: RailResult, level: int) -> Violation | None:
+class _Origin(NamedTuple):
+    """How to describe a surface to the person reading the reply.
+
+    Three phrasings per surface because the disclosure ladder gives three
+    lengths, and a shorter one must not become a vaguer *and* wronger one.
+    """
+
+    title: str
+    detailed: str
+    category: str
+    minimal: str
+
+
+_ORIGIN: dict[str, _Origin] = {
+    "prompt": _Origin(
+        "Personal details removed",
+        "before your message reached the assistant. You don't need to resend them.",
+        "from your message before it reached the assistant.",
+        "from your message automatically.",
+    ),
+    "reply": _Origin(
+        "Personal details removed from the reply",
+        "from the reply before it was shown to you. Nothing you sent caused this.",
+        "from the reply before it was shown to you.",
+        "from the reply automatically.",
+    ),
+    "retrieved": _Origin(
+        "Personal details removed from the sources",
+        "from the documents this answer drew on. They belong to other people, "
+        "and the assistant never saw them.",
+        "from the documents this answer drew on, before the assistant read them.",
+        "from the retrieved documents automatically.",
+    ),
+    "document": _Origin(
+        "Personal details removed from the document",
+        "from the document before it was stored. It is indexed without them.",
+        "from the document before it was stored.",
+        "from the document automatically.",
+    ),
+}
+
+
+def _pii(r: RailResult, level: int, origin: str = "prompt") -> Violation | None:
+    """Say what was masked, and — crucially — *where*.
+
+    This used to word every PII violation as "in your message ... before it
+    reached the assistant", whatever surface it came from. On the agent path,
+    where violations are built from the response, that told a citizen she had
+    sent a claim reference and a phone number when she had sent neither: both
+    were masked in the assistant's own reply. Telling someone they disclosed
+    something they did not is the wrong mistake for a tool whose whole job is
+    reporting accurately what happened to their data.
+    """
     if r.verdict is Verdict.PASS or not r.detections:
         return None
     kinds = [d.kind for d in r.detections]
     labels = sorted({ENTITY_LABELS.get(k, "a restricted identifier") for k in kinds})
     masked = r.verdict is Verdict.MASK
+    n = len(r.detections)
+    plural = n != 1
+    where = _ORIGIN[origin] if origin in _ORIGIN else _ORIGIN["prompt"]
 
     if level >= _rank("detailed"):
         detail = (
-            f"We found and removed {_join(labels)} before your message reached the "
-            "assistant. You don't need to resend them."
+            f"We found and removed {_join(labels)} {where.detailed}"
             if masked else
             f"Your message contains {_join(labels)}, which this channel can't accept."
         )
         items = labels
     elif level >= _rank("category"):
-        n = len(r.detections)
         detail = (
-            f"{n} sensitive value{'s' if n != 1 else ''} in your message "
-            f"{'were' if n != 1 else 'was'} removed before it reached the assistant."
+            f"{n} sensitive value{'s' if plural else ''} "
+            f"{'were' if plural else 'was'} removed {where.category}"
             if masked else
             "Your message contains sensitive personal details this channel can't accept."
         )
         items = labels if masked else []
     else:
-        detail = ("Sensitive details in your message were removed automatically."
+        detail = (f"Sensitive details were removed {where.minimal}"
                   if masked else "Your message contains details this channel can't accept.")
         items = []
 
     return Violation(
         family="pii", rail=r.rail, verdict=r.verdict.value,
-        title="Personal details removed" if masked else "Personal details not accepted",
-        detail=detail, items=items, action_required=not masked,
+        title=where.title if masked else "Personal details not accepted",
+        detail=detail, items=items,
+        # Only something the user actually sent is something they can rephrase.
+        # Nothing they do changes what a retrieved document or a reply contained.
+        action_required=not masked and origin == "prompt",
     )
 
 
@@ -301,8 +357,14 @@ _BUILDERS = {
 }
 
 
-def explain(rails: list[RailResult], level: str = "category") -> list[Violation]:
-    """Build user-facing violations from rail results, filtered by disclosure."""
+def explain(rails: list[RailResult], level: str = "category",
+            origin: str = "prompt") -> list[Violation]:
+    """Build user-facing violations from rail results, filtered by disclosure.
+
+    `origin` is the surface these results came from. It decides how the copy
+    describes what happened — a value masked in the reply, or in a retrieved
+    document, is not something the reader typed.
+    """
     if level == "none":
         return []
     rank = _rank(level)
@@ -311,7 +373,11 @@ def explain(rails: list[RailResult], level: str = "category") -> list[Violation]
         builder = _BUILDERS.get(r.rail)
         if builder is None:
             continue
-        v = builder(r, rank)
+        try:
+            v = builder(r, rank, origin)
+        except TypeError:
+            # Builders that do not vary by surface keep their two-argument form.
+            v = builder(r, rank)
         if v is not None:
             out.append(v)
     # Most restrictive first — that is the one the user most needs to read.
