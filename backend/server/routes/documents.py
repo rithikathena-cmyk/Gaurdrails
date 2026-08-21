@@ -38,6 +38,29 @@ FIXTURES = [
                 "meera.balan@example.gov or 415-555-0143, within 30 days of payment.",
     },
     {
+        "id": "caseload-note",
+        "title": "Ward 7 caseload note",
+        "blurb": "A case file — the resident's details vaulted, the published contacts left readable",
+        # The sample the other two do not cover. Both of those are about a
+        # verdict — indexed, or quarantined. This one is about what is left in
+        # the index afterwards, which is the question an operator bringing
+        # their own records actually has. It carries a name, an email, a
+        # mobile, an SSN and a claim reference, and alongside them the
+        # registrar's published address and the toll-free helpline, so a single
+        # ingest shows both halves of the rule: a resident's identifiers become
+        # vault tokens, and a contact the department prints on its own letters
+        # does not.
+        "text": "Ward 7 caseload note — housing assistance\n\n"
+                "Applicant Meera Balan, contactable at meera.balan@example.com or on "
+                "9840012345. Identity verified against SSN 796-33-9021. The household "
+                "income declaration on file gives 18,000 rupees a month, which is inside "
+                "the grant threshold.\n\n"
+                "Claim CLM-40028871 was filed on 3 March and is pending a site visit. The "
+                "caseworker has asked for the tenancy agreement before the visit.\n\n"
+                "Queries about this note go to the registrar at records@municipal.gov.in, "
+                "or to the public helpline on 1800 425 1969.",
+    },
+    {
         "id": "poisoned-circular",
         "title": "Fee schedule addendum (poisoned)",
         "blurb": "Indirect prompt injection hidden in a document — quarantined at ingest",
@@ -146,15 +169,19 @@ async def ingest_file(file: UploadFile = File(...),
 
 @router.delete("/documents/{doc_id}")
 def delete_document(doc_id: str) -> dict[str, Any]:
-    doc = state.corpus.get(doc_id)
-    if doc is None:
+    """Remove one document, built-in or uploaded.
+
+    A built-in used to be refused here, which left the console listing
+    twenty-five rows an operator could look at and not act on. The store has
+    tracked `seeds_installed` by id since it was written, so a seed deleted on
+    purpose stays deleted across restarts rather than reappearing at the next
+    one — the guard was protecting a corpus that did not need protecting.
+
+    Reset is still the way back, and it is the only way back: it reinstalls the
+    whole built-in set rather than the one document.
+    """
+    if state.corpus.get(doc_id) is None:
         raise HTTPException(404, detail={"kind": "not_found", "message": doc_id})
-    if doc.source == "built-in":
-        raise HTTPException(400, detail={
-            "kind": "builtin",
-            "message": "built-in documents are the seed corpus — reset restores them, "
-                       "deleting them individually does not",
-        })
     state.corpus.remove(doc_id)
     return {"ok": True, "stats": state.corpus.stats()}
 
