@@ -7,12 +7,13 @@ report a number it made up.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from .types import RailResult, StageTrace, Trace, Verdict, precedence
 
@@ -114,12 +115,6 @@ class AuditLog:
             return "0" * 64
 
     def write(self, trace: Trace, detections: list[dict]) -> str:
-        import hashlib
-
-        with self._lock:
-            return self._write_locked(trace, detections, hashlib)
-
-    def _write_locked(self, trace: Trace, detections: list[dict], hashlib) -> str:
         body = {
             "request_id": trace.request_id,
             "session_id": trace.session_id,
@@ -134,16 +129,55 @@ class AuditLog:
             # Detections are recorded pre-masking. In a real deployment this
             # file lives under a separate ACL from the response log.
             "detections": detections,
-            "prev": self._prev,
         }
-        digest = hashlib.sha256(
-            json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
-        ).hexdigest()
-        entry = {**body, "hash": digest}
-        with self.path.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
-        self._prev = digest
-        return digest
+        return self._commit(body)
+
+    def write_agent_run(self, *, request_id: str, who: str, status: str,
+                        agents_selected: list[str], agent_decisions: dict[str, Any],
+                        policy_decision: dict[str, Any] | None, final_action: str,
+                        confidence: float, escalation_reason: str, duration_ms: float,
+                        trace: list[dict[str, Any]], surface: str = "") -> str:
+        """One entry per Supervisor run — `POST /api/agents/supervisor/run`,
+        every status (completed, escalated, failed before a result existed).
+
+        Same hash-chained file as `write()`, deliberately: one audit trail,
+        not two. Deliberately narrow on content — no request `text`, no
+        agent `rationale`/`evidence_summary`, no finding `evidence` (call_ids
+        are fine; free text an agent wrote is not, since nothing stops a
+        judge call from echoing a raw value into its own explanation). What
+        it keeps is exactly what answers "who ran what, what did each agent
+        and the policy engine decide, what was the outcome, and when" —
+        structured fields and finding *kinds*, not prose.
+        """
+        body = {
+            "kind": "agent_run",
+            "request_id": request_id,
+            "who": who,
+            "ts": time.time(),
+            "surface": surface,
+            "status": status,
+            "agents_selected": list(agents_selected),
+            "agent_decisions": agent_decisions,
+            "policy_decision": policy_decision,
+            "final_action": final_action,
+            "confidence": round(confidence, 4),
+            "escalation_reason": escalation_reason,
+            "duration_ms": round(duration_ms, 2),
+            "trace": trace,
+        }
+        return self._commit(body)
+
+    def _commit(self, body: dict[str, Any]) -> str:
+        with self._lock:
+            body = {**body, "prev": self._prev}
+            digest = hashlib.sha256(
+                json.dumps(body, sort_keys=True, separators=(",", ":")).encode()
+            ).hexdigest()
+            entry = {**body, "hash": digest}
+            with self.path.open("a", encoding="utf-8") as fh:
+                fh.write(json.dumps(entry, separators=(",", ":")) + "\n")
+            self._prev = digest
+            return digest
 
     def verify(self) -> tuple[bool, str]:
         """Walk the chain. Returns (ok, message)."""
