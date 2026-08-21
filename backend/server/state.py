@@ -73,7 +73,7 @@ class AppState:
             if os.getenv("ANTHROPIC_API_KEY"):
                 try:
                     llm = Claude(
-                        model=os.getenv("GUARDRAIL_MODEL", "claude-opus-5"),
+                        model=os.getenv("GUARDRAIL_MODEL", "claude-sonnet-5"),
                         judge_model=str(policy.get("content.judge_model")),
                     )
                 except LLMError as exc:
