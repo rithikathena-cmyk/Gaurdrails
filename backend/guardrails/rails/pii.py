@@ -148,6 +148,18 @@ DEFAULT_VAULT_TTL_S = 60 * 60
 #: which is the point — a document is masked so that it stays masked.
 CORPUS_OWNER = "@corpus"
 
+#: Owner for vault tokens minted from content the current caller did not
+#: themselves supply: a model's own generated reply, a tool result, or the
+#: arguments the agent is about to hand a tool. `Surface.USER_PROMPT` and
+#: `Surface.USER_FEEDBACK` are the only surfaces where a caller's own text is
+#: being scanned, so they are the only surfaces that mint under `principal`.
+#: Everywhere else — retrieval, llm.response, agent.tool, agent.data — a new
+#: detection belongs to no signed-in caller, for the same reason ingestion
+#: does not: it was not this caller's value to begin with, so it must not
+#: unmask for them just because they were the one who triggered the scan.
+#: `@` keeps it unreachable by `add_user`, same as `CORPUS_OWNER`.
+SYSTEM_OWNER = "@system"
+
 
 @dataclass(frozen=True)
 class VaultEntry:

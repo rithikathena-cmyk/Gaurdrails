@@ -40,6 +40,7 @@ from ..engine import REFUSAL_FALLBACK, Engine
 from ..llm import Claude, LLMError, Refusal, ToolUse
 from ..tracing import Tracer
 from ..types import Surface, Trace, Verdict, precedence
+from ..rails.pii import SYSTEM_OWNER
 from .tools import MASK_TOKEN, TOOLS, Tool, ToolContext
 
 log = logging.getLogger("guardrails.agent")
@@ -398,8 +399,10 @@ class AgentRunner:
             messages.append({"role": "user", "content": results})
 
         # ---- output rails, grounding, egress --------------------------
+        # `owner=SYSTEM_OWNER` — see the note on the chat egress call in
+        # engine.py. A value the caller supplied is already a token by now.
         egress = engine.evaluate(reply, Surface.LLM_RESPONSE, tracer, "Output rails",
-                                 owner=ctx.principal)
+                                 owner=SYSTEM_OWNER)
         detections += [
             {"stage": "output", "rail": r.rail, **d.redacted()}
             for r in egress.results for d in r.detections
@@ -507,10 +510,14 @@ class AgentRunner:
 
         # --- agent.tool: the arguments, before the call ---------------
         args_text = json.dumps(use.input, ensure_ascii=False)
+        # `owner=SYSTEM_OWNER`, not `ctx.principal`: these are arguments the
+        # model composed, not text the caller supplied. `pii.action.agent_tool`
+        # is `flag` in the shipped policy, which mints no token regardless —
+        # this is defense in depth against that action ever becoming `mask`.
         args_scan = engine.evaluate(
             args_text, Surface.AGENT_TOOL, tracer,
             f"Tool call · {tool.name}", f"{tool.kind} tool · arguments",
-            owner=ctx.principal,
+            owner=SYSTEM_OWNER,
         )
         call.args_verdict = args_scan.verdict.value
         if args_scan.blocked:
@@ -585,10 +592,13 @@ class AgentRunner:
         call.duration_ms = (time.perf_counter() - began) * 1000
 
         # --- agent.data: what came back, before the model reads it ----
+        # `owner=SYSTEM_OWNER`: a tool result is a record field somebody else
+        # filled in — a claim note, a lookup response — not the caller's own
+        # data. Same reasoning as the retrieval surface in engine.py.
         data_scan = engine.evaluate(
             payload, Surface.AGENT_DATA, tracer, f"Tool result · {tool.name}",
             "untrusted — a tool result is data, not instructions",
-            owner=ctx.principal,
+            owner=SYSTEM_OWNER,
         )
         call.result_verdict = data_scan.verdict.value
         call.detections = [
