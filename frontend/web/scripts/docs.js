@@ -95,7 +95,7 @@ function renderList(docs) {
       <div class="d-item-tools">
         ${d.request_id ? `<button class="link-btn" data-trace="${esc(d.request_id)}">trace</button>` : ""}
         <button class="link-btn" data-peek="${esc(d.id)}">chunks</button>
-        ${d.built_in ? "" : `<button class="link-btn danger" data-del="${esc(d.id)}">delete</button>`}
+        <button class="link-btn danger" data-del="${esc(d.id)}">delete</button>
       </div>
     </div>`).join("");
 
@@ -232,7 +232,8 @@ function report(body) {
 }
 
 async function resetCorpus() {
-  if (!confirm("Drop every uploaded document and restore the twenty-five built-in ones?")) return;
+  if (!confirm("Drop every uploaded document and restore all twenty-five built-in ones, "
+               + "including any you have deleted?")) return;
   $("#d-reset").disabled = true;
   try {
     await api.resetDocuments();

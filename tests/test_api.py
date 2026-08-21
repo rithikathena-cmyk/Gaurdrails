@@ -230,9 +230,60 @@ def test_an_unaccepted_file_type_is_refused_with_the_list(client):
     assert "txt" in r.json()["error"]["message"]
 
 
-def test_built_in_documents_cannot_be_deleted_individually(client):
-    doc_id = client.get("/api/documents").json()["documents"][0]["id"]
-    assert client.delete(f"/api/documents/{doc_id}").status_code == 400
+def test_the_caseload_sample_ingests_the_way_its_blurb_claims(client):
+    """A sample button is only worth having if ingesting it does what it says.
+
+    This one is the demo set's answer to "what happens to my records", so it has
+    to show both halves of the rule at once: the resident's identifiers become
+    vault tokens, and the contacts the department prints on its own letters do
+    not. A change to the allowlist or to `pii.entities` that quietly broke
+    either half would leave the blurb lying.
+    """
+    from backend.server.routes.documents import FIXTURES
+
+    fx = next(f for f in FIXTURES if f["id"] == "caseload-note")
+    body = client.post("/api/documents",
+                       json={"title": fx["title"], "text": fx["text"]}).json()
+    assert body["document"]["status"] == "indexed"
+    assert not body["quarantined"]
+
+    doc_id = body["document"]["id"]
+    indexed = " ".join(client.get(f"/api/documents/{doc_id}").json()["document"]["chunks"])
+
+    # Only the deterministic half is asserted here. This suite runs as a base
+    # install — no Presidio, no API key — and a name is not a pattern, so
+    # `entities.detect` has neither of the two layers that find one and "Meera
+    # Balan" stays in the text. That is the documented behaviour of a keyless
+    # deployment rather than a hole: what a regex and a checksum can find is
+    # found, and the console says the model rails are off. The name is covered
+    # where the layers exist, in test_presidio.py.
+    for identifier in ("meera.balan@example.com", "9840012345",
+                       "796-33-9021", "CLM-40028871"):
+        assert identifier not in indexed, f"{identifier} reached the index unmasked"
+    for published in ("records@municipal.gov.in", "1800 425 1969"):
+        assert published in indexed, f"{published} was masked — the desk cannot give it out"
+
+
+def test_a_built_in_document_can_be_deleted(client):
+    """It used to be a 400. The console lists twenty-five built-ins, so refusing
+    them left an operator looking at rows they could not act on."""
+    listed = client.get("/api/documents").json()["documents"]
+    doc_id = next(d["id"] for d in listed if d["built_in"])
+    assert client.delete(f"/api/documents/{doc_id}").status_code == 200
+    assert client.get(f"/api/documents/{doc_id}").status_code == 404
+
+
+def test_reset_brings_a_deleted_built_in_back(client):
+    """Deleting a seed is meant to be undoable — by reset, and only by reset."""
+    doc_id = next(d["id"] for d in client.get("/api/documents").json()["documents"]
+                  if d["built_in"])
+    client.delete(f"/api/documents/{doc_id}")
+    assert client.post("/api/documents/reset").status_code == 200
+    assert client.get(f"/api/documents/{doc_id}").status_code == 200
+
+
+def test_deleting_a_document_that_is_not_there_is_still_a_404(client):
+    assert client.delete("/api/documents/seed:no-such-document").status_code == 404
 
 
 def test_an_uploaded_document_can_be_deleted(client):
