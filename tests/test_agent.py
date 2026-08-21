@@ -12,6 +12,7 @@ import pytest
 
 from backend.guardrails import AgentRunner, AuditLog, Corpus, Engine, load
 from backend.guardrails.agent import TOOLS, ToolContext
+from backend.guardrails.agent.runner import SYSTEM_PROMPT, _effective_system_prompt
 from backend.guardrails.llm import Turn, ToolUse
 from tests.conftest import REPO
 
@@ -207,6 +208,33 @@ def test_the_approval_decision_is_in_the_trace(tmp_path):
     assert gates and gates[0].meta["approved"] is True
 
 
+def test_the_args_verdict_from_before_approval_survives_the_resume(tmp_path):
+    """`agent.tool` decides `mask` before the pause; `resume()` used to build
+    a fresh `ToolCall` with no memory of that, so the resumed turn's own
+    `args_verdict` silently reverted to `pass` — the same information a
+    caller reading the trace after approval would use to know whether the
+    arguments needed masking in the first place. The tool result is still
+    correctly `mask`; what was lost was only the record of the *earlier*
+    decision, not the enforcement itself (a genuinely `block`-worthy
+    argument never reaches approval at all — see the read-tool/write-tool
+    split above)."""
+    runner, _, _ = build(
+        [("tool", "file_grievance",
+          {"subject": "Billing dispute — SSN 796-33-9021 on file",
+           "details": "Please investigate the duplicate charge."}),
+         ("answer", "done")],
+        tmp_path, **{"pii.action.agent_tool": "mask"},
+    )
+    paused = runner.run("file a grievance about a billing error")
+    assert paused.approval.args_verdict == "mask", \
+        "the original scan must have found and masked the SSN"
+
+    done = runner.resume(paused.approval, approved=True)
+    resumed_call = done.calls[-1]
+    assert resumed_call.args_verdict == "mask", \
+        "the resumed call's own trace must not lose what agent.tool already decided"
+
+
 def test_the_write_tool_resolves_the_claim_reference_it_files_against(tmp_path):
     runner, engine, _ = build(
         [("tool", "file_grievance", {"subject": "Delay", "details": "x",
@@ -262,3 +290,54 @@ def test_agent_runs_are_audited(tmp_path):
     runner.run("what is the fee")
     ok, message = AuditLog(tmp_path / "audit.log").verify()
     assert ok, message
+
+
+# ── agent.masked_field_disclosure — a live parameter, not a fixed prompt ──
+class _CapturingClaude(ScriptedClaude):
+    """`ScriptedClaude` never records `system` — every other test in this
+    file only needs `messages`. This subclass exists for the one test below
+    that has to prove what the model was actually told, not just what it
+    was scripted to answer."""
+
+    def __init__(self, script):
+        super().__init__(script)
+        self.systems: list[str] = []
+
+    def converse(self, system, messages, tools, *, max_tokens=4096):
+        self.systems.append(system)
+        return super().converse(system, messages, tools, max_tokens=max_tokens)
+
+
+def test_masked_field_disclosure_defaults_to_relay(tmp_path):
+    policy = load(REPO / "config" / "policy.yaml")
+    assert policy.get("agent.masked_field_disclosure") == "relay"
+    prompt = _effective_system_prompt(policy)
+    assert prompt.startswith(SYSTEM_PROMPT)
+    assert "relay the token placeholder" in prompt
+    assert "do not reproduce the token placeholder" not in prompt
+
+
+def test_masked_field_disclosure_can_be_set_to_explain(tmp_path):
+    policy = load(REPO / "config" / "policy.yaml")
+    policy.values["agent.masked_field_disclosure"] = "explain"
+    prompt = _effective_system_prompt(policy)
+    assert "do not reproduce the token placeholder" in prompt
+    assert "relay the token placeholder" not in prompt
+
+
+def test_masked_field_disclosure_is_read_live_from_policy_each_turn(tmp_path):
+    """Not fixed at import time: the same running `AgentRunner`, given a
+    different policy value, sends a genuinely different system prompt on
+    its very next turn — proving the Parameters path reaches the model,
+    not just the stored config."""
+    policy = load(REPO / "config" / "policy.yaml")
+    policy.values["agent.masked_field_disclosure"] = "explain"
+    llm = _CapturingClaude([("answer", "hi")])
+    engine = Engine(policy, llm, AuditLog(tmp_path / "audit.log"), Corpus(seed=True))
+    runner = AgentRunner(engine, llm)
+
+    runner.run("what is the fee")
+
+    assert llm.systems, "the model must have been called at least once"
+    assert "do not reproduce the token placeholder" in llm.systems[-1]
+    assert "relay the token placeholder" not in llm.systems[-1]
