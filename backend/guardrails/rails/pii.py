@@ -134,6 +134,20 @@ RECOGNIZERS: list[Recognizer] = [
 #: shorter turns a slow human approval into a failed unmask.
 DEFAULT_VAULT_TTL_S = 60 * 60
 
+#: Owner for vault tokens minted while a document is being ingested.
+#:
+#: Deliberately not `""`. The empty owner is the single-tenant bucket the CLI
+#: and library callers use, so a value masked out of a document under it
+#: unmasked again at egress for any caller that simply had no principal —
+#: `run.py --ask "the office number"` printed a resident's phone number
+#: straight back out of the corpus it had just been masked into.
+#:
+#: A token minted here belongs to the corpus, not to a person, and nothing that
+#: signs in can claim it: `@` is not a legal username character, so no account
+#: can hold this name. Corpus tokens are therefore never revealed to anybody,
+#: which is the point — a document is masked so that it stays masked.
+CORPUS_OWNER = "@corpus"
+
 
 @dataclass(frozen=True)
 class VaultEntry:

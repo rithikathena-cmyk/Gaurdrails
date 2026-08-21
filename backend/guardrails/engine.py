@@ -30,7 +30,7 @@ from .rails.entities import EntityRail
 from .rails.scope import ScopeRail
 from .rails.grounding import GroundingRail
 from .rails.normalize import normalize
-from .rails.pii import PIIRail, Vault
+from .rails.pii import CORPUS_OWNER, PIIRail, Vault
 from .rails.policy import PolicyRail
 from .rails.words import WordRail
 from .tracing import AuditLog, Tracer
@@ -481,7 +481,8 @@ class Engine:
                 r.meta = {"characters_changed": changed, "can_be_disabled": False}
 
         scan = self.evaluate(normalized, Surface.INGEST, tracer, "Ingest rails",
-                             "the document is untrusted input")
+                             "the document is untrusted input",
+                             owner=CORPUS_OWNER)
         detections = [
             {"stage": "ingest", "rail": r.rail, **d.redacted()}
             for r in scan.results for d in r.detections
