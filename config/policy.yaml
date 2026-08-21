@@ -304,9 +304,23 @@ pii:
 
   allowlist:
 
-    - '[a-z0-9._%+-]+@[a-z0-9.-]*municipal\.gov\.in'   # any departmental address
+    # The domain has to be municipal.gov.in itself or a subdomain of it, so
+    # the dot in front of it is mandatory. The first version anchored on a
+    # suffix instead: `[a-z0-9.-]*nic\.in` exempted clinic.in and panic.in,
+    # and `[a-z0-9.-]*municipal\.gov\.in` exempted evilmunicipal.gov.in — a
+    # domain anybody can register. A suffix is not a domain.
+    #
+    # The trailing lookahead stops the domain being a prefix of a longer one:
+    # resident@municipal.gov.in.example.com is somebody else's host. It has to
+    # be written in two halves because a full stop means both things here. A
+    # dot followed by more of a domain continues it; a dot followed by a space
+    # ends a sentence, and `licensing@municipal.gov.in.` at the end of one is
+    # the ordinary way these addresses appear in a circular. A single
+    # `(?![a-z0-9.-])` refuses both and unmasks four of the department's own
+    # published addresses — which is the failure this exemption exists to stop.
+    - '[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)*municipal\.gov\.in(?![a-z0-9-])(?!\.[a-z0-9-])'
 
-    - '[a-z0-9._%+-]+@[a-z0-9.-]*nic\.in'               # national informatics centre
+    - '[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)*nic\.in(?![a-z0-9-])(?!\.[a-z0-9-])'
 
     - '\b1800[\s-]?\d{3}[\s-]?\d{4}\b'   # published toll-free helplines
   action:
