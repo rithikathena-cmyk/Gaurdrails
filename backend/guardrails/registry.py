@@ -232,8 +232,8 @@ PARAMS: list[Param] = [
        "enum", "block", options=["block", "flag", "pass"]),
     _a("content.judge_model", "content",
        "Model backing the content rails. Judge quality is the rail's ceiling.",
-       "enum", "claude-opus-5",
-       options=["claude-opus-5", "claude-sonnet-5", "claude-haiku-4-5"]),
+       "enum", "claude-sonnet-5",
+       options=["claude-sonnet-5", "claude-haiku-4-5"]),
     _a("content.enabled_categories", "content",
        "Which hazard categories to evaluate at all.",
        "set", ["hate", "violence", "insults", "misconduct", "self_harm", "sexual"]),
@@ -404,10 +404,25 @@ PARAMS: list[Param] = [
        "enum", "mask", options=["block", "mask", "flag"]),
     _a("pii.action.agent_tool", "pii",
        "Applied to the arguments the agent is about to hand a tool.",
-       "enum", "flag", options=["block", "mask", "flag", "pass"]),
+       "enum", "mask", options=["block", "mask", "flag", "pass"]),
     _a("pii.action.agent_data", "pii",
        "Applied to what a tool returned, before the agent reads it.",
        "enum", "mask", options=["block", "mask", "flag", "pass"]),
+    _a("pii.agent.allow_masked_pii_response", "pii",
+       "Whether the autonomous agent path may return a MASK recommendation at all. "
+       "False hands it to a person instead of returning a value with a vault token.",
+       "bool", True),
+    _a("pii.agent.preserve_masked_tokens", "pii",
+       "Whether a masked agent response keeps the reversible vault token, or a "
+       "generic, non-reversible marker. Only the token can ever be resolved back.",
+       "bool", True),
+    _a("pii.vault.resolution", "pii",
+       "Whether the agentic path's own egress step may resolve a vault token in an "
+       "agent's response back to its real value for the entitled reader — the same "
+       "check `vault.unmask` already runs for ordinary chat, applied here. "
+       "'owner_only' still denies every reader the token was not minted for; "
+       "'never' means this path does not attempt resolution for anyone, ever.",
+       "enum", "owner_only", options=["owner_only", "never"]),
 
     _l("pii.checksum_validation", "pii",
        "Structural validation on card, SSN, IBAN, Aadhaar, and PAN candidates.",
@@ -664,6 +679,10 @@ PARAMS: list[Param] = [
     _a("agent.max_tool_calls", "agent",
        "Total tool calls allowed across one request, across all steps.",
        "int", 10, minimum=1, maximum=40, step=1),
+    _a("agent.masked_field_disclosure", "agent",
+       "How the agent reports a retrieved field that arrived masked — show "
+       "the token placeholder as-is, or explain in prose that it is protected.",
+       "enum", "relay", options=["relay", "explain"]),
 
     _l("agent.approval_required_for", "agent",
        "Which tool calls stop and ask a person.",

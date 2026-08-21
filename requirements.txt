@@ -1,5 +1,10 @@
 anthropic>=0.70.0
 fastapi>=0.115.0
+# Used directly by the agents package (agents/types.py) for schema-validated
+# agent output. Already present as FastAPI's own transitive dependency, which
+# is exactly the kind of unpinned reliance python-multipart already burned
+# this project on once — pinned here so a clean install cannot repeat it.
+pydantic>=2.0.0
 uvicorn[standard]>=0.32.0
 # Document upload posts multipart/form-data. FastAPI only raises about this when
 # the route is *built*, so a missing pin does not fail at import — it fails at

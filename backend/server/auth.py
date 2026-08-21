@@ -93,8 +93,7 @@ def cost_micros(model: str, tokens_in: int, tokens_out: int) -> int:
 #: so an unset account follows the server rather than pinning a version forever.
 ASSIGNABLE_MODELS: list[dict[str, str]] = [
     {"key": "", "label": "Deployment default", "note": "follows the server setting"},
-    {"key": "claude-opus-5", "label": "Opus 5", "note": "most capable, needed for agent work"},
-    {"key": "claude-sonnet-5", "label": "Sonnet 5", "note": "balanced"},
+    {"key": "claude-sonnet-5", "label": "Sonnet 5", "note": "balanced — the deployment default"},
     {"key": "claude-haiku-4-5", "label": "Haiku 4.5", "note": "fastest and cheapest"},
 ]
 MODEL_KEYS = {m["key"] for m in ASSIGNABLE_MODELS}
@@ -107,6 +106,7 @@ PERMISSIONS: dict[str, str] = {
     "scenarios": "Run the evaluation scenarios",
     "audit": "Read the policy and verify the audit chain",
     "users": "Add people and set what they may spend",
+    "agents": "Run the autonomous guardrail agents directly, outside a chat turn",
 }
 
 ROLES: dict[str, dict[str, Any]] = {

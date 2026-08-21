@@ -13,10 +13,14 @@ Three distinct call shapes, deliberately different:
                 calls, because the next turn has to hand them back verbatim —
                 thinking blocks and signatures included.
 
-Note on models: everything defaults to claude-opus-5. The judge model is an
+Note on models: everything defaults to claude-sonnet-5. The judge model is an
 adjustable parameter (`content.judge_model`) because judge quality is the
 ceiling on rail quality — that tradeoff is yours to make, not ours to make
-quietly.
+quietly. Opus 5 is not offered as a default or an assignable model in this
+deployment — see `auth.py`'s `ASSIGNABLE_MODELS` — but `_ADAPTIVE_CAPABLE`
+below still recognizes it, so a caller who passes it explicitly (an env
+override, a stored account predating this change) still gets a correctly
+shaped request rather than a 400 that fails the rail closed.
 """
 
 from __future__ import annotations
@@ -31,7 +35,7 @@ import anthropic
 
 log = logging.getLogger("guardrails.llm")
 
-DEFAULT_MODEL = "claude-opus-5"
+DEFAULT_MODEL = "claude-sonnet-5"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
 
 # Models that reject the `fallbacks` parameter outright. Without this the first

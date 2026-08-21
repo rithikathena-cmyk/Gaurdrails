@@ -333,7 +333,7 @@ pii:
 
     ingest:       mask        # masked before the chunk is written, never after
 
-    agent_tool:   flag        # args are already masked; flag if something slipped through
+    agent_tool:   mask        # a masked argument, minted under SYSTEM_OWNER, is unreversible to whoever is asking
 
     agent_data:   mask
 
