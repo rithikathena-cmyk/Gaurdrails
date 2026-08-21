@@ -362,7 +362,11 @@ PARAMS: list[Param] = [
        "regex[]", []),
     _a("pii.allowlist", "pii",
        "Published contacts that are exempt from masking — a department's own address or "
-       "helpline. Matched against the detected value, case-insensitively.",
+       "helpline. Matched case-insensitively against the whole text, not against the "
+       "detected value: a recognizer slices a span to its own boundaries, so the phone "
+       "pattern takes 800 425 1969 out of the published 1800 425 1969 and a value-based "
+       "entry would never match it. An exempt value is still detected, counted and "
+       "audited — only the rewrite is skipped.",
        "regex[]", []),
 
     _l("pii.allowlist_ordering", "pii",

@@ -122,6 +122,80 @@ def test_a_published_departmental_contact_is_not_masked(engine):
     assert r.verdict is Verdict.PASS
 
 
+# A suffix is not a domain. The first version of these patterns anchored on one:
+# `[a-z0-9.-]*nic\.in` also exempted clinic.in and panic.in, and
+# `[a-z0-9.-]*municipal\.gov\.in` also exempted evilmunicipal.gov.in — a domain
+# anybody can register and then never have masked anywhere in the pipeline. The
+# exemption is the one place the stack is told to leave a value alone, so it has
+# to be the department's own domain or a subdomain of it, and nothing else.
+LOOKALIKE_CONTACTS = [
+    "caseworker@evilmunicipal.gov.in",
+    "caseworker@notmunicipal.gov.in",
+    "meera@clinic.in",
+    "meera@panic.in",
+    "resident@municipal.gov.in.example.com",
+]
+
+
+@pytest.mark.parametrize("address", LOOKALIKE_CONTACTS)
+def test_a_lookalike_domain_is_not_treated_as_a_published_contact(engine, address):
+    r = engine.evaluate(f"write to {address}", Surface.RETRIEVAL, Tracer(), "s")
+    pii = rail(r, "pii.detect")
+    assert pii.meta["allowlisted"] == 0, f"wrongly exempted: {pii.meta['allowlisted_values']}"
+    assert address not in r.text
+    assert r.verdict is Verdict.MASK
+
+
+@pytest.mark.parametrize("address", [
+    OFFICIAL_EMAIL,
+    "records@registry.municipal.gov.in",   # a subdomain is the department's own
+    "helpdesk@nic.in",
+    OFFICIAL_EMAIL.upper(),                # the patterns are compiled case-insensitive
+])
+def test_a_real_departmental_address_is_still_exempt(engine, address):
+    """Anchoring the pattern must not cost the desk the addresses it exists to give out."""
+    r = engine.evaluate(f"write to {address}", Surface.RETRIEVAL, Tracer(), "s")
+    assert address in r.text
+    assert rail(r, "pii.detect").meta["allowlisted"] == 1
+
+def test_a_published_address_at_the_end_of_a_sentence_is_still_exempt(engine):
+    """A full stop is not another domain label.
+
+    The first anchored version of these patterns ended `(?![a-z0-9.-])`, which
+    refused a trailing dot of any kind — and most of the departmental addresses
+    in the corpus are written at the end of a sentence. It unmasked four of
+    them. The lookalike cases above could not see it: not one of them has a
+    full stop after the address.
+    """
+    r = engine.evaluate(
+        f"Write to {OFFICIAL_EMAIL}. Housing goes to housing@municipal.gov.in.",
+        Surface.RETRIEVAL, Tracer(), "s")
+    assert OFFICIAL_EMAIL in r.text
+    assert "housing@municipal.gov.in" in r.text
+    assert rail(r, "pii.detect").meta["allowlisted"] == 2
+
+
+def test_no_departmental_address_in_the_corpus_is_masked_at_retrieval(engine):
+    """The guard the cases above are not: it reads the documents rather than a
+    list somebody has to remember to extend. Every published address the corpus
+    actually carries is run through the retrieval surface in the sentence it is
+    written in, punctuation and all."""
+    import re
+
+    pattern = re.compile(r"[\w.+-]+@[\w.-]*(?:municipal\.gov\.in|nic\.in)")
+    checked = 0
+    for doc in CORPUS:
+        official = sorted(set(pattern.findall(doc["text"])))
+        if not official:
+            continue
+        out = engine.evaluate(doc["text"], Surface.RETRIEVAL, Tracer(), "s")
+        for address in official:
+            checked += 1
+            assert address in out.text,                 f"{address} was masked out of {doc['id']!r} — the desk cannot give it out"
+    assert checked >= 5, f"only {checked} published addresses found to check"
+
+
+
 def test_a_citizens_own_contact_is_still_masked(engine):
     r = engine.evaluate(f"my email is {CITIZEN_EMAIL} and my mobile is {CITIZEN_MOBILE}",
                         Surface.USER_PROMPT, Tracer(), "s")
