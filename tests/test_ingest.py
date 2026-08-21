@@ -40,6 +40,7 @@ from backend.guardrails.knowledge import (
 )
 
 from backend.guardrails.knowledge.seed import CORPUS
+from backend.guardrails.rails.pii import CORPUS_OWNER
 from tests.conftest import REPO
 
 
@@ -232,6 +233,57 @@ def test_pii_is_masked_before_the_chunk_is_written(ingest_engine):
 
 
 
+CONTACT_SHEET = "Disputes go to Meera Balan at meera.balan@example.gov or 415-555-0143."
+
+
+def _corpus_token(document) -> str:
+    """The first vault token the ingested document was masked down to."""
+    import re
+
+    m = re.search(r"<[A-Z_0-9]+:([0-9a-f]{12})", " ".join(document.chunks))
+    assert m, "the document was not masked at all"
+    return m.group(1)
+
+
+def test_a_document_token_belongs_to_the_corpus_and_not_to_a_caller(ingest_engine):
+    """The hole `CORPUS_OWNER` exists for.
+
+    Ingestion used to mint its tokens under the empty owner — the single-tenant
+    bucket the CLI and library callers run as — so the check at egress matched
+    and `run.py --ask "the office number"` printed the resident's details
+    straight back out of the corpus. The document was masked into the index and
+    unmasked out of it again in the same breath.
+    """
+    result = ingest_engine.ingest("Contact sheet", CONTACT_SHEET)
+    token = _corpus_token(result.document)
+    assert ingest_engine.vault.reveal(token, "") is None
+    assert ingest_engine.vault.reveal(token, CORPUS_OWNER) == "meera.balan@example.gov"
+
+
+@pytest.mark.parametrize("principal", ["", "citizen", "admin", "corpus", "@Corpus", "@corpus "])
+def test_no_caller_can_unmask_a_document_token(ingest_engine, principal):
+    """Owners are matched whole and exactly, so a near miss is a miss."""
+    result = ingest_engine.ingest("Contact sheet", CONTACT_SHEET)
+    assert ingest_engine.vault.reveal(_corpus_token(result.document), principal) is None
+
+
+def test_the_corpus_owner_is_not_a_name_an_account_can_hold(monkeypatch, tmp_path):
+    """`CORPUS_OWNER` is unforgeable only while nobody can sign in as it.
+
+    `add_user` allows letters, digits, `-`, `_` and `.`; `@` is not on that list,
+    which is the whole reason the corpus bucket is out of reach. This is here so
+    that widening the username charset fails loudly, rather than quietly handing
+    every ingested document to whoever registers the name.
+    """
+    from backend.server import auth
+    from backend.server.auth import Directory
+
+    monkeypatch.setattr(auth, "USERS_PATH", tmp_path / "users.json")
+    monkeypatch.setattr(auth, "SESSIONS_PATH", tmp_path / "sessions.json")
+    with pytest.raises(ValueError, match="username may contain"):
+        Directory().add_user(CORPUS_OWNER, "a-password", "admin")
+
+
 def test_poisoned_document_is_quarantined(ingest_engine):
 
     result = ingest_engine.ingest("Fee addendum", POISONED)
@@ -398,6 +450,27 @@ def test_corpus_survives_a_round_trip_to_disk(tmp_path):
 
 
 
+
+
+def test_a_deleted_built_in_stays_deleted_across_a_restart(tmp_path):
+    """Deleting a seed is only a real choice if the next process honours it.
+
+    `install_new_builtins` tracks what a store has ever been given by id rather
+    than by what it currently holds, so a built-in removed on purpose is not
+    reinstalled at the next start. That is what made it safe to stop refusing
+    the delete in the API.
+    """
+    path = tmp_path / "corpus.json"
+    first = Corpus(path)
+    doc_id = next(d.id for d in first.all() if d.source == "built-in")
+    assert first.remove(doc_id)
+
+    reopened = Corpus(path)
+    assert reopened.get(doc_id) is None
+    assert reopened.stats()["documents"] == len(CORPUS) - 1
+
+    reopened.reset()
+    assert reopened.get(doc_id) is not None, "reset is the way back"
 
 
 def test_a_corrupt_store_falls_back_to_the_seed_rather_than_crashing(tmp_path):
