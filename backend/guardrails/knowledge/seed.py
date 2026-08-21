@@ -1,6 +1,6 @@
 """The knowledge base.
 
-`CORPUS` below is the built-in seed: twenty-five public-services documents,
+`CORPUS` below is the built-in seed: thirty-six public-services documents,
 deliberately tiny and deliberately incomplete. The grounding rail only means
 something if the model can plausibly reach past what it was given — a knowledge
 base that covers everything never produces an ungrounded answer, so it never
@@ -112,6 +112,40 @@ CORPUS: list[dict[str, str]] = [
                 "grounds; the decision letter is dated 2026-06-02. The appellant disputes "
                 "the income assessment and has supplied a revised income certificate. "
                 "Assigned to the Housing wing for review.",
+    },
+    # Three more individual case records, the same shape as HA-9902 above and
+    # for the same reason: a record naming one resident is exactly what the
+    # retrieval-surface PII rail exists to mask — reversibly, for the wing
+    # that owns it, and not for whoever happens to ask. `grievance-log-q2`
+    # and `officer-caseload` below are the negative case: PII belongs on a
+    # record like this, never aggregated into a log a single search reaches.
+    {
+        "id": "case-file-tl2214",
+        "title": "Case file TL-2214 — trade licence objection",
+        "text": "Trade licence objection TL-2214. Applicant: Karthik Subramaniam, "
+                "contactable on karthik.subramaniam@example.com or 9884032156, trading "
+                "as Subramaniam Hardware at 7 Kamarajar Street, Chennai 600008. Renewal "
+                "was refused on 2026-05-20 for an unpaid tax-clearance certificate; the "
+                "applicant has since submitted one and disputes the refusal date. "
+                "Assigned to the Revenue wing for review.",
+    },
+    {
+        "id": "case-file-pt5583",
+        "title": "Case file PT-5583 — property tax objection",
+        "text": "Property tax objection PT-5583, against assessment AS-4417. Objector: "
+                "Priya Natarajan, contactable on priya.natarajan@example.com or "
+                "9791145520, residing at 22 Lloyds Road, Chennai 600086. The objector "
+                "disputes the built-up area used in the assessment and has requested a "
+                "site visit. Filed 2026-06-11. Assigned to the assessment wing.",
+    },
+    {
+        "id": "case-file-bc7731",
+        "title": "Case file BC-7731 — birth certificate correction",
+        "text": "Birth certificate correction request BC-7731. Applicant: Suresh Iyer, "
+                "contactable on suresh.iyer@example.com or 9962287743, residing at 41 "
+                "Bazaar Road, Chennai 600041. Requests correction of a misspelled given "
+                "name on the certificate of his daughter, born 2024-03-02. Supporting "
+                "hospital discharge summary attached. Assigned to the Registrar.",
     },
     {
         "id": "grievance-log-q2",
@@ -264,6 +298,78 @@ CORPUS: list[dict[str, str]] = [
                 "counter; the original must be produced for inspection. Staff will never ask "
                 "for an Aadhaar number by email or telephone, and no officer will request a "
                 "one-time password.",
+    },
+    {
+        "id": "income-certificate",
+        "title": "Income certificate",
+        "text": "An income certificate is issued by the Revenue wing and is valid for six "
+                "months from the date of issue. Apply with proof of residence, the latest "
+                "salary slip or a self-employment declaration, and photo identification. It "
+                "is issued within 10 working days and is required for the housing assistance "
+                "grant, fee concessions, and scholarship applications.",
+    },
+    {
+        "id": "domicile-certificate",
+        "title": "Domicile certificate",
+        "text": "A domicile certificate confirms continuous residence in the district and is "
+                "issued by the Revenue wing to a person who has lived there for at least "
+                "three years. Apply with proof of residence for the full period — ration "
+                "card, voter identity card, or utility bills — and photo identification. "
+                "Issued within 15 working days.",
+    },
+    {
+        "id": "senior-citizen-certificate",
+        "title": "Senior citizen certificate",
+        "text": "A senior citizen certificate is issued to a resident aged 60 or above and is "
+                "used to claim fee concessions and priority service at counters. Apply with "
+                "proof of age and proof of residence. It is issued free of charge within 7 "
+                "working days and does not expire.",
+    },
+    {
+        "id": "rti-request",
+        "title": "Filing a Right to Information request",
+        "text": "A Right to Information request may be filed with any wing at a fee of 10 "
+                "rupees, waived for applicants below the poverty line. A reply is due within "
+                "30 days, or 48 hours where the request concerns life or liberty. A first "
+                "appeal against a refusal goes to the wing's own appellate officer within 30 "
+                "days; a second appeal goes to the State Information Commission.",
+    },
+    {
+        "id": "trade-licence-transfer",
+        "title": "Transferring a trade licence",
+        "text": "A trade licence may be transferred to a new owner on sale of the business, "
+                "but not to a new location — a change of premises needs a fresh licence. "
+                "Apply within 30 days of the transfer with the existing licence, the sale "
+                "deed or partnership deed, and identity proof for the new owner. The "
+                "transfer fee is 500 rupees and is decided within 15 working days.",
+    },
+    {
+        "id": "noise-complaint",
+        "title": "Reporting a noise nuisance",
+        "text": "A noise nuisance from a commercial premises, construction work, or a "
+                "loudspeaker after hours is reported to the Public Works wing through the "
+                "grievance portal, quoting the address and the time it occurred. "
+                "Construction noise is restricted to between 06:00 and 22:00 on working "
+                "days. A loudspeaker running past 22:00 without a written exemption may "
+                "be seized on the spot.",
+    },
+    {
+        "id": "pothole-streetlight-complaint",
+        "title": "Reporting a pothole or a faulty streetlight",
+        "text": "A pothole, a faulty streetlight, or a blocked storm drain is reported to "
+                "the Public Works wing through the grievance portal or by calling "
+                "1800 425 1900, quoting the nearest landmark rather than a survey number. A "
+                "streetlight fault is attended to within 5 working days; a pothole on a main "
+                "road within 10, and on a residential street within 20.",
+    },
+    {
+        "id": "pet-licence",
+        "title": "Registering a pet",
+        "text": "A dog kept within municipal limits must be registered annually with the "
+                "Revenue wing for a fee of 100 rupees, and proof of a current rabies "
+                "vaccination is required at registration. An unregistered dog found by an "
+                "enforcement officer may be impounded. Registration does not apply to "
+                "livestock or to cats.",
     },
 ]
 

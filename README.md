@@ -44,7 +44,7 @@ returns to the model, never to the user; only a second failure surfaces a human.
 that changes state outside the system stops and asks a person, always.
 
 See it: **`/summary`** carries the pipeline diagram, eight real turns, and a Run button
-on each of the five scenarios — they execute against the deployment you are reading,
+on each of the six scenarios — they execute against the deployment you are reading,
 not a recording. **`/demo/stages`** is the same pipeline stage by stage, in depth, with
 a live trace overlaid.
 
@@ -162,8 +162,8 @@ at once. Click any cell in the Parameters view to cycle it.
 
 ## Adjustable vs fixed
 
-Every parameter is declared once in `guardrails/registry.py`. **54 are adjustable and
-live-editable in the UI. 31 are fixed**, and the registry records *why*, in one of four
+Every parameter is declared once in `guardrails/registry.py`. **77 are adjustable and
+live-editable in the UI. 38 are fixed**, and the registry records *why*, in one of four
 categories:
 
 | | Meaning |
@@ -389,13 +389,13 @@ didn't finish checking" is not the same as "the check errored".
 │   │   │   └── runner.py        the loop, and the rails on every edge of it
 │   │   │
 │   │   ├── knowledge/           what the answers are grounded in
-│   │   │   ├── seed.py          twenty-five built-in documents
+│   │   │   ├── seed.py          thirty-six built-in documents
 │   │   │   └── ingest.py        extract → chunk → mask → BM25 index
 │   │   │
 │   │   └── evaluation/          does it still work, and how well
 │   │       ├── suite.py         labelled scoring: recall, MRR, FP and FN apart
 │   │       ├── compare.py       judge-only against local+judge, same cases
-│   │       └── scenarios.py     five end-to-end runs against the real stack
+│   │       └── scenarios.py     six end-to-end runs against the real stack
 │   │
 │   └── server/                  HTTP only. Holds no guardrail logic
 │       ├── app.py               app factory, page routes, sign-in gates
@@ -441,7 +441,7 @@ didn't finish checking" is not the same as "the check errored".
 ├── eval/
 │   └── suite.yaml            labelled cases: retrieval, rails, answers
 │
-├── tests/                    476 tests, no API key needed
+├── tests/                    863 tests — all but one need no API key
 │   ├── conftest.py           policy sandbox, and the signed-in clients
 │   ├── test_engine · test_registry · test_config · test_parameters
 │   ├── test_words · test_pii · test_checksums · test_scope_entities
@@ -484,7 +484,7 @@ python run.py --ask "..."     # one request through the stack, printed as a trac
 python frontend/demo/flow.py           # the same request, drawn as a flow chart
 python frontend/demo/flow.py --sample injection
 python run.py --eval          # score against the labelled suite
-python -m pytest tests/ -q    # 476 tests, no API key required
+python -m pytest tests/ -q    # 863 tests — one live-evaluation test needs a key, and skips without one
 ```
 
 Then open **http://127.0.0.1:8000** — the pipeline diagram, with the console at
@@ -607,7 +607,7 @@ GET  /api/agent/tools                             → the tool set, with its gat
 
 ---
 
-## Five scenarios
+## Six scenarios
 
 `guardrails/scenarios.py` drives the real engine and asserts on what came back — they can
 fail, and they say so. Run them with `POST /api/scenarios/{id}/run`.
@@ -619,6 +619,7 @@ fail, and they say so. Run them with `POST /api/scenarios/{id}/run`.
 | simple | `injection` | the pattern layer blocks pre-model, in under a millisecond, and the refusal never names the technique |
 | **complex** | `poisoned-doc` | the same payload caught on two surfaces: quarantined at `ingest.document`, and withheld at `agent.data` when it arrives through a tool instead |
 | **complex** | `agentic-claim` | a vaulted identifier the model never sees, a tool entitled to resolve it, a write that stops for a person, and the real reference on the filed record |
+| simple | `resident-record` | a retrieved record's PII never resolves for whoever merely asked — masking that stays masked, unlike `pii`'s own values, which resolve back for the caller who owns them |
 
 ---
 
