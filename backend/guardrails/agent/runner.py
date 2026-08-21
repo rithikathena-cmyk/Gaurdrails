@@ -77,6 +77,31 @@ Format so it can be read at a glance:
 - Never a heading in a short answer. Use `###` only when the reply genuinely has two or more sections.
 - Say what is missing in a final line, plainly, rather than padding the answer."""
 
+#: How a retrieved field that arrived masked gets reported, keyed by
+#: `agent.masked_field_disclosure` — read live per turn in `_loop()`, not
+#: fixed at import time, so a Parameters change reaches the very next turn.
+#: Neither fragment changes what the model is *entitled* to: the token
+#: resolves only for the principal it was minted for, on egress, regardless
+#: of which of these it was told. This only decides how it talks about a
+#: field it cannot resolve for the person asking.
+_MASKED_DISCLOSURE = {
+    "relay": """When a retrieved record has a field that arrived masked, relay \
+the token placeholder itself in your answer — write it exactly as given, such \
+as <EMAIL_ADDRESS:7c3f90>. Do not decline to answer and do not describe the \
+value only in prose. The token is safe to show: it carries no recoverable \
+information on its own, and only the principal it was minted for can ever \
+have it resolved.""",
+    "explain": """When a retrieved record has a field that arrived masked, do \
+not reproduce the token placeholder in your answer. Say plainly that the \
+detail is protected and cannot be shared, and answer the rest of the question \
+from what is not masked.""",
+}
+
+
+def _effective_system_prompt(policy: Any) -> str:
+    mode = str(policy.get("agent.masked_field_disclosure"))
+    return SYSTEM_PROMPT + "\n\n" + _MASKED_DISCLOSURE.get(mode, _MASKED_DISCLOSURE["relay"])
+
 
 # ---------------------------------------------------------------------------
 # Results
@@ -130,6 +155,13 @@ class PendingApproval:
     #: it — an approval is a decision about *their* pending write.
     owner: str = ""
     created_at: float = field(default_factory=time.time)
+    #: What `agent.tool` already decided about these arguments, before the
+    #: approval gate ever paused the turn. `resume()` builds a fresh
+    #: `ToolCall` to report the resumed turn — without this, that fresh
+    #: call's `args_verdict` silently reverts to its dataclass default
+    #: (`"pass"`), even when the original scan actually masked, flagged, or
+    #: (had it blocked) never reached approval at all.
+    args_verdict: str = "pass"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -225,7 +257,8 @@ class AgentRunner:
 
         if approved and tool is not None:
             call = ToolCall(step=pending.step, name=tool.name, kind=tool.kind,
-                            args_preview=_preview(pending.args), approved=True)
+                            args_preview=_preview(pending.args), approved=True,
+                            args_verdict=pending.args_verdict)
             payload = self._execute(tool, pending.args, ctx, tracer, call, approved=True)
         else:
             call = ToolCall(step=pending.step, name=pending.tool, kind="write",
@@ -336,7 +369,7 @@ class AgentRunner:
             with tracer.stage(f"Agent step {step}", self.llm.model, kind="model"):
                 with tracer.rail("llm.converse", self.llm.model) as r:
                     try:
-                        turn = self.llm.converse(SYSTEM_PROMPT, messages, specs)
+                        turn = self.llm.converse(_effective_system_prompt(p), messages, specs)
                     except Refusal as exc:
                         r.verdict = Verdict.BLOCK
                         r.error = str(exc)
@@ -512,8 +545,9 @@ class AgentRunner:
         args_text = json.dumps(use.input, ensure_ascii=False)
         # `owner=SYSTEM_OWNER`, not `ctx.principal`: these are arguments the
         # model composed, not text the caller supplied. `pii.action.agent_tool`
-        # is `flag` in the shipped policy, which mints no token regardless —
-        # this is defense in depth against that action ever becoming `mask`.
+        # is `mask` in the shipped policy — a token minted under `SYSTEM_OWNER`
+        # stays unreversible to whoever is asking, the same defense in depth
+        # this already gave `flag`, whatever the configured action actually is.
         args_scan = engine.evaluate(
             args_text, Surface.AGENT_TOOL, tracer,
             f"Tool call · {tool.name}", f"{tool.kind} tool · arguments",
@@ -541,7 +575,7 @@ class AgentRunner:
                 tool_use_id=use.id, chunks=list(ctx.chunks), calls=list(calls),
                 step=step, calls_used=calls_used - 1,
                 origin_request_id=tracer.trace.request_id,
-                owner=ctx.principal,
+                owner=ctx.principal, args_verdict=call.args_verdict,
             )
             with tracer.stage(f"Approval required · {tool.name}",
                               "locked — every write tool", kind="rail"):
