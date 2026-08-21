@@ -30,7 +30,7 @@ from .rails.entities import EntityRail
 from .rails.scope import ScopeRail
 from .rails.grounding import GroundingRail
 from .rails.normalize import normalize
-from .rails.pii import CORPUS_OWNER, PIIRail, Vault
+from .rails.pii import CORPUS_OWNER, SYSTEM_OWNER, PIIRail, Vault
 from .rails.policy import PolicyRail
 from .rails.words import WordRail
 from .tracing import AuditLog, Tracer
@@ -684,8 +684,12 @@ class Engine:
         rag_results: list[RailResult] = []
         if chunks and p.enabled("pii", "retrieval"):
             joined = "\n\n".join(chunks)
+            # `owner=CORPUS_OWNER`, not `principal`: a value found here was
+            # quoted out of the corpus, not supplied by the caller asking the
+            # question, so a token minted here must not unmask for them just
+            # because they are the one who triggered the scan.
             rag = self.evaluate(joined, Surface.RETRIEVAL, tracer, "Retrieval rails",
-                                "scanning retrieved context", owner=principal)
+                                "scanning retrieved context", owner=CORPUS_OWNER)
             rag_results = rag.results
             if rag.blocked:
                 chunks = []
@@ -752,9 +756,14 @@ class Engine:
                             chunks=chunks, detections=all_detections,
                         )
 
+            # `owner=SYSTEM_OWNER`: anything newly detected here surfaced in
+            # generated text, not in what the caller sent — see the note on the
+            # retrieval call above. Values the caller supplied are already
+            # vault tokens by the time the model sees them, so re-detecting
+            # here means the value came from somewhere else.
             egress = self.evaluate(reply, Surface.LLM_RESPONSE, tracer,
                                    f"Output rails{'' if attempt == 1 else f' · attempt {attempt}'}",
-                                   owner=principal)
+                                   owner=SYSTEM_OWNER)
             all_detections += [
                 {"stage": f"output.{attempt}", "rail": r.rail, **d.redacted()}
                 for r in egress.results for d in r.detections

@@ -18,6 +18,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from tests.test_parameters import StubClaude, engine_with
+from backend.guardrails import Surface, Tracer
+from backend.guardrails.rails.pii import CORPUS_OWNER
 
 
 SSN = "796-33-9021"
@@ -141,6 +143,65 @@ def test_a_foreign_token_in_the_reply_is_refused_and_recorded(monkeypatch):
     assert unmask.meta["tokens_revealed"] == 0
     assert unmask.meta["unmask_denied"] == 1
     assert unmask.meta["denial_reasons"] == ["owner_mismatch"]
+
+
+# ── retrieval: another resident's details ───────────────────────────
+# The live bug this closes. A citizen asking "who is the appellant on housing
+# appeal HA-9902" got Anitha Selvam's name, email, mobile and address back —
+# the model was truthfully reporting they were masked, and egress then
+# substituted the real values into that very sentence, because the retrieval
+# scan minted the tokens under `principal` and the asking citizen *was* the
+# principal. The fix mints retrieval-surface tokens under `CORPUS_OWNER`
+# instead — see engine.py's note on the retrieval `evaluate()` call.
+def test_a_retrieved_residents_details_do_not_unmask_for_the_asker():
+    """`Engine.evaluate()` is generic — the fix lives at the call site in
+    `engine.py`, which is why this goes through `converse()` rather than
+    calling `evaluate()` directly with a hand-picked owner. Calling `evaluate()`
+    directly would only re-test the vault, which `test_vault_auth.py` already
+    covers, and would pass even without the fix.
+    """
+    engine = engine_with(StubClaude())
+    result = engine.converse(
+        "who is the appellant on housing appeal HA-9902 and how do I contact them",
+        session_id="s", principal="citizen")
+
+    entries = list(engine.vault._store.values())  # noqa: SLF001
+    minted = [e for e in entries if e.entity == "EMAIL_ADDRESS"]
+    assert minted, "nothing was minted — the retrieval scan did not run"
+    # Not the citizen who asked, not anybody who could sign in and claim it.
+    assert all(e.owner == CORPUS_OWNER for e in minted),         f"a retrieved resident's detail was minted under {[e.owner for e in minted]}"
+
+    # And genuinely reversible — for the one owner nobody who signs in can be.
+    token = next(t for t, e in engine.vault._store.items() if e.entity == "EMAIL_ADDRESS")  # noqa: SLF001
+    assert engine.vault.reveal(token, "citizen") is None
+    assert engine.vault.reveal(token, CORPUS_OWNER) == "anitha.selvam@example.com"
+
+
+def test_a_tool_results_details_do_not_unmask_for_the_caller():
+    """`agent.data` gets the same fix, for the same reason: a claim record's
+    note field was filled in by whoever filed it, not by the caller asking.
+    `CLM-88817766`'s note carries `collections@attacker.example` — already used
+    elsewhere to prove the injection in it is withheld; here it proves the
+    email address in the same note is not handed back to whoever asked.
+    """
+    from backend.guardrails import AgentRunner, AuditLog, Corpus, Engine, load
+    from backend.guardrails.rails.pii import SYSTEM_OWNER
+    from tests.test_agent import ScriptedClaude
+    from tests.conftest import REPO
+
+    policy = load(REPO / "config" / "policy.yaml")
+    llm = ScriptedClaude([("tool", "check_claim_status", {"reference": "CLM-88817766"}),
+                          ("answer", "That claim is in assessment.")])
+    engine = Engine(policy, llm, AuditLog("audit.log"), Corpus(seed=True))
+    runner = AgentRunner(engine, llm)
+
+    runner.run("what is the status of claim CLM-88817766", session_id="s",
+              principal="citizen")
+
+    entries = list(engine.vault._store.values())  # noqa: SLF001
+    minted = [e for e in entries if e.entity == "EMAIL_ADDRESS"]
+    assert minted, "nothing was minted — the agent.data scan did not run"
+    assert all(e.owner == SYSTEM_OWNER for e in minted),         f"a tool result's detail was minted under {[e.owner for e in minted]}"
 
 
 def evaluate_prompt(engine, text: str, principal: str) -> str:
