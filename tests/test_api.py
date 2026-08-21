@@ -265,7 +265,7 @@ def test_the_caseload_sample_ingests_the_way_its_blurb_claims(client):
 
 
 def test_a_built_in_document_can_be_deleted(client):
-    """It used to be a 400. The console lists twenty-five built-ins, so refusing
+    """It used to be a 400. The console lists thirty-six built-ins, so refusing
     them left an operator looking at rows they could not act on."""
     listed = client.get("/api/documents").json()["documents"]
     doc_id = next(d["id"] for d in listed if d["built_in"])
@@ -328,7 +328,8 @@ def test_an_unknown_approval_token_is_not_replayable(client):
 def test_scenarios_are_listed_with_their_surfaces(client):
     body = client.get("/api/scenarios").json()
     ids = [s["id"] for s in body["scenarios"]]
-    assert ids == ["clean", "pii", "injection", "poisoned-doc", "agentic-claim"]
+    assert ids == ["clean", "pii", "injection", "poisoned-doc", "agentic-claim",
+                   "resident-record"]
     complex_ones = [s for s in body["scenarios"] if s["complexity"] == "complex"]
     assert len(complex_ones) == 2
 

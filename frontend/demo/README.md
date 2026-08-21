@@ -66,7 +66,7 @@ model is allowed to read it. Neither exists in the chat path, and neither is opt
 
 ---
 
-## The five scenarios
+## The six scenarios
 
 Run them with `POST /api/scenarios/{id}/run`. They drive the real engine and
 assert on what came back.
@@ -78,6 +78,7 @@ assert on what came back.
 | simple | `injection` | prompt | the pattern layer blocks before the model, and the refusal does not name the technique |
 | **complex** | `poisoned-doc` | ingest · retrieval · agent.data | the same payload caught twice, on two different boundaries |
 | **complex** | `agentic-claim` | prompt · agent.tool · agent.data · response | a vaulted identifier, a tool entitled to resolve it, and a write that waits for a person |
+| simple | `resident-record` | prompt · retrieval · response | a retrieved record's PII resolves for nobody who merely asks — the deliberate contrast with `pii`, where the caller owns the value and gets it back |
 
 ---
 

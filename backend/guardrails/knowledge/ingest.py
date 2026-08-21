@@ -534,7 +534,7 @@ class Corpus:
         return added
 
     def seed_builtin(self) -> None:
-        """The twenty-five built-in public-services documents.
+        """The thirty-six built-in public-services documents.
 
         Deliberately small and incomplete: a knowledge base that covers
         everything never produces an ungrounded answer, so it never exercises
