@@ -10,10 +10,11 @@ from backend.guardrails.types import RailResult, Verdict
 ENTITIES = ["EMAIL_ADDRESS", "US_SSN", "CREDIT_CARD", "PHONE_NUMBER", "AADHAAR"]
 
 
-def make(strategy="vault-token", vault=None, custom=None, reveal=4):
+def make(strategy="vault-token", vault=None, custom=None, reveal=4, reveal_prefix=0):
     return PIIRail(
         entities=ENTITIES, confidence_threshold=0.5, mask_strategy=strategy,
-        partial_reveal=reveal, custom_regex=custom or [], vault=vault or Vault(),
+        partial_reveal=reveal, partial_reveal_prefix=reveal_prefix,
+        custom_regex=custom or [], vault=vault or Vault(),
     )
 
 
@@ -63,6 +64,48 @@ def test_partial_reveals_only_the_tail():
     res = make("partial").evaluate("card 4539578763621486", "mask", _result())
     assert "1486" in res.text_out
     assert "4539578763621486" not in res.text_out
+
+
+def test_partial_prefix_is_off_by_default():
+    """A phone's ceiling allows a prefix, but the global dial defaults to 0."""
+    res = make("partial").evaluate("call 555-123-4567", "mask", _result())
+    assert not res.text_out.strip().startswith("call 55")
+
+
+def test_partial_reveals_head_and_tail_for_phone():
+    res = make("partial", reveal=2, reveal_prefix=2).evaluate(
+        "call 555-123-4567", "mask", _result())
+    assert "555-123-4567" not in res.text_out
+    assert "55" in res.text_out.split()[1][:2]
+    assert res.text_out.rstrip().endswith("67")
+
+
+def test_partial_prefix_ceiling_caps_ssn_at_zero():
+    """SSN has no prefix ceiling — dialing the global knob up must not help."""
+    res = make("partial", reveal=0, reveal_prefix=4).evaluate(
+        "SSN 796-33-9021", "mask", _result())
+    assert not res.text_out.split()[-1].startswith("79")
+
+
+def test_partial_email_keeps_domain_suffix_and_masks_the_rest():
+    res = make("partial", reveal_prefix=2).evaluate(
+        "reach me at jordan.baker@example.com", "mask", _result())
+    assert "jordan.baker@example.com" not in res.text_out
+    assert "@" in res.text_out
+    assert res.text_out.rstrip().endswith(".com")
+    masked = res.text_out.split()[-1]
+    local = masked.split("@")[0]
+    assert local.startswith("jo")
+    assert "example" not in masked
+
+
+def test_partial_email_prefix_defaults_to_fully_masked_local_part():
+    """Without dialing pii.partial_reveal_prefix up, the local part stays hidden."""
+    res = make("partial").evaluate(
+        "reach me at jordan.baker@example.com", "mask", _result())
+    masked = res.text_out.split()[-1]
+    local = masked.split("@")[0]
+    assert local == "*" * len("jordan.baker")
 
 
 def test_redact_leaves_nothing():

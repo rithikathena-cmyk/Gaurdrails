@@ -108,17 +108,20 @@ class Recognizer:
     confidence: float
     check: Callable[[str], bool] | None = None
     reveal: int = 0  # trailing chars safe to show under partial masking
+    reveal_prefix: int = 0  # leading chars safe to show under partial masking
 
 
 RECOGNIZERS: list[Recognizer] = [
-    Recognizer("EMAIL_ADDRESS", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b"), 0.98),
+    Recognizer("EMAIL_ADDRESS", re.compile(r"\b[\w.+-]+@[\w-]+\.[\w.]{2,}\b"),
+               0.98, None, 0, 2),
     Recognizer("US_SSN", re.compile(r"\b\d{3}[- ]\d{2}[- ]\d{4}\b"), 0.95, ssn_plausible, 4),
     Recognizer("CREDIT_CARD", re.compile(r"\b(?:\d[ -]?){13,19}\b"), 0.99, luhn, 4),
     Recognizer("AADHAAR", re.compile(r"\b[2-9]\d{3}[ -]?\d{4}[ -]?\d{4}\b"), 0.95, verhoeff, 4),
     Recognizer("PAN", re.compile(r"\b[A-Z]{5}[0-9]{4}[A-Z]\b"), 0.92, pan_format, 0),
     Recognizer("IBAN", re.compile(r"\b[A-Z]{2}\d{2}[A-Z0-9]{11,30}\b"), 0.95, iban_mod97, 4),
     Recognizer("PHONE_NUMBER",
-               re.compile(r"(?:\+\d{1,3}[ -]?)?(?:\(\d{3}\)|\d{3})[ -]\d{3}[ -]\d{4}\b"), 0.80, None, 4),
+               re.compile(r"(?:\+\d{1,3}[ -]?)?(?:\(\d{3}\)|\d{3})[ -]\d{3}[ -]\d{4}\b"),
+               0.80, None, 4, 2),
     Recognizer("IP_ADDRESS", re.compile(r"\b(?:\d{1,3}\.){3}\d{1,3}\b"), 0.75),
     Recognizer("DATE_OF_BIRTH",
                re.compile(r"\b(?:0?[1-9]|[12]\d|3[01])[/-](?:0?[1-9]|1[0-2])[/-](?:19|20)\d{2}\b"), 0.70),
@@ -312,11 +315,13 @@ class PIIRail:
 
     def __init__(self, entities: list[str], confidence_threshold: float,
                  mask_strategy: str, partial_reveal: int, custom_regex: list[str],
-                 vault: Vault, allowlist: list[str] | None = None) -> None:
+                 vault: Vault, allowlist: list[str] | None = None,
+                 partial_reveal_prefix: int = 0) -> None:
         self.entities = set(entities)
         self.min_conf = confidence_threshold
         self.strategy = mask_strategy
         self.partial_reveal = partial_reveal
+        self.partial_reveal_prefix = partial_reveal_prefix
         self.vault = vault
         self.custom: list[Recognizer] = []
         for i, pat in enumerate(custom_regex or []):
@@ -397,6 +402,34 @@ class PIIRail:
             (exempt if covered else masked).append((det, rec))
         return masked, exempt
 
+    def _partial_mask(self, kind: str, raw: str, rec: Recognizer) -> str:
+        """Reveal a leading and/or trailing run, masking what sits between.
+
+        An email keeps its shape — `jo***@***.com`, never `**********om` —
+        because the local part and the domain are different things to an
+        operator deciding what is safe to leave visible; a flat head/tail
+        slice across the whole string would ignore that and either leak past
+        the `@` or hide the domain along with everything else.
+        """
+        tail_n = min(self.partial_reveal, rec.reveal, len(raw))
+        head_n = min(self.partial_reveal_prefix, rec.reveal_prefix, len(raw) - tail_n)
+
+        if kind == "EMAIL_ADDRESS" and "@" in raw:
+            local, _, domain = raw.partition("@")
+            head = local[:head_n]
+            local_masked = head + "*" * max(0, len(local) - head_n)
+            if "." in domain:
+                name, _, tld = domain.rpartition(".")
+                domain_masked = ("*" * max(1, len(name))) + "." + tld
+            else:
+                domain_masked = "*" * len(domain)
+            return f"{local_masked}@{domain_masked}"
+
+        head = raw[:head_n]
+        tail = raw[-tail_n:] if tail_n else ""
+        middle = max(0, len(raw) - head_n - tail_n)
+        return head + ("*" * middle) + tail
+
     def _replacement(self, det: Detection, rec: Recognizer, owner: str) -> str:
         raw = det.value
         if self.strategy == "redact":
@@ -408,8 +441,7 @@ class PIIRail:
 
             return f"<{det.kind}:{hashlib.sha256(raw.encode()).hexdigest()[:8]}>"
         if self.strategy == "partial":
-            n = min(self.partial_reveal, rec.reveal, len(raw))
-            return ("*" * max(0, len(raw) - n)) + (raw[-n:] if n else "")
+            return self._partial_mask(det.kind, raw, rec)
         # vault-token (default)
         token = self.vault.store(det.kind, raw, owner)
         n = min(self.partial_reveal, rec.reveal, len(raw))
