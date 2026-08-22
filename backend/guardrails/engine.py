@@ -160,6 +160,7 @@ class Engine:
             confidence_threshold=float(p.get("pii.confidence_threshold")),
             mask_strategy=str(p.get("pii.mask_strategy")),
             partial_reveal=int(p.get("pii.partial_reveal")),
+            partial_reveal_prefix=int(p.get("pii.partial_reveal_prefix")),
             custom_regex=list(p.get("pii.custom_regex") or []),
             vault=self.vault,
             allowlist=list(p.get("pii.allowlist") or []),

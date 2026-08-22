@@ -355,6 +355,12 @@ PARAMS: list[Param] = [
     _a("pii.partial_reveal", "pii",
        "Trailing characters left visible under partial masking.",
        "int", 4, minimum=0, maximum=4, step=1),
+    _a("pii.partial_reveal_prefix", "pii",
+       "Leading characters left visible under partial masking — e.g. the first "
+       "two digits of a phone number, or the first letters of an email's local "
+       "part. Only EMAIL_ADDRESS and PHONE_NUMBER have a non-zero ceiling for "
+       "this today; other entity kinds ignore it.",
+       "int", 0, minimum=0, maximum=4, step=1),
     _a("pii.reversible", "pii",
        "Whether an authorized caller can unmask at egress.", "bool", True),
     _a("pii.custom_regex", "pii",
