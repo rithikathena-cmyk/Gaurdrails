@@ -220,16 +220,12 @@
           </div>
           <div class="d-body">
             <div class="d-row">
-              <input id="d-title" placeholder="Title" maxlength="160" aria-label="Document title">
+              <input id="d-title" placeholder="Title (optional)" maxlength="160" aria-label="Document title">
               <label class="btn ghost file">
                 Choose a file…
                 <input type="file" id="d-file" accept=".txt,.md,.csv,.json,.pdf,.xlsx,.xlsm,.png,.jpg,.jpeg,.webp" hidden>
               </label>
-              <button class="btn" id="d-ingest">Ingest</button>
             </div>
-            <textarea id="d-text" rows="5"
-                      placeholder="Paste the text — or choose a file above (spreadsheets are parsed; scans and images are transcribed)"></textarea>
-            <div class="d-samples" id="d-samples"></div>
             <div class="d-note" id="d-note"></div>
           </div>
         </section>

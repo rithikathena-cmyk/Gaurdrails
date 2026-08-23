@@ -10,7 +10,6 @@ import { $, $$, esc } from "./dom.js";
 import { addTrace, showTrace } from "./trace.js";
 
 let loaded = false;
-let fixtures = [];
 
 /** How the text was obtained. Worth showing: a transcribed scan is a document a
     model has already read once, and the operator should know which ones those are. */
@@ -29,22 +28,16 @@ export function docsLoaded() {
 }
 
 export function initDocs() {
-  $("#d-ingest").addEventListener("click", ingestPasted);
   $("#d-reset").addEventListener("click", resetCorpus);
   $("#d-file").addEventListener("change", uploadFile);
-  $("#d-text").addEventListener("keydown", (e) => {
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) ingestPasted();
-  });
 }
 
 export async function loadDocs() {
   try {
     const body = await api.documents();
     loaded = true;
-    fixtures = body.fixtures || [];
     renderStats(body.stats);
     renderList(body.documents);
-    renderFixtures();
   } catch (err) {
     $("#d-list").innerHTML = `<div class="empty">${esc(err.message)}</div>`;
   }
@@ -134,30 +127,10 @@ async function peek(id) {
 }
 
 /* ── ingesting ── */
-function renderFixtures() {
-  $("#d-samples").innerHTML = fixtures.map((f, i) => `
-    <button class="suggestion small" data-fx="${i}">
-      <b>${esc(f.title)}</b><span>${esc(f.blurb)}</span>
-    </button>`).join("");
-  $$("[data-fx]").forEach((b) => b.addEventListener("click", () => {
-    const f = fixtures[+b.dataset.fx];
-    $("#d-title").value = f.title;
-    $("#d-text").value = f.text;
-    note("");
-  }));
-}
-
 function note(text, isError = false) {
   const el = $("#d-note");
   el.textContent = text;
   el.className = "d-note" + (isError ? " err" : "");
-}
-
-async function ingestPasted() {
-  const title = $("#d-title").value.trim() || "Untitled document";
-  const text = $("#d-text").value.trim();
-  if (!text) { note("Nothing to ingest — paste some text or choose a file.", true); return; }
-  await run(() => api.ingest(title, text));
 }
 
 async function uploadFile(event) {
@@ -169,20 +142,16 @@ async function uploadFile(event) {
 }
 
 async function run(call) {
-  $("#d-ingest").disabled = true;
   note("running the ingest rails…");
   try {
     const body = await call();
     report(body);
     addTrace(body.trace);
-    $("#d-text").value = "";
     $("#d-title").value = "";
     note("");
     await loadDocs();
   } catch (err) {
     note(err.message, true);
-  } finally {
-    $("#d-ingest").disabled = false;
   }
 }
 
