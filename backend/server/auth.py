@@ -498,6 +498,17 @@ class Directory:
             self._save()
         return user
 
+    def set_password(self, name: str, password: str) -> User | None:
+        if len(password or "") < 4:
+            raise ValueError("password must be at least 4 characters")
+        with self._lock:
+            user = self.users.get((name or "").strip().lower())
+            if user is None:
+                return None
+            user.password_hash = hash_password(password)
+            self._save()
+        return user
+
     def reset_usage(self, name: str, window: str = "all") -> User | None:
         """Zero one window's counters.
 

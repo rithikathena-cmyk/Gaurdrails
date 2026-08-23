@@ -13,7 +13,8 @@ from typing import Any
 from fastapi import APIRouter, Cookie, HTTPException, Response
 from pydantic import BaseModel, Field
 
-from ..auth import COOKIE, PERMISSIONS, ROLES, SESSION_TTL_S, current_user, directory
+from ..auth import (COOKIE, PERMISSIONS, ROLES, SESSION_TTL_S, current_user,
+                    directory, verify_password)
 
 log = logging.getLogger("guardrails.server")
 router = APIRouter()
@@ -22,6 +23,11 @@ router = APIRouter()
 class Credentials(BaseModel):
     username: str = Field(min_length=1, max_length=64)
     password: str = Field(min_length=1, max_length=256)
+
+
+class PasswordChange(BaseModel):
+    current_password: str = Field(min_length=1, max_length=256)
+    new_password: str = Field(min_length=4, max_length=128)
 
 
 @router.get("/auth/roles")
@@ -70,3 +76,18 @@ def logout(response: Response, gc_session: str | None = Cookie(default=None)) ->
 def me(gc_session: str | None = Cookie(default=None)) -> dict[str, Any]:
     """Identity plus the permission set. The console renders its nav from this."""
     return {"user": current_user(gc_session).to_dict()}
+
+
+@router.post("/auth/password")
+def change_password(body: PasswordChange,
+                     gc_session: str | None = Cookie(default=None)) -> dict[str, Any]:
+    """A person changing their own password. No permission gate beyond being
+    signed in — this only ever touches the caller's own account, proven by
+    requiring the current password rather than trusting the session alone."""
+    user = current_user(gc_session)
+    if not verify_password(body.current_password, user.password_hash):
+        raise HTTPException(401, detail={
+            "kind": "auth", "message": "current password is incorrect",
+        })
+    directory.set_password(user.name, body.new_password)
+    return {"ok": True}
