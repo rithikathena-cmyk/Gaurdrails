@@ -47,6 +47,10 @@ class LimitPatch(BaseModel):
     model: str | None = None
 
 
+class PasswordPatch(BaseModel):
+    password: str = Field(min_length=4, max_length=128)
+
+
 def _row(u: User) -> dict[str, Any]:
     d = u.to_dict()
     d["active_sessions"] = directory.sessions_for(u.name)
@@ -110,6 +114,23 @@ def update_user(name: str, body: LimitPatch) -> dict[str, Any]:
             user = directory.set_model(name, body.model)
         except ValueError as exc:
             raise HTTPException(422, detail={"kind": "invalid", "message": str(exc)}) from exc
+    if user is None:
+        raise HTTPException(404, detail={"kind": "missing", "message": f"no user {name!r}"})
+    return {"ok": True, "user": _row(user), **_snapshot()}
+
+
+@router.patch("/users/{name}/password", dependencies=[Depends(require("users"))])
+def set_password(name: str, body: PasswordPatch) -> dict[str, Any]:
+    """An operator resetting someone else's password — no current password needed.
+
+    Separate from `update_user` rather than folded into `LimitPatch`: a budget
+    change and a credential change are different enough in consequence that
+    one shouldn't be a silent side effect of the other's request body.
+    """
+    try:
+        user = directory.set_password(name, body.password)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"kind": "invalid", "message": str(exc)}) from exc
     if user is None:
         raise HTTPException(404, detail={"kind": "missing", "message": f"no user {name!r}"})
     return {"ok": True, "user": _row(user), **_snapshot()}

@@ -118,6 +118,8 @@ function row(u, models) {
         <button class="u-btn" data-act="limit" data-name="${esc(u.name)}">Save</button>
         <button class="u-btn ghost" data-act="reset" data-name="${esc(u.name)}"
                 title="Zero every counter">Reset</button>
+        <button class="u-btn ghost" data-act="password" data-name="${esc(u.name)}"
+                title="Set a new password for this account">Password</button>
         <button class="u-btn danger" data-act="delete" data-name="${esc(u.name)}">Remove</button>
       </div>
       ${u.active_sessions ? `<span class="u-sub">${u.active_sessions} signed in</span>` : ""}
@@ -230,6 +232,16 @@ export function initPeople() {
       const w = btn.dataset.window || "all";
       apply(() => api.resetUsage(name, w),
             `${name}'s ${w === "all" ? "" : w + " "}usage is back to zero.`);
+    }
+    if (btn.dataset.act === "password") {
+      const pw = prompt(`New password for ${name} (at least 4 characters):`);
+      if (pw === null) return;                 // cancelled
+      if (pw.length < 4) {
+        say("err", "Password must be at least 4 characters.");
+        return;
+      }
+      apply(() => api.setPassword(name, pw), `${name}'s password was changed.`);
+      return;
     }
     if (btn.dataset.act === "delete") {
       // A destructive action gets one deliberate confirmation, naming what goes.

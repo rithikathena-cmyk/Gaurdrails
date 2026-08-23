@@ -48,6 +48,9 @@ export const api = {
   resetUsage:  (name)           => request(
                                     `/api/users/${encodeURIComponent(name)}/reset-usage`,
                                     { method: "POST" }),
+  setPassword: (name, password) => request(
+                                    `/api/users/${encodeURIComponent(name)}/password`,
+                                    { method: "PATCH", body: JSON.stringify({ password }) }),
   deleteUser:  (name)           => request(`/api/users/${encodeURIComponent(name)}`, {
                                     method: "DELETE" }),
 
