@@ -193,6 +193,18 @@ class Engine:
         nothing durable out of paying this cost, so it does not pay it. The
         real deployment (`server/state.py` always passes a real path) is the
         one place this matters, and the one place it runs.
+
+        Forces `entity_rail` to judge-only for the duration, restored after.
+        Presidio's NER "loads on first use, not at import" (`presidio_ner.py`)
+        — for an ordinary request that is a background cost paid once, well
+        after startup. Here it would be the *first* thing that ever triggers
+        it, synchronously, inside `Engine.__init__`, on a real PDF-sized seed
+        document — on a 512MB deployment that is exactly the combination
+        (a cold spaCy load plus a full NER pass over ~150,000 characters,
+        blocking the process before it can even answer a health check) that
+        pushed one real deploy over the limit before this guard existed. The
+        judge alone still masks everything Presidio would have; it costs
+        more model calls, not less protection.
         """
         if self.corpus.path is None:
             return
@@ -202,10 +214,20 @@ class Engine:
         by_id = {f"seed:{d['id']}": d for d in SEED_CORPUS}
         pending = [doc for doc in self.corpus.all()
                   if doc.id in by_id and not doc.rails_applied]
-        for doc in pending:
-            seed = by_id[doc.id]
-            self.ingest(seed["title"], seed["text"], source="built-in", kind="txt",
-                       method="seed", doc_id=doc.id)
+        if not pending:
+            return
+
+        original_engine_mode = self.entity_rail.engine_mode if self.entity_rail else None
+        if self.entity_rail:
+            self.entity_rail.engine_mode = "judge"
+        try:
+            for doc in pending:
+                seed = by_id[doc.id]
+                self.ingest(seed["title"], seed["text"], source="built-in", kind="txt",
+                           method="seed", doc_id=doc.id)
+        finally:
+            if self.entity_rail:
+                self.entity_rail.engine_mode = original_engine_mode
 
     # -----------------------------------------------------------------
     def _build_rails(self) -> None:
