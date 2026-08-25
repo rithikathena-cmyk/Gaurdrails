@@ -41,20 +41,24 @@ from ..llm import Claude, LLMError, Refusal, ToolUse
 from ..tracing import Tracer
 from ..types import Surface, Trace, Verdict, precedence
 from ..rails.pii import SYSTEM_OWNER
+from ..rails.scope import requires_retrieval
 from .tools import MASK_TOKEN, TOOLS, Tool, ToolContext
 
 log = logging.getLogger("guardrails.agent")
 
-SYSTEM_PROMPT = """You are a public-services agent for a municipal government \
-(benefits, licensing, housing, tax, civil records). You have tools. Use them.
+SYSTEM_PROMPT = """You are a document-grounded assistant. Your knowledge of anything \
+specific comes from what has been ingested into your knowledge base, not from general \
+training knowledge — you have no fixed subject area of your own; it is whatever has been \
+uploaded. You have tools. Use them.
 
 How to work:
 - Search the knowledge base before answering anything factual. Do not answer a \
-question about fees, documents, deadlines, or eligibility from general knowledge.
+question about a specific figure, deadline, requirement, or record from general \
+knowledge — answer only from what a tool actually returned.
 - Ground every specific claim in what a tool returned. If the tools do not \
 support an answer, say so plainly and name what is missing.
 - Take one step at a time. Call a tool, read what came back, then decide.
-- Filing anything on the user's behalf is a real action with consequences. Only \
+- Taking an action on the user's behalf is a real action with consequences. Only \
 do it when the user has actually asked for it, and expect to be asked to confirm.
 
 Some values arrive as masked tokens like <US_SSN:a1b2c3> or <CUSTOM_1:9f2c...>. \
@@ -101,6 +105,54 @@ from what is not masked.""",
 def _effective_system_prompt(policy: Any) -> str:
     mode = str(policy.get("agent.masked_field_disclosure"))
     return SYSTEM_PROMPT + "\n\n" + _MASKED_DISCLOSURE.get(mode, _MASKED_DISCLOSURE["relay"])
+
+
+# ---------------------------------------------------------------------------
+# Retrieval enforcement — a code-level gate, not a prompt request.
+#
+# The system prompt above already says "search the knowledge base before
+# answering anything factual". That is a request, and a model can decline it:
+# a question can be entirely within scope, get answered fluently and even
+# correctly, and never touch a tool — at which point nothing in the pipeline
+# ever looked at a source, because grounding itself is architecturally a
+# no-op with no chunks to check (`GroundingRail.evaluate`: "nothing retrieved,
+# nothing to ground against"). This closes that gap deterministically, from
+# information the prompt rails already computed — no extra judge call.
+#
+# `_requires_retrieval` itself lives in `rails/scope.py`, next to the rail
+# whose verdict it interprets — `Engine._converse()`'s own retrieval-relevance
+# gate reuses the exact same function, so a question needs a real hit in
+# either path, not just this one.
+# ---------------------------------------------------------------------------
+_requires_retrieval = requires_retrieval
+
+
+def _turn_is_grounded(chunks: list[str], calls: list[ToolCall]) -> bool:
+    """Is there *any* real basis for the answer this turn produced?
+
+    Retrieved context is the direct case. Absent that, a *non*-search tool
+    call — even one the rails blocked — still counts: a blocked call's "that
+    record is not available to you" is a correct answer to a permission
+    question, not an ungrounded factual claim, and a `check_claim_status` or
+    `lookup_fee` result (found or genuinely not-found) is itself the ground
+    truth, not a claim that needs a source behind it.
+
+    A clean `search_documents` call that came back with nothing is the one
+    case that must NOT count: it leaves `chunks` exactly as empty as never
+    calling it at all, and counting the call itself as "tried" would let a
+    zero-hit search silently license the same free-standing answer this gate
+    exists to stop. A search the *rails* had to block, by contrast, is
+    withheld data, not absent data — an ordinary tool-run outcome, not the
+    bypass under test — so only a `pass`-verdict, empty-handed search is
+    excluded here.
+    """
+    if chunks:
+        return True
+    for call in calls:
+        if call.name == "search_documents" and call.verdict == "pass":
+            continue
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -162,6 +214,10 @@ class PendingApproval:
     #: (`"pass"`), even when the original scan actually masked, flagged, or
     #: (had it blocked) never reached approval at all.
     args_verdict: str = "pass"
+    #: Carried across the pause so `resume()` rebuilds a `ToolContext` with
+    #: the same retrieval-enforcement decision `_run()` made at the start of
+    #: this turn — an approval mid-turn must not reset it to "not required".
+    retrieval_required: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -216,8 +272,10 @@ class AgentRunner:
 
     # ---- entry points ------------------------------------------------
     def run(self, question: str, history: list[dict[str, Any]] | None = None,
-            session_id: str = "", *, principal: str = "") -> AgentResult:
-        result = self._run(question, history, session_id, principal=principal)
+            session_id: str = "", *, principal: str = "",
+            permissions: frozenset[str] = frozenset()) -> AgentResult:
+        result = self._run(question, history, session_id, principal=principal,
+                           permissions=permissions)
         if result.approval is None:
             result.human_review, result.review_reason = self.engine._review(  # noqa: SLF001
                 result.trace, result.trace.verdict
@@ -229,14 +287,16 @@ class AgentRunner:
         return result
 
     def resume(self, pending: PendingApproval, approved: bool,
-               session_id: str = "", *, principal: str = "") -> AgentResult:
+               session_id: str = "", *, principal: str = "",
+               permissions: frozenset[str] = frozenset()) -> AgentResult:
         """Continue after a person answered the approval prompt."""
         tracer = Tracer(session_id=session_id)
         ctx = ToolContext(
             engine=self.engine, session_id=session_id, principal=principal,
-            chunks=list(pending.chunks),
+            permissions=permissions, chunks=list(pending.chunks),
             min_score=float(self.engine.policy.get("ingest.min_chunk_score")),
             k=int(self.engine.policy.get("grounding.context_window")),
+            retrieval_required=pending.retrieval_required,
         )
         with tracer.stage("Approval", "human decision", kind="rail"):
             with tracer.rail("approval.gate", "locked — every write tool") as r:
@@ -281,7 +341,8 @@ class AgentRunner:
 
     # ---- the loop ----------------------------------------------------
     def _run(self, question: str, history: list[dict[str, Any]] | None,
-             session_id: str, *, principal: str = "") -> AgentResult:
+             session_id: str, *, principal: str = "",
+             permissions: frozenset[str] = frozenset()) -> AgentResult:
         engine, p = self.engine, self.engine.policy
         tracer = Tracer(session_id=session_id)
         history = history or []
@@ -337,8 +398,10 @@ class AgentRunner:
 
         ctx = ToolContext(
             engine=engine, session_id=session_id, principal=principal,
+            permissions=permissions,
             min_score=float(p.get("ingest.min_chunk_score")),
             k=int(p.get("grounding.context_window")),
+            retrieval_required=_requires_retrieval(question_n, ingress.results),
         )
         messages = [*history, {"role": "user", "content": ingress.text}]
         return self._loop(question=question_n, messages=messages, tracer=tracer, ctx=ctx,
@@ -354,6 +417,8 @@ class AgentRunner:
         detections = list(prompt_detections or [])
         max_steps = int(p.get("agent.max_steps"))
         max_calls = int(p.get("agent.max_tool_calls"))
+        max_retrieval_retries = int(p.get("agent.retrieval_max_retries"))
+        retrieval_retries = 0
         specs = [t.spec() for t in self.tools()]
         by_name = {t.name: t for t in self.tools()}
         reply = ""
@@ -397,6 +462,23 @@ class AgentRunner:
             messages.append({"role": "assistant", "content": turn.blocks})
 
             if not turn.wants_tools:
+                if (ctx.retrieval_required
+                        and not _turn_is_grounded(ctx.chunks, calls)
+                        and retrieval_retries < max_retrieval_retries):
+                    retrieval_retries += 1
+                    tracer.note(
+                        "retrieval enforcement: answered without calling a tool on an "
+                        f"in-domain question — forcing a corrective retry "
+                        f"({retrieval_retries}/{max_retrieval_retries})"
+                    )
+                    messages.append({
+                        "role": "user",
+                        "content": "You answered without calling a tool. This question needs "
+                                   "search_documents — or another read tool, if that fits "
+                                   "better — before you answer. Call one now, then answer only "
+                                   "from what it returns.",
+                    })
+                    continue
                 reply = turn.text
                 break
 
@@ -430,6 +512,37 @@ class AgentRunner:
                 results.append(_tool_result(use.id, payload))
 
             messages.append({"role": "user", "content": results})
+
+        # ---- retrieval enforcement: the fail-closed backstop -----------
+        # The corrective retry above gives the model a chance to fix this
+        # itself. If it still never grounded the answer in a tool — including
+        # a `search_documents` call that came back with nothing, which leaves
+        # `ctx.chunks` just as empty as never calling it at all — the answer
+        # is withheld here, the same way a blocked output rail withholds one:
+        # this stops the turn before generation's own output-rails/grounding
+        # pass, which is architecturally a no-op with no chunks to check.
+        if ctx.retrieval_required and not _turn_is_grounded(ctx.chunks, calls):
+            with tracer.stage("Retrieval enforcement", "locked — must ground a domain answer",
+                              kind="rail"):
+                with tracer.rail("retrieval.required", "locked — safety invariant") as r:
+                    r.verdict = Verdict.BLOCK
+                    r.error = "no tool call grounded this answer to a source"
+                    r.meta = {"retries": retrieval_retries, "chunks": len(ctx.chunks),
+                             "tool_calls": len(calls)}
+            tracer.note(
+                "retrieval enforcement: answer withheld — an in-domain question was never "
+                "grounded in a tool result"
+            )
+            trace = tracer.finish(Verdict.BLOCK)
+            engine.audit.write(trace, detections)
+            return AgentResult(
+                reply=("This needs to be checked against the knowledge base, and that check "
+                      "did not complete. Please try rephrasing, or ask about one thing at a "
+                      f"time — reference {trace.request_id}."),
+                trace=trace, blocked=True, refusal_reason="retrieval_required",
+                chunks=ctx.chunks, detections=detections, calls=calls, steps=step,
+                filed=ctx.filed,
+            )
 
         # ---- output rails, grounding, egress --------------------------
         # `owner=SYSTEM_OWNER` — see the note on the chat egress call in
@@ -541,6 +654,41 @@ class AgentRunner:
                     r.error = f"{use.name} is not in agent.tools_enabled"
             return (f"The tool {use.name} is not available. Do not try it again.", call)
 
+        # --- authorization: does this caller own the resource? --------
+        # Runs first, and unconditionally — before the agent.tool scan below,
+        # before a write tool's approval prompt is even shown. Cheapest check
+        # first (a dict lookup, no rails, no model call) means a denied
+        # request never pays for a PII/injection scan on data it was never
+        # entitled to see, and a citizen is never shown an approval prompt
+        # naming a claim reference that is not theirs. This is not something
+        # the model, the plan, or the Authorization *agent* can skip past —
+        # it is a property of the tool declaration itself (`resource_owner`),
+        # enforced here regardless of whether anything upstream ever
+        # consulted an authorization-flavoured agent at all.
+        if tool.resource_owner is not None:
+            owner = tool.resource_owner(_resolve_for_authz(tool, use.input, ctx))
+            # `records` is a named permission (server/auth.py), not a role
+            # check — an operator's account holds it the same way it holds
+            # `traces` or `audit`; a deployment could grant it to a narrower
+            # "reviewer" role later without touching this line at all.
+            if owner is not None and owner != ctx.principal and "records" not in ctx.permissions:
+                call.verdict = "block"
+                call.blocked_reason = "caller does not own this resource"
+                with tracer.stage(f"Authorization · {tool.name}",
+                                  "resource ownership", kind="rail"):
+                    with tracer.rail("authorization.resource_owner",
+                                     "locked — mandatory, every resource-scoped tool") as r:
+                        r.verdict = Verdict.BLOCK
+                        r.error = "caller does not own this resource"
+                        r.meta = {"tool": tool.name, "principal": ctx.principal or "(none)"}
+                tracer.note(
+                    f"tool call refused before execution — "
+                    f"{ctx.principal or '(none)'} does not own this resource"
+                )
+                return ("That record is not associated with this caller's access. Do not "
+                        "retry with different phrasing or a different tool; tell the user "
+                        "this specific reference is not available to them.", call)
+
         # --- agent.tool: the arguments, before the call ---------------
         args_text = json.dumps(use.input, ensure_ascii=False)
         # `owner=SYSTEM_OWNER`, not `ctx.principal`: these are arguments the
@@ -576,6 +724,7 @@ class AgentRunner:
                 step=step, calls_used=calls_used - 1,
                 origin_request_id=tracer.trace.request_id,
                 owner=ctx.principal, args_verdict=call.args_verdict,
+                retrieval_required=ctx.retrieval_required,
             )
             with tracer.stage(f"Approval required · {tool.name}",
                               "locked — every write tool", kind="rail"):
@@ -658,6 +807,22 @@ class AgentRunner:
 
 
 # ---------------------------------------------------------------------------
+def _resolve_for_authz(tool: Tool, args: dict[str, Any], ctx: ToolContext) -> dict[str, Any]:
+    """Unmask just enough of the arguments to resolve resource ownership.
+
+    A narrower pass than `_execute`'s own unmask loop, and run separately from
+    it: this has to happen before a write tool's approval prompt is shown,
+    which is earlier than `_execute` runs for a write (only after a person
+    approves). Unmasking twice on the read path costs a cheap regex
+    substitution against an in-memory vault, not a second real lookup.
+    """
+    resolved = dict(args)
+    for name in tool.unmask_args:
+        if name in resolved and isinstance(resolved[name], str):
+            resolved[name] = ctx.unmask(resolved[name])
+    return resolved
+
+
 def _tool_result(tool_use_id: str, content: str) -> dict[str, Any]:
     return {"type": "tool_result", "tool_use_id": tool_use_id, "content": content}
 

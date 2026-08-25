@@ -22,7 +22,7 @@ import pytest
 
 
 
-from backend.guardrails import AuditLog, Corpus, Engine, IngestError, load
+from backend.guardrails import AuditLog, Corpus, Document, Engine, IngestError, load
 
 from backend.guardrails.knowledge import (
 
@@ -371,6 +371,16 @@ def test_seed_corpus_is_present(corpus):
 
 
 def test_bm25_prefers_the_document_that_is_actually_about_the_query(corpus):
+    corpus.add(Document(id="fee-doc", title="Trade licence fees", source="test",
+                        kind="txt", chars=50,
+                        chunks=["The renewal fee for a small shop is 1,200 rupees, "
+                               "billed at renewal."],
+                        status="indexed", verdict="pass"))
+    corpus.add(Document(id="renewal-doc", title="Trade licence renewal", source="test",
+                        kind="txt", chars=50,
+                        chunks=["Renewing a trade licence needs Form 4B and proof "
+                               "of premises."],
+                        status="indexed", verdict="pass"))
 
     hits = corpus.search("trade licence renewal fee for a small shop")
 
@@ -452,14 +462,33 @@ def test_corpus_survives_a_round_trip_to_disk(tmp_path):
 
 
 
-def test_a_deleted_built_in_stays_deleted_across_a_restart(tmp_path):
+def test_a_deleted_built_in_stays_deleted_across_a_restart(tmp_path, monkeypatch):
     """Deleting a seed is only a real choice if the next process honours it.
 
     `install_new_builtins` tracks what a store has ever been given by id rather
     than by what it currently holds, so a built-in removed on purpose is not
     reinstalled at the next start. That is what made it safe to stop refusing
     the delete in the API.
+
+    `CORPUS` ships empty by design, so this monkeypatches two entries in for
+    the test — `Corpus`'s own methods re-import it fresh each call, but this
+    file's own `CORPUS` name was already bound at import time, so the
+    patched list itself (not that stale name) is what the assertions below
+    compare against. Two, not one: deleting the *only* built-in leaves the
+    store empty, which takes `load()`'s "nothing here at all" branch
+    (`seed_builtin()`, unconditional) rather than the one this test means to
+    exercise (`install_new_builtins()`, which actually checks
+    `seeds_installed`) — a real, separate edge case, not what is under test
+    here.
     """
+    two_builtins = [
+        {"id": "test-only-a", "title": "Test-only built-in A",
+         "text": "Exists only to prove a deletion survives a restart."},
+        {"id": "test-only-b", "title": "Test-only built-in B",
+         "text": "Stays behind so the store is never empty after the delete."},
+    ]
+    monkeypatch.setattr("backend.guardrails.knowledge.seed.CORPUS", two_builtins)
+
     path = tmp_path / "corpus.json"
     first = Corpus(path)
     doc_id = next(d.id for d in first.all() if d.source == "built-in")
@@ -467,7 +496,7 @@ def test_a_deleted_built_in_stays_deleted_across_a_restart(tmp_path):
 
     reopened = Corpus(path)
     assert reopened.get(doc_id) is None
-    assert reopened.stats()["documents"] == len(CORPUS) - 1
+    assert reopened.stats()["documents"] == len(two_builtins) - 1
 
     reopened.reset()
     assert reopened.get(doc_id) is not None, "reset is the way back"
@@ -519,8 +548,13 @@ def test_tokeniser_stems_so_coverage_measures_topic_not_vocabulary():
 
 
 def test_the_grievance_query_reaches_its_document(corpus):
+    corpus.add(Document(id="grievance-doc", title="Filing a grievance", source="test",
+                        kind="txt", chars=60,
+                        chunks=["Grievances about service delivery can be filed at "
+                               "any office, with a first response within 15 days."],
+                        status="indexed", verdict="pass"))
     hits = corpus.search("Where do I file a grievance and how soon will someone respond?")
-    assert hits and hits[0].doc_id == "seed:grievance"
+    assert hits and hits[0].doc_id == "grievance-doc"
 
 
 
@@ -701,6 +735,67 @@ def test_a_text_pdf_uses_its_text_layer_and_never_calls_the_model():
     assert "60 days" in result.text
 
 
+def _pdf_with_table(rows: list[list[str]], above: str = "", below: str = "") -> bytes:
+    """A real PDF page with a bordered, grid-lined table `find_tables()` can
+    actually detect — not just text that happens to line up in columns."""
+    import fitz
+
+    doc = fitz.open()
+    page = doc.new_page(width=595, height=842)
+    y = 72
+    if above:
+        page.insert_text((72, y), above, fontsize=11)
+        y += 30
+    col_w = [160, 100, 140]
+    row_h = 24
+    for r, row in enumerate(rows):
+        for c, text in enumerate(row):
+            x = 72 + sum(col_w[:c])
+            rect = fitz.Rect(x, y + r * row_h, x + col_w[c], y + (r + 1) * row_h)
+            page.draw_rect(rect, color=(0, 0, 0), width=0.5)
+            page.insert_text((x + 4, y + r * row_h + 16), text, fontsize=10)
+    y += len(rows) * row_h + 20
+    if below:
+        page.insert_text((72, y), below, fontsize=11)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+def test_a_bordered_table_is_read_as_a_markdown_table_not_flattened_prose():
+    """`pypdf`-style flat extraction has no notion of a table: cells come back
+    in whatever order the content stream lists them, which routinely is not
+    reading order — a two-column fee schedule can interleave into
+    "Fee ScheduleRupees" rather than a usable row. Detecting the table's own
+    region and rendering it separately is what keeps the columns lined up."""
+    rows = [
+        ["Premises size", "Fee (rupees)", "Processing"],
+        ["Under 500 sq ft", "1,200", "30 working days"],
+        ["500 sq ft and above", "2,400", "30 working days"],
+    ]
+    data = _pdf_with_table(rows, above="Trade licence renewal fees.",
+                           below="Payment is accepted online or at any counter.")
+
+    result = extract("fees.pdf", data)
+
+    assert result.method == "pdf.text"
+    assert "| Premises size | Fee (rupees) | Processing |" in result.text
+    assert "|---|---|---|" in result.text
+    assert "| Under 500 sq ft | 1,200 | 30 working days |" in result.text
+    assert "| 500 sq ft and above | 2,400 | 30 working days |" in result.text
+    # Reading order preserved: the surrounding prose is not shuffled to the
+    # end, and is not itself swallowed into the table.
+    assert result.text.index("renewal fees") < result.text.index("Premises size")
+    assert result.text.index("500 sq ft and above") < result.text.index("Payment is accepted")
+
+
+def test_a_pdf_with_no_table_falls_back_to_plain_text():
+    """The common case must not regress: no bordered region, no table-shaped
+    output, just the page's own text."""
+    result = extract("plain.pdf", _pdf(["Just an ordinary paragraph, no table here."]))
+    assert result.method == "pdf.text"
+    assert "|" not in result.text
+    assert "ordinary paragraph" in result.text
 
 
 
@@ -800,10 +895,19 @@ def test_one_shared_word_is_not_a_topic(corpus):
 def test_a_short_question_may_still_match_on_one_term(corpus):
     """The floor lifts below four terms: 'renewal fee' is a real question and
     has only two terms to give."""
+    corpus.add(Document(id="fee-doc", title="Trade licence fees", source="test",
+                        kind="txt", chars=40,
+                        chunks=["The renewal fee is 1,200 rupees."],
+                        status="indexed", verdict="pass"))
     hits = corpus.search("renewal fee", 4, 0.15)
     assert hits, "a short, legitimate question should still retrieve"
 
 
 def test_a_genuine_question_still_matches_several_terms(corpus):
+    corpus.add(Document(id="trade-licence-renewal", title="Trade licence renewal",
+                        source="test", kind="txt", chars=60,
+                        chunks=["To renew a trade licence you must submit the "
+                               "existing certificate and proof of premises."],
+                        status="indexed", verdict="pass"))
     hits = corpus.search("what documents do I need to renew a trade licence", 4, 0.15)
     assert hits and "trade-licence-renewal" in hits[0].doc_id

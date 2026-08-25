@@ -18,6 +18,10 @@ from .content_safety_agent import ContentSafetyAgent
 from .content_tools import CONTENT_AGENT_TOOLS, CONTENT_TOOL_NAMES
 from .grounding_agent import GroundingAgent
 from .grounding_tools import GROUNDING_AGENT_TOOLS, GROUNDING_TOOL_NAMES
+from .guardrail_capabilities import FORBIDDEN_CAPABILITIES, deny_if_forbidden
+from .guardrail_capabilities import request as request_guardrail_capability
+from .guardrail_supervisor import GuardrailSupervisor
+from .guardrail_tools import ALLOWED_GUARDRAIL_TOOLS, GUARDRAIL_TOOLS
 from .injection_agent import PromptInjectionAgent
 from .injection_tools import INJECTION_AGENT_TOOLS, INJECTION_TOOL_NAMES
 from .pii_agent import PIIAgent
@@ -27,20 +31,22 @@ from .supervisor import SUPERVISOR_AGENTS, AgentNotRegistered, Supervisor
 from .tools import PII_AGENT_TOOLS, PII_TOOL_NAMES, ToolNotAllowed
 from .types import (
     ActionOutcome, AgentDecision, AgentPlan, AgentResult, AgentState,
-    GuardrailAction, PIIFinding, SupervisorPlan, SupervisorResult, ToolCall,
-    ToolResult, TraceEvent,
+    GuardrailAction, GuardrailDecision, GuardrailPlan, GuardrailSupervisorResult,
+    PIIFinding, SupervisorPlan, SupervisorResult, ToolCall, ToolResult, TraceEvent,
 )
 
 __all__ = [
     "ActionOutcome", "AgentDecision", "AgentNotRegistered", "AgentPlan",
-    "AgentResult", "AgentState", "AuthorizationAgent", "AuthorizationCapabilities",
-    "AuthorizationContext", "AUTHORIZATION_AGENT_TOOLS", "AUTHORIZATION_TOOL_NAMES",
-    "CapabilityDenied", "CONTENT_AGENT_TOOLS", "CONTENT_TOOL_NAMES",
-    "ContentSafetyAgent", "GroundingAgent", "GROUNDING_AGENT_TOOLS",
-    "GROUNDING_TOOL_NAMES", "GuardrailAction", "INJECTION_AGENT_TOOLS",
-    "INJECTION_TOOL_NAMES", "PIIAgent", "PIICapabilities", "PIIFinding",
-    "PII_AGENT_TOOLS", "PII_TOOL_NAMES", "PromptInjectionAgent", "ScopeAgent",
-    "SCOPE_AGENT_TOOLS", "SCOPE_TOOL_NAMES", "SUPERVISOR_AGENTS", "Supervisor",
-    "SupervisorPlan", "SupervisorResult", "ToolCall", "ToolNotAllowed",
-    "ToolResult", "TraceEvent",
+    "AgentResult", "AgentState", "ALLOWED_GUARDRAIL_TOOLS", "AuthorizationAgent",
+    "AuthorizationCapabilities", "AuthorizationContext", "AUTHORIZATION_AGENT_TOOLS",
+    "AUTHORIZATION_TOOL_NAMES", "CapabilityDenied", "CONTENT_AGENT_TOOLS",
+    "CONTENT_TOOL_NAMES", "ContentSafetyAgent", "deny_if_forbidden",
+    "FORBIDDEN_CAPABILITIES", "GroundingAgent", "GROUNDING_AGENT_TOOLS",
+    "GROUNDING_TOOL_NAMES", "GuardrailAction", "GuardrailDecision", "GuardrailPlan",
+    "GUARDRAIL_TOOLS", "GuardrailSupervisor", "GuardrailSupervisorResult",
+    "INJECTION_AGENT_TOOLS", "INJECTION_TOOL_NAMES", "PIIAgent", "PIICapabilities",
+    "PIIFinding", "PII_AGENT_TOOLS", "PII_TOOL_NAMES", "PromptInjectionAgent",
+    "request_guardrail_capability", "ScopeAgent", "SCOPE_AGENT_TOOLS",
+    "SCOPE_TOOL_NAMES", "SUPERVISOR_AGENTS", "Supervisor", "SupervisorPlan",
+    "SupervisorResult", "ToolCall", "ToolNotAllowed", "ToolResult", "TraceEvent",
 ]

@@ -1,18 +1,18 @@
-"""End-to-end: contact-bearing documents, retrieval, and the control surface.
+"""End-to-end: contact-bearing text, retrieval, and the control surface.
 
 The other test files check rails in isolation. This one checks the property an
 operator actually cares about — *the deployment behaves the way the Parameters
-page says it does* — across the whole path a request takes, on documents that
-contain real contact details.
+page says it does* — across the whole path a request takes, against text that
+contains real contact details.
 
 Three things are asserted, in order of how much they would cost to get wrong:
 
-    1. a citizen's contact details never survive the pipeline when the policy
-       says mask, on any surface — prompt, retrieval, or response
+    1. a user's own contact details never survive the pipeline when the
+       policy says mask, on any surface — prompt, retrieval, or response
 
-    2. a *published* departmental contact does survive, because a desk that
-       cannot tell you who to write to is not a working desk. The distinction
-       is configuration, not code: `pii.allowlist`
+    2. a *published* departmental contact does survive, because a service
+       that cannot tell you who to write to is not a working one. The
+       distinction is configuration, not code: `pii.allowlist`
 
     3. changing a threshold or an action on the control surface changes what
        the running engine does, immediately, with no restart and no code path
@@ -22,6 +22,13 @@ No model is configured for most of these. `pii.detect`, `words.lexicon` and
 `policy.rules` are deterministic, so a failure here is a real failure rather
 than a judge having an opinion — and the whole file runs in seconds, which is
 what makes it worth running before every deploy rather than nightly.
+
+The original version of this file also covered a fourth property: the same
+guarantees against the built-in seed corpus's own documents, real retrieval
+and all. That corpus was removed by design (`backend/guardrails/knowledge/
+seed.py`), and with it the ~20 tests specific to its content — everything
+below is what remains, none of it dependent on any document actually
+existing in the knowledge base.
 """
 
 from __future__ import annotations
@@ -31,7 +38,6 @@ import yaml
 
 from backend.guardrails import AuditLog, Corpus, Engine, load
 from backend.guardrails.config import save_overrides
-from backend.guardrails.knowledge.seed import CORPUS
 from backend.guardrails.tracing import Tracer
 from backend.guardrails.types import Surface, Verdict
 from tests.conftest import REPO
@@ -73,47 +79,14 @@ def rail(result, name):
     return next((r for r in result.results if r.rail == name), None)
 
 
-# ── 1 · the corpus now carries contact details ─────────────────────
-def test_the_seed_corpus_carries_contact_details_to_retrieve():
-    """Without these, retrieval never returns a chunk containing personal data,
-    and the retrieval-surface rails are never actually exercised."""
-    text = " ".join(d["text"] for d in CORPUS)
-    assert OFFICIAL_EMAIL in text
-    assert HELPLINE in text
-    assert "housing@municipal.gov.in" in text
-
-
-@pytest.mark.parametrize("question,expect", [
-    # The services a municipal desk is actually asked about. Each one is here
-    # because a question a citizen would really ask must reach it.
-    ("my husband died, how do I get a death certificate", "death-certificate"),
-    ("the pension stopped after a death, how do I claim the survivor benefit",
-     "survivor-benefit"),
-    ("I am opening a shop, how do I apply for a trade licence for the first time",
-     "trade-licence-new"),
-    ("how do I get a new water connection", "water-connection"),
-    ("do I need approval before I extend my house", "building-permit"),
-    ("where do I register a marriage", "marriage-registration"),
-    ("can I get a refund if I paid twice", "payments-and-refunds"),
-    ("what time do the counters close", "office-hours"),
-    ("who can see my contact details", "how-we-use-your-details"),
-    ("someone called asking for an OTP, is that your office", "fraud-warning"),
-    ("who do I escalate a grievance to", "grievance-escalation"),
-    ("which email handles housing grant appeals", "office-directory"),
-    ("how long do I have to appeal a rejected housing grant", "appeal-deadlines"),
-    ("what photo identification is accepted at the counter", "identity-documents"),
-])
-def test_the_new_documents_are_reachable_by_an_ordinary_question(question, expect):
-    """A document nobody's phrasing can reach is not in the knowledge base in any
-    sense that matters."""
-    corpus = Corpus(seed=True)
-    hits = corpus.search(question, 4, 0.15)
-    assert hits, f"nothing retrieved for {question!r}"
-    assert any(expect in h.doc_id for h in hits), \
-        f"{expect} not in {[h.doc_id for h in hits]}"
-
-
 # ── 2 · published contacts survive, personal ones do not ───────────
+# The two retrieval-surface tests that used to open this file — proving the
+# seed corpus's own documents actually carried these contacts, and that an
+# ordinary question could reach each one — are gone along with the seed
+# corpus itself (`backend/guardrails/knowledge/seed.py`): a knowledge base
+# with nothing in it has no documents for either claim to be about. Every
+# test below still stands: none of them depend on the corpus at all, only on
+# the allowlist pattern and the deterministic rails, exercised directly.
 def test_a_published_departmental_contact_is_not_masked(engine):
     r = engine.evaluate(f"write to {OFFICIAL_EMAIL} or call {HELPLINE}",
                         Surface.RETRIEVAL, Tracer(), "s")
@@ -173,27 +146,6 @@ def test_a_published_address_at_the_end_of_a_sentence_is_still_exempt(engine):
     assert OFFICIAL_EMAIL in r.text
     assert "housing@municipal.gov.in" in r.text
     assert rail(r, "pii.detect").meta["allowlisted"] == 2
-
-
-def test_no_departmental_address_in_the_corpus_is_masked_at_retrieval(engine):
-    """The guard the cases above are not: it reads the documents rather than a
-    list somebody has to remember to extend. Every published address the corpus
-    actually carries is run through the retrieval surface in the sentence it is
-    written in, punctuation and all."""
-    import re
-
-    pattern = re.compile(r"[\w.+-]+@[\w.-]*(?:municipal\.gov\.in|nic\.in)")
-    checked = 0
-    for doc in CORPUS:
-        official = sorted(set(pattern.findall(doc["text"])))
-        if not official:
-            continue
-        out = engine.evaluate(doc["text"], Surface.RETRIEVAL, Tracer(), "s")
-        for address in official:
-            checked += 1
-            assert address in out.text,                 f"{address} was masked out of {doc['id']!r} — the desk cannot give it out"
-    assert checked >= 5, f"only {checked} published addresses found to check"
-
 
 
 def test_a_citizens_own_contact_is_still_masked(engine):
@@ -303,71 +255,10 @@ def test_a_retrieved_chunk_with_a_citizens_details_is_masked_before_the_model(tm
     assert "CLM-40028811" not in r.text, "the claim-reference pattern should mask too"
 
 # ── 5 · seed documents that carry personal data ────────────────────
-# The four contact documents carry *published* contacts, which the allowlist
-# deliberately lets through — so none of them exercise masking on a retrieved
-# chunk. The case file carries a citizen's own details and does.
-#
-# The two bulk logs used to as well, and no longer do. A grievance log and a
-# caseload note are reached whole by one ordinary search, so holding several
-# unrelated residents' contact details in them put those people one question
-# away from each other. The rail masked it every time — but a safety net is the
-# wrong thing to rely on when the aggregate need not exist at all. They now
-# reference cases by number, and `test_a_bulk_log_carries_no_contact_details`
-# asserts they stay that way.
-
-CASE_FILE_PII = ["anitha.selvam@example.com", "9962214477", "CLM-77310945"]
-
-
-@pytest.mark.parametrize("question,expect", [
-    ("who is the appellant on housing appeal HA-9902", "case-file-ha9902"),
-    ("which open grievances are past the escalation threshold", "grievance-log-q2"),
-    ("which assessment objections is the wing carrying forward", "officer-caseload"),
-])
-def test_a_case_file_is_reachable_by_an_ordinary_question(question, expect):
-    hits = Corpus(seed=True).search(question, 4, 0.15)
-    assert hits, f"nothing retrieved for {question!r}"
-    assert any(expect in h.doc_id for h in hits),         f"{expect} not in {[h.doc_id for h in hits]}"
-
-
-@pytest.mark.parametrize("values,question", [
-    (CASE_FILE_PII, "who is the appellant on housing appeal HA-9902"),
-])
-def test_personal_data_in_a_retrieved_chunk_is_masked_before_the_model(
-        values, question, engine):
-    """The chunk sits in the index as written; the retrieval surface is what
-    stands between it and the model. Deterministic rails only here — names need
-    the model-backed rail and are covered by the live scenarios."""
-    chunk = Corpus(seed=True).search(question, 1, 0.15)[0].text
-    out = engine.evaluate(chunk, Surface.RETRIEVAL, Tracer(), "s")
-    assert out.verdict is Verdict.MASK
-    for v in values:
-        assert v not in out.text, f"{v} survived into the model input"
-
-
-@pytest.mark.parametrize("doc_id", ["grievance-log-q2", "officer-caseload"])
-def test_a_bulk_log_carries_no_contact_details(doc_id):
-    """A log is reached whole by one search, so it must not aggregate people.
-
-    A case file is about one person and properly contains their details; a
-    quarterly log is about many, and holding their emails and mobile numbers
-    together is the exposure the retrieval rail then has to clean up on every
-    single query. Cases are referenced by number instead.
-    """
-    import re
-
-    doc = next(d for d in CORPUS if d["id"] == doc_id)
-    text = doc["text"]
-    assert not re.search(r"[\w.+-]+@example\.com", text), "an individual's email"
-    assert not re.search(r"\b[6-9]\d{9}\b", text), "a mobile number"
-    # The case references are the point of the document and must survive.
-    assert re.search(r"\b(?:GRV|AS)-\d{4}\b", text), "lost the case references"
-
-
-def test_a_case_file_is_not_treated_as_a_published_contact(engine):
-    """A citizen's address in a case file must not match the allowlist — that
-    exemption is for the department's own published addresses only."""
-    chunk = Corpus(seed=True).search(
-        "who is the appellant on housing appeal HA-9902", 1, 0.15)[0].text
-    out = engine.evaluate(chunk, Surface.RETRIEVAL, Tracer(), "s")
-    pii = rail(out, "pii.detect")
-    assert pii.meta["allowlisted"] == 0,         f"wrongly exempted: {pii.meta['allowlisted_values']}"
+# This section is gone along with the seed corpus: it tested that four
+# specific seeded case-file and log documents — a resident's own contact
+# details in one, deliberately none in the other two — behaved correctly on
+# retrieval. There is no seeded content left for any of that to be about.
+# Section 4 above already covers the same masking property on a document
+# that is not seeded — the property was never specific to these documents,
+# only the fixture was.

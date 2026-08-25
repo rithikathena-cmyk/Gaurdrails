@@ -13,9 +13,22 @@ import re
 
 import pytest
 
-from backend.guardrails import AuditLog, Engine, load
+from backend.guardrails import AuditLog, Corpus, Document, Engine, load
 from backend.guardrails.types import Verdict
 from tests.conftest import REPO
+
+def _corpus() -> Corpus:
+    """A real, retrievable document for `QUESTION` — the seed corpus that used
+    to supply this has been removed by design, and grounding is architecturally
+    a no-op with nothing retrieved (`GroundingRail.evaluate`: "nothing
+    retrieved, nothing to ground against"), which would make every test below
+    pass by never actually running the loop it exists to exercise."""
+    c = Corpus(seed=False)
+    c.add(Document(id="test:trade-licence-renewal", title="Trade licence renewal",
+                   source="test", kind="txt",
+                   chars=64, chunks=["To renew a trade licence, submit Form 4B."],
+                   status="indexed", verdict="pass"))
+    return c
 
 
 class StubClaude:
@@ -43,6 +56,12 @@ class StubClaude:
                     "rationale": "stub"}
         if "injection" in props:
             return {"injection": 0.0, "technique": "none", "rationale": "stub"}
+        if "in_scope" in props:
+            # Not what this file tests — domain_terms ships empty, so scope
+            # now always asks the judge rather than the keyword layer settling
+            # it for free; answer in-scope so it stays out of the way of the
+            # regeneration loop this file actually exercises.
+            return {"in_scope": 1.0, "topic": "stub", "rationale": "stub"}
         return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}
 
     def generate(self, system, messages, *, max_tokens=4096, model=None):
@@ -58,7 +77,7 @@ def build(scores, **overrides):
     policy = load(REPO / "config" / "policy.yaml")
     policy.values.update(overrides)
     llm = StubClaude(scores)
-    return Engine(policy, llm, AuditLog("audit.log")), llm
+    return Engine(policy, llm, AuditLog("audit.log"), _corpus()), llm
 
 
 @pytest.fixture(autouse=True)

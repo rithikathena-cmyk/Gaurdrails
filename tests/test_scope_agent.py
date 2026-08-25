@@ -136,12 +136,25 @@ def test_the_decision_is_genuinely_the_models_not_a_hardcoded_rule(engine):
 
 
 # ── vocabulary tool reuses the real rail ─────────────────────────────
-def test_the_vocabulary_tool_uses_the_real_configured_terms(engine):
-    res = call_tool("check_domain_vocabulary", {"text": "renewing a trade licence"},
+def test_the_vocabulary_tool_uses_the_real_configured_terms(tmp_path):
+    """`domain_terms` ships empty — no deployment's vocabulary is hardcoded
+    here — so this proves the tool reads whatever *is* configured, live, not
+    a hardcoded copy of its own: set a term this test controls, confirm the
+    tool reflects exactly it."""
+    policy = load(REPO / "config" / "policy.yaml")
+    policy.values["scope.domain_terms"] = ["widget"]
+    engine = Engine(policy, None, AuditLog(tmp_path / "audit.log"))
+
+    res = call_tool("check_domain_vocabulary", {"text": "renewing a widget"},
                     engine, "call_x")
     assert res.status == "ok"
-    assert "licence" in res.result["matched_terms"] or "license" in res.result["matched_terms"]
+    assert "widget" in res.result["matched_terms"]
     assert res.result["in_vocabulary"] is True
+
+    miss = call_tool("check_domain_vocabulary", {"text": "renewing a trade licence"},
+                     engine, "call_y")
+    assert miss.result["in_vocabulary"] is False, \
+        "a word absent from this test's own configured terms must not match"
 
 
 # ── tool boundary ─────────────────────────────────────────────────────

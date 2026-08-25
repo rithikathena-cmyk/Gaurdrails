@@ -28,7 +28,7 @@ def test_the_three_screens_are_served(client):
     """
     summary = client.get("/summary")
     assert summary.status_code == 200
-    assert "One agent turn, gate by gate" in summary.text
+    assert "A request through the pipeline" in summary.text
 
     console = client.get("/console")
     assert console.status_code == 200
@@ -264,17 +264,30 @@ def test_the_caseload_sample_ingests_the_way_its_blurb_claims(client):
         assert published in indexed, f"{published} was masked — the desk cannot give it out"
 
 
-def test_a_built_in_document_can_be_deleted(client):
-    """It used to be a 400. The console lists thirty-six built-ins, so refusing
-    them left an operator looking at rows they could not act on."""
+#: `CORPUS` ships empty by design — no deployment's documents are hardcoded
+#: here — so these two tests, which are specifically about deleting *and
+#: restoring a built-in*, need at least one to exist. A monkeypatched entry
+#: exercises the real mechanism generically, for any built-in, without
+#: reintroducing seeded content.
+_ONE_BUILTIN = [{"id": "test-only", "title": "Test-only built-in",
+                 "text": "Exists only to prove a built-in can be deleted and restored."}]
+
+
+def test_a_built_in_document_can_be_deleted(client, monkeypatch):
+    """It used to be a 400 — refusing to delete a built-in left an operator
+    looking at a row they could not act on."""
+    monkeypatch.setattr("backend.guardrails.knowledge.seed.CORPUS", _ONE_BUILTIN)
+    client.post("/api/documents/reset")
     listed = client.get("/api/documents").json()["documents"]
     doc_id = next(d["id"] for d in listed if d["built_in"])
     assert client.delete(f"/api/documents/{doc_id}").status_code == 200
     assert client.get(f"/api/documents/{doc_id}").status_code == 404
 
 
-def test_reset_brings_a_deleted_built_in_back(client):
-    """Deleting a seed is meant to be undoable — by reset, and only by reset."""
+def test_reset_brings_a_deleted_built_in_back(client, monkeypatch):
+    """Deleting a built-in is meant to be undoable — by reset, and only by reset."""
+    monkeypatch.setattr("backend.guardrails.knowledge.seed.CORPUS", _ONE_BUILTIN)
+    client.post("/api/documents/reset")
     doc_id = next(d["id"] for d in client.get("/api/documents").json()["documents"]
                   if d["built_in"])
     client.delete(f"/api/documents/{doc_id}")

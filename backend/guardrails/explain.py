@@ -330,9 +330,9 @@ def _scope(r: RailResult, level: int) -> Violation | None:
     """
     if r.verdict is not Verdict.BLOCK:
         return None
-    detail = ("This desk handles council services — benefits, licensing, housing, "
-              "tax, civil records, and the paperwork around them. Ask about one of "
-              "those and it can look the answer up.")
+    detail = ("This assistant answers from its own document collection, not general "
+              "knowledge. Ask something related to what it's actually been given, or "
+              "ask what it can help with.")
     items: list[str] = []
     if level >= _rank("detailed"):
         topic = str(r.meta.get("topic") or "").strip()

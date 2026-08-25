@@ -86,12 +86,50 @@ def test_without_a_judge_an_unmatched_question_is_allowed_through():
     assert "allowed through" in result.meta["note"]
 
 
-def test_no_configured_vocabulary_disables_the_rail():
-    judge = CountingJudge()
+def test_no_configured_vocabulary_still_asks_the_judge():
+    """`domain_terms` ships empty — no deployment's vocabulary is hardcoded —
+    so an empty list must not silently disable the rail. The keyword layer
+    has nothing to match against and falls straight through, exactly like a
+    genuine no-hit case with a populated list: the judge is still asked, and
+    still enforced."""
+    judge = CountingJudge({"in_scope": 0.9, "topic": "on topic"})
     rail = ScopeRail(judge, 0.4, [])
     result = rail.evaluate("anything at all", "block", blank("scope.domain"))
+    assert judge.calls == 1
     assert result.verdict is Verdict.PASS
-    assert judge.calls == 0
+    assert result.meta["layer"] == "judge"
+
+
+def test_no_configured_vocabulary_can_still_block():
+    """Below `hard_block_threshold` the judge is not merely unsure — this is
+    the confidently-unrelated case scope still refuses on its own."""
+    judge = CountingJudge({"in_scope": 0.05, "topic": "cookery"})
+    rail = ScopeRail(judge, 0.4, [], hard_block_threshold=0.15)
+    result = rail.evaluate("what's a good pizza dough recipe", "block", blank("scope.domain"))
+    assert judge.calls == 1
+    assert result.verdict is Verdict.BLOCK
+
+
+def test_an_uncertain_score_flags_rather_than_blocking():
+    """Below `threshold` but not below `hard_block_threshold`: the judge is
+    unsure, not confident, so this no longer refuses on its own — retrieval
+    gets to decide instead. See `requires_retrieval` in this module and its
+    use in `engine.py` / `agent/runner.py`."""
+    judge = CountingJudge({"in_scope": 0.25, "topic": "cooperative federation"})
+    rail = ScopeRail(judge, 0.4, [], hard_block_threshold=0.15)
+    result = rail.evaluate("what is the address for the consumer cooperative federation",
+                           "block", blank("scope.domain"))
+    assert judge.calls == 1
+    assert result.verdict is Verdict.FLAG
+
+
+def test_hard_block_threshold_only_applies_under_the_block_action():
+    """`flag` never refuses on its own, however confidently unrelated the
+    judge is — only `scope.action: block` gets the hard-block tier."""
+    judge = CountingJudge({"in_scope": 0.02, "topic": "cookery"})
+    rail = ScopeRail(judge, 0.4, [], hard_block_threshold=0.15)
+    result = rail.evaluate("what's a good pizza dough recipe", "flag", blank("scope.domain"))
+    assert result.verdict is Verdict.FLAG
 
 
 def test_scope_only_runs_on_what_the_user_asked(tmp_path):
@@ -154,6 +192,23 @@ def test_public_bodies_are_not_treated_as_entities_by_configuration():
     """LOCATION is off by default: a city on its own does not identify anyone."""
     policy = load(REPO / "config" / "policy.yaml")
     assert "LOCATION" not in policy.get("pii.entity_kinds")
+
+
+def test_partial_masking_of_a_name_reveals_nothing_regardless_of_config():
+    """Regression: partial masking used to hardcode exactly one leading
+    character no matter what `pii.partial_reveal_prefix` said. No NER kind
+    has a non-zero reveal ceiling yet, so even a generous config still fully
+    masks — same "other entity kinds ignore it" rule pii.py's own non-email/
+    phone recognizers already follow."""
+    judge = CountingJudge({"entities": [
+        {"text": "Meera Balan", "kind": "PERSON", "confidence": 0.95},
+    ]})
+    rail = EntityRail(judge, Vault(), 0.6, "partial", engine_mode="judge",
+                      partial_reveal=4, partial_reveal_prefix=2)
+    result = rail.evaluate("My name is Meera Balan.", "mask", blank("pii.entities"))
+    assert result.verdict is Verdict.MASK
+    assert "Meera Balan" not in result.text_out
+    assert "*" * len("Meera Balan") in result.text_out
 
 
 # ── the composition fix these rails depend on ──────────────────────

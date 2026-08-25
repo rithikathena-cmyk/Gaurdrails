@@ -8,8 +8,8 @@ forget to ask.
 from fastapi import APIRouter, Depends
 
 from ..auth import require
-from . import (agent, agents, chat, documents, history, params, scenarios,
-               session, system, users)
+from . import (agent, agents, chat, documents, history, params, pipeline,
+               scenarios, session, system, users)
 
 api = APIRouter(prefix="/api")
 
@@ -25,6 +25,10 @@ api.include_router(agent.router, tags=["agent"], dependencies=[Depends(require("
 # the conversational tool-use loop `POST /api/chat` already runs; same split
 # `guardrails.agent` and `guardrails.agents` already draw.
 api.include_router(agents.router, tags=["agents"], dependencies=[Depends(require("agents"))])
+# The real end-to-end pipeline `/summary` drives — chains GuardrailSupervisor,
+# Supervisor, and Engine.converse() together. Same permission as `agents`:
+# it runs the same autonomous agents directly, just composed into one call.
+api.include_router(pipeline.router, tags=["pipeline"], dependencies=[Depends(require("agents"))])
 # Transcripts authorise per request, not per router: the same path serves a
 # citizen reading their own and an operator reading anyone's. `chat` is the
 # floor; the owner check is in the handlers.

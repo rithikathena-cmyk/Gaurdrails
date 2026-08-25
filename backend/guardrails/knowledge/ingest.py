@@ -96,6 +96,24 @@ def _decode(data: bytes) -> str:
     return data.decode("utf-8", errors="replace")
 
 
+def _rows_as_markdown_table(rows: list[list[str]]) -> str:
+    """Already-normalised string rows as one markdown pipe table, first row as
+    header. Shared by the spreadsheet and PDF-table extraction paths — same
+    shape, same reason: the same text has to serve BM25 retrieval *and* be
+    readable when the model quotes it back, and a table only reads correctly
+    if the columns still line up."""
+    rows = [r for r in rows if any(r)]
+    if not rows:
+        return ""
+    width = max(len(r) for r in rows)
+    rows = [r + [""] * (width - len(r)) for r in rows]
+    head, body = rows[0], rows[1:]
+    lines = ["| " + " | ".join(head) + " |",
+             "|" + "|".join(["---"] * width) + "|"]
+    lines += ["| " + " | ".join(r) + " |" for r in body]
+    return "\n".join(lines)
+
+
 def _sheet_text(data: bytes, max_rows: int = 5000) -> tuple[str, int]:
     """A workbook as markdown tables, one per sheet.
 
@@ -123,29 +141,65 @@ def _sheet_text(data: bytes, max_rows: int = 5000) -> tuple[str, int]:
                 continue
             rows.append(cells)
             rows_seen += 1
-        if not rows:
-            continue
-        width = max(len(r) for r in rows)
-        rows = [r + [""] * (width - len(r)) for r in rows]
-        head, body = rows[0], rows[1:]
-        table = ["| " + " | ".join(head) + " |",
-                 "|" + "|".join(["---"] * width) + "|"]
-        table += ["| " + " | ".join(r) + " |" for r in body]
-        parts.append(f"## {sheet.title}\n\n" + "\n".join(table))
+        table = _rows_as_markdown_table(rows)
+        if table:
+            parts.append(f"## {sheet.title}\n\n" + table)
     book.close()
     return "\n\n".join(parts), len(book.worksheets)
 
 
 def _pdf_pages_text(data: bytes) -> list[str]:
+    """One string per page — tables rendered as markdown pipe tables wherever
+    PyMuPDF can find one, everything else as plain paragraph text, merged
+    back in the order it actually appears on the page.
+
+    A flat `extract_text()` call has no notion of a table at all: a table's
+    cells come back in whatever order the PDF's content stream happens to
+    list them, which routinely isn't reading order — a two-column table can
+    interleave into "Fee ScheduleRupees" instead of a row a person or a
+    retrieval index can use. Detecting each table's own region and rendering
+    it separately is what keeps the columns lined up.
+    """
+    import fitz  # PyMuPDF — already a dependency, for the scan-rasterising path below
+
+    doc = fitz.open(stream=data, filetype="pdf")
     try:
-        from pypdf import PdfReader
-    except ImportError as exc:  # pragma: no cover - optional dependency
-        raise IngestError("PDF ingestion needs pypdf — `pip install pypdf`.") from exc
+        return [_pdf_page_text(page) for page in doc]
+    finally:
+        doc.close()
 
-    import io
 
-    reader = PdfReader(io.BytesIO(data))
-    return [(page.extract_text() or "").strip() for page in reader.pages]
+def _pdf_page_text(page: Any) -> str:
+    import fitz
+
+    try:
+        tables = list(page.find_tables())
+    except Exception:  # noqa: BLE001 — a table-detection failure must not sink the page
+        tables = []
+    if not tables:
+        return page.get_text("text").strip()
+
+    # Everything on the page that is not inside a detected table's own
+    # region, plus each table rendered as markdown — both timestamped by
+    # vertical position, so the merge reads in the order the page does
+    # rather than "all the prose, then all the tables".
+    table_rects = [fitz.Rect(t.bbox) for t in tables]
+    items: list[tuple[float, str]] = []
+    for block in page.get_text("blocks"):
+        rect = fitz.Rect(block[:4])
+        if any(rect.intersects(tr) for tr in table_rects):
+            continue  # this text is the table below, already captured there
+        text = str(block[4]).strip()
+        if text:
+            items.append((rect.y0, text))
+    for table, rect in zip(tables, table_rects):
+        rows = [["" if c is None else str(c).strip().replace("|", "\\|") for c in row]
+               for row in table.extract()]
+        md = _rows_as_markdown_table(rows)
+        if md:
+            items.append((rect.y0, md))
+    items.sort(key=lambda item: item[0])
+    return "\n\n".join(text for _, text in items).strip()
 
 
 def _rasterise(data: bytes, index: int) -> tuple[bytes, str]:
@@ -379,6 +433,15 @@ class Document:
     reason: str = ""
     request_id: str = ""
     method: str = "text"        # how the text was obtained; see Extraction
+    #: True only when this entry is the output of a real `Engine.ingest()` call
+    #: — rails actually ran, `verdict` and `masked` are real numbers, not
+    #: defaults. False for a built-in seeded straight into the store before an
+    #: `Engine` (and its rails) exist; `Engine.__init__` finds those and
+    #: re-ingests them for real. A fast, dependency-free `Corpus(seed=True)`
+    #: with no `Engine` at all — plenty of tests want exactly that — never
+    #: flips this, and that is the honest answer for it: nothing rail-checked
+    #: this content, so nothing should claim to have.
+    rails_applied: bool = False
 
     @property
     def indexed(self) -> bool:
@@ -401,6 +464,7 @@ class Document:
             "request_id": self.request_id,
             "method": self.method,
             "built_in": self.source == "built-in",
+            "rails_applied": self.rails_applied,
         }
         if with_chunks:
             d["chunks"] = self.chunks
@@ -416,6 +480,7 @@ class Document:
             masked=d.get("masked", 0), findings=list(d.get("findings") or []),
             reason=d.get("reason", ""), request_id=d.get("request_id", ""),
             method=d.get("method", "text"),
+            rails_applied=bool(d.get("rails_applied", False)),
         )
 
 
@@ -534,11 +599,10 @@ class Corpus:
         return added
 
     def seed_builtin(self) -> None:
-        """The thirty-six built-in public-services documents.
-
-        Deliberately small and incomplete: a knowledge base that covers
-        everything never produces an ungrounded answer, so it never exercises
-        the grounding rail.
+        """Install whatever `CORPUS` currently holds — nothing, since the
+        built-in demo documents were removed. Kept rather than deleted: a
+        deployment that wants a starter knowledge base again populates
+        `CORPUS` and this path installs it the same way it always did.
         """
         from .seed import CORPUS
 

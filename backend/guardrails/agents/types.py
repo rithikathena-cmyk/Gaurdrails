@@ -28,9 +28,21 @@ RiskLevel = Literal["low", "medium", "high", "critical"]
 
 #: The bounded lifecycle every agent run passes through, in order except that
 #: PLAN and EXECUTE may repeat within `max_iterations`.
+#:
+#: `ENFORCE` and `TRACE` are additive, for `guardrail_supervisor.py`'s own
+#: seven-phase loop (PLAN -> SELECT -> EXECUTE -> OBSERVE -> DECIDE -> ENFORCE
+#: -> TRACE) — a naming match to that spec, not a replacement for `POLICY`/
+#: `ACT`, which every existing agent and `Supervisor` still emit unchanged.
+#:
+#: `PRECHECK` and `HARD_BLOCK` are additive too, for the deterministic
+#: pre-check that runs before PLAN. A hard-blocked request's trace reads
+#: `PRECHECK -> HARD_BLOCK -> ENFORCE -> TRACE` — an explicit phase for
+#: "the deterministic check ran" and a distinct one for "and it fired",
+#: rather than a hard block reading as an unexplained skipped PLAN.
 Phase = Literal[
     "ANALYZE", "PLAN", "SELECT", "EXECUTE", "OBSERVE",
     "EVALUATE", "DECIDE", "POLICY", "ACT", "ESCALATE", "FINAL",
+    "ENFORCE", "TRACE", "PRECHECK", "HARD_BLOCK",
 ]
 
 
@@ -98,6 +110,75 @@ class AgentDecision(BaseModel):
     confidence: float = Field(ge=0.0, le=1.0)
     rationale: str
     findings: list[PIIFinding] = Field(default_factory=list)
+
+
+class GuardrailPlan(BaseModel):
+    """What `guardrail_supervisor.py`'s PLAN step decided to check, before
+    checking it. `checks` is validated against `ALLOWED_GUARDRAIL_TOOLS` at
+    the call site in `guardrail_supervisor.py`, not here — this model only
+    bounds shape, the same division of labour `AgentPlan.tools` already has
+    with `PII_AGENT_TOOLS`.
+
+    `policy_keys` is read only when `checks` includes `get_policy`: one
+    structured lookup per key (`pii`, `pii.<entity>`, `injection`,
+    `destructive_intent`, `scope`, `semantic_risk`, optionally
+    `semantic_risk.<category>`), fanned out in `_execute()` — the model
+    names *which* policy it wants, and the actual configured value is read
+    in Python, never inferred from free text.
+    """
+
+    risk_categories: list[str] = Field(default_factory=list)
+    checks: list[str] = Field(default_factory=list)
+    policy_keys: list[str] = Field(default_factory=list)
+    more_evidence_needed: bool = False
+    rationale: str = ""
+
+    @field_validator("checks", "policy_keys")
+    @classmethod
+    def _bounded(cls, v: list[str]) -> list[str]:
+        if len(v) > 8:
+            raise ValueError("a plan naming more than 8 items is not a plan")
+        return v
+
+
+class GuardrailDecision(BaseModel):
+    """The `guardrail_supervisor.py` MVP's own structured decision.
+
+    Distinct from `AgentDecision` (used by `Supervisor` and the six specialist
+    agents) rather than a replacement for it — those types and the 44+ tests
+    against them are unchanged. This one carries the two fields the flat MVP
+    loop needs that `AgentDecision` does not: `risk_score` (the deterministic,
+    tool-evidence-derived number the marginal-band gate in
+    `guardrail_supervisor.py` reasons over) and `triggered_rails` (which of the
+    six flat tools actually found something, by name — not by nested finding).
+
+    Every `guardrail_supervisor.py` run validates the model's raw JSON against
+    this schema before anything downstream reads it; a malformed or
+    out-of-range value never reaches the Policy Engine.
+
+    `risk_source` distinguishes what `risk_score` actually is — not part of
+    `DECIDE_SCHEMA` (the model is never asked for it; Python sets it after
+    the fact), so it can never be spoofed by a judge response:
+
+        deterministic_proxy   `risk_score` is `max(tool confidence)` — the
+                              same coarse heuristic `_risk_proxy()` computes,
+                              used by the hard-block and the two
+                              outside-the-band branches of the marginal gate.
+                              Not calibrated: it is a maximum over whatever a
+                              handful of independent detectors happened to
+                              report, not a probability of anything.
+        judge                 `risk_score` is the model's own stated
+                              confidence, from an actual DECIDE call inside
+                              the configured risk band.
+    """
+
+    action: GuardrailAction
+    risk_score: float = Field(ge=0.0, le=1.0)
+    risk_source: Literal["deterministic_proxy", "judge"] = "judge"
+    confidence: float = Field(ge=0.0, le=1.0)
+    triggered_rails: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+    reason: str = ""
 
 
 class TraceEvent(BaseModel):
@@ -170,6 +251,34 @@ class SupervisorResult(BaseModel):
     outcome: ActionOutcome | None = None
     duration_ms: float = 0.0
     escalation_reason: str = ""
+
+    def to_dict(self) -> dict:
+        return self.model_dump()
+
+
+class GuardrailSupervisorResult(BaseModel):
+    """The complete, audit-ready record of one `guardrail_supervisor.py` run.
+
+    Distinct from `SupervisorResult` (which nests per-specialist-agent
+    `AgentResult`s) — this loop calls flat tools directly, so `tool_calls`
+    holds `ToolResult`s, not nested agent results. `hard_blocked` is set when
+    the deterministic pre-check short-circuited the run before PLAN — the
+    field a test or an auditor reads to confirm the judge was never called
+    for an obvious case.
+    """
+
+    request_id: str
+    status: Literal["completed", "escalated"]
+    plan: "GuardrailPlan | None" = None
+    tool_calls: list[ToolResult] = Field(default_factory=list)
+    decision: "GuardrailDecision | None" = None
+    trace: list[TraceEvent] = Field(default_factory=list)
+    policy_decision: "PolicyDecision | None" = None
+    outcome: ActionOutcome | None = None
+    duration_ms: float = 0.0
+    escalation_reason: str = ""
+    hard_blocked: bool = False
+    judge_calls: int = 0
 
     def to_dict(self) -> dict:
         return self.model_dump()

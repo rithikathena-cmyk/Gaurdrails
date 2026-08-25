@@ -14,6 +14,11 @@ import { showTrace } from "./trace.js";
 let snapshot = null;
 let whose = "";
 let openSession = null;
+//: The signed-in user's own conversations, kept separate from `snapshot` —
+//: an operator can point `snapshot` at somebody else's history via the
+//: people picker, but the sidebar list is always "mine", never whoever they
+//: are currently browsing.
+let mine = null;
 
 export const historyLoaded = () => snapshot !== null;
 
@@ -30,6 +35,49 @@ function when(ts) {
     ? d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
     : d.toLocaleDateString([], { day: "numeric", month: "short" }) +
       " " + d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+/* ── sidebar ──
+ * The persistent, ChatGPT-style list: real titles, always visible, not
+ * gated behind the `traces` permission the way the recent-traces rail is —
+ * every role that can chat can see its own chat titles. */
+function renderSidebarChats() {
+  const box = $("#sidebar-chats");
+  if (!box) return;
+  const list = (mine?.sessions || []).slice(0, 25);
+  $("#chats-section").hidden = false;
+  box.innerHTML = list.length
+    ? list.map((g) => `
+        <button class="recent-item" data-open-session="${esc(g.session_id)}"
+                title="${esc(g.opened_with)}">
+          <span class="chat-title">${esc(g.opened_with)}</span>
+          <span class="ms">${when(g.last_at)}</span>
+        </button>`).join("")
+    : `<div class="recent-empty">No chats yet.</div>`;
+  $$("[data-open-session]", box).forEach((b) =>
+    b.addEventListener("click", () => openFromSidebar(b.dataset.openSession)));
+}
+
+/** A sidebar item was clicked — switch to the Conversations view, point it at
+    "mine" (undoing any people-picker selection), and open the transcript. */
+function openFromSidebar(sessionId) {
+  document.dispatchEvent(new CustomEvent("nav", { detail: "history" }));
+  if (mine) {
+    snapshot = mine;
+    whose = mine.whose.name;
+    renderPeople();
+    renderList();
+  }
+  openConversation(sessionId);
+}
+
+/** Loaded once at boot, and again after every chat turn so a brand-new
+    conversation shows up without waiting for a page reload. */
+export async function refreshSidebarChats() {
+  try {
+    mine = await api.history();
+    renderSidebarChats();
+  } catch { /* the sidebar list is a convenience, not load-bearing */ }
 }
 
 /* ── list ── */

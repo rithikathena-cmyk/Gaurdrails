@@ -14,8 +14,9 @@ from typing import Any
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from backend.guardrails import Engine, IngestError, LLMError
+from backend.guardrails import Engine, IngestError, LLMError, Surface, Tracer
 from backend.guardrails.knowledge import extension, extract
+from backend.guardrails.rails.pii import CORPUS_OWNER
 
 from ..state import state
 
@@ -113,10 +114,28 @@ def list_documents() -> dict[str, Any]:
 
 @router.get("/documents/{doc_id}")
 def get_document(doc_id: str) -> dict[str, Any]:
+    """One document, in full — including its chunks, so this is also the one
+    read path that has to prove it never shows more than chat retrieval
+    would. `Engine.__init__`'s own reseed already makes the *stored* text
+    safe for every built-in — see `Engine._reseed_builtin_rails` — but this
+    scan is a second, independent layer: the one that still holds even for a
+    document that somehow reached the corpus without going through
+    `ingest()` at all, the same defense-in-depth `agent.data` already gives
+    a tool result rather than trusting what it was told the result is.
+    """
     doc = state.corpus.get(doc_id)
     if doc is None:
         raise HTTPException(404, detail={"kind": "not_found", "message": doc_id})
-    return {"document": doc.to_dict(with_chunks=True)}
+    body = doc.to_dict(with_chunks=True)
+    engine = state.engine
+    chunks = body.get("chunks") or []
+    if engine is not None and chunks and engine.policy.enabled("pii", Surface.RETRIEVAL.value):
+        joined = "\n\n".join(chunks)
+        scan = engine.evaluate(joined, Surface.RETRIEVAL, Tracer(),
+                               "Document view", "the same rail a retrieved chunk crosses",
+                               owner=CORPUS_OWNER)
+        body["chunks"] = [] if scan.blocked else scan.text.split("\n\n")
+    return {"document": body}
 
 
 @router.post("/documents")
@@ -188,6 +207,15 @@ def delete_document(doc_id: str) -> dict[str, Any]:
 
 @router.post("/documents/reset")
 def reset_documents() -> dict[str, Any]:
-    """Back to the twenty-five built-in documents. Uploads are dropped, not archived."""
+    """Back to the built-in documents. Uploads are dropped, not archived.
+
+    `Corpus.reset()` puts every built-in back the same unrailed way it always
+    has — it is a plain store method with no `Engine`, no rails, in reach.
+    `reseed_builtin_rails()` runs right after, on the engine that does have
+    them, so a reset lands in the same state a fresh boot would: real
+    verdicts, PII masked in what is actually stored, not just on the way out.
+    """
     state.corpus.reset()
+    if state.engine is not None:
+        state.engine.reseed_builtin_rails()
     return {"ok": True, "stats": state.corpus.stats()}

@@ -17,8 +17,8 @@ import secrets
 import pytest
 from fastapi.testclient import TestClient
 
-from tests.test_parameters import StubClaude, engine_with
-from backend.guardrails import Surface, Tracer
+from tests.test_parameters import Q, StubClaude, _corpus, engine_with
+from backend.guardrails import Corpus, Document, Surface, Tracer
 from backend.guardrails.rails.pii import CORPUS_OWNER
 
 
@@ -107,8 +107,12 @@ def test_a_token_minted_for_one_person_will_not_unmask_for_another(two_users):
 # Egress only exists once generation runs, so these drive the engine with the
 # suite's scripted model rather than the API, which has no key under test.
 def test_the_egress_rail_records_who_it_unmasked_for():
-    e = engine_with(StubClaude(reply="ok"))
-    res = e.converse(SSN, principal="alice")
+    # A bare SSN retrieves nothing on its own, and with no relevant chunk the
+    # turn never reaches egress any more (see the retrieval-relevance gate in
+    # `engine.py`) — this test is about the unmask stage, so it needs a real
+    # corpus hit to get there at all.
+    e = engine_with(StubClaude(reply="ok"), corpus=_corpus())
+    res = e.converse(f"{SSN}. {Q}", principal="alice")
     unmask = _rail(res, "vault.unmask")
     assert unmask.meta["principal"] == "alice"
 
@@ -125,7 +129,12 @@ def test_the_owner_gets_their_own_value_back_at_egress():
 
 def test_a_foreign_token_in_the_reply_is_refused_and_recorded(monkeypatch):
     """A token that reaches the wrong caller is a security event, not a no-op."""
-    e = engine_with(StubClaude(reply="ok"))
+    # `corpus=_corpus()` and `Q` appended to the prompt: retrieval must find
+    # something real or the turn never reaches egress any more (see the
+    # retrieval-relevance gate in `engine.py`) — the stubbed reply below is
+    # fixed regardless of what was retrieved, so this does not change what
+    # the test is actually checking.
+    e = engine_with(StubClaude(reply="ok"), corpus=_corpus())
     # Pin the token. `secrets.token_hex(6)` can come out all digits, and a
     # twelve-digit run inside the reply is something the PII recognisers will
     # happily claim as a phone number or an Aadhaar — re-masking the foreign
@@ -136,7 +145,7 @@ def test_a_foreign_token_in_the_reply_is_refused_and_recorded(monkeypatch):
     foreign = e.vault.store("US_SSN", SSN, "somebody-else")
     e.llm.reply = f"your record shows <US_SSN:{foreign}>"
 
-    res = e.converse("what does my record show", principal="alice")
+    res = e.converse(f"what does my record show. {Q}", principal="alice")
 
     assert SSN not in res.reply
     unmask = _rail(res, "vault.unmask")
@@ -160,7 +169,14 @@ def test_a_retrieved_residents_details_do_not_unmask_for_the_asker():
     directly would only re-test the vault, which `test_vault_auth.py` already
     covers, and would pass even without the fix.
     """
-    engine = engine_with(StubClaude())
+    corpus = Corpus(seed=False)
+    corpus.add(Document(
+        id="test:case-file-ha9902", title="Case file HA-9902 — housing appeal",
+        source="test", kind="txt",
+        chars=80, chunks=["Housing appeal HA-9902. Appellant: Anitha Selvam, "
+                          "contactable on anitha.selvam@example.com."],
+        status="indexed", verdict="pass"))
+    engine = engine_with(StubClaude(), corpus=corpus)
     result = engine.converse(
         "who is the appellant on housing appeal HA-9902 and how do I contact them",
         session_id="s", principal="citizen")

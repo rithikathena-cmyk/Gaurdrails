@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from backend.guardrails import AuditLog, Engine, Surface, Tracer, load
+from backend.guardrails import AuditLog, Corpus, Document, Engine, Surface, Tracer, load
 from backend.guardrails.llm import Generation
 from backend.guardrails.registry import ADJUSTABLE
 from backend.guardrails.types import Verdict
@@ -110,7 +110,7 @@ class StubClaude:
         return Generation(text=self.reply, model=self.model)
 
 
-def engine_with(llm=None, matrix=None, **values):
+def engine_with(llm=None, matrix=None, *, corpus=None, **values):
     policy = load(REPO / "config" / "policy.yaml")
     policy.values.update(values)
     for family, row in (matrix or {}).items():
@@ -124,7 +124,7 @@ def engine_with(llm=None, matrix=None, **values):
                          + list(values.get("words.custom_phrases") or []),
             "allowlist": list(values.get("words.allowlist") or []),
         }
-    return Engine(policy, llm, AuditLog("audit.log"))
+    return Engine(policy, llm, AuditLog("audit.log"), corpus)
 
 
 def evaluate(engine, text, surface=Surface.USER_PROMPT):
@@ -275,14 +275,21 @@ def test_pii_action_on_retrieval_is_independent():
 
 
 def test_reversible_controls_egress_unmasking():
-    on = engine_with(StubClaude(reply="ok"), **{"pii.reversible": True})
-    res = on.converse(SSN)
+    # A bare PII statement retrieves nothing on its own, and with no relevant
+    # chunk the request never reaches egress any more (see the
+    # retrieval-relevance gate in `engine.py`) — this test is about the
+    # unmask stage, not retrieval, so it needs a real corpus hit to get there
+    # at all. `_corpus()` and its matching question are defined further down
+    # this file, in the grounding section.
+    question = f"{SSN}. {Q}"
+    on = engine_with(StubClaude(reply="ok"), corpus=_corpus(), **{"pii.reversible": True})
+    res = on.converse(question)
     assert "796-33-9021" not in res.reply or True   # reply is the stub's
     unmask = [r for r in res.trace.rails if r.rail == "vault.unmask"]
     assert unmask and unmask[0].meta["reversible"] is True
 
-    off = engine_with(StubClaude(reply="ok"), **{"pii.reversible": False})
-    unmask = [r for r in off.converse(SSN).trace.rails if r.rail == "vault.unmask"]
+    off = engine_with(StubClaude(reply="ok"), corpus=_corpus(), **{"pii.reversible": False})
+    unmask = [r for r in off.converse(question).trace.rails if r.rail == "vault.unmask"]
     assert unmask and unmask[0].meta["reversible"] is False
 
 
@@ -348,20 +355,34 @@ def test_content_action_on_the_inbound_surface(action, expected):
 Q = "What documents do I need to renew a trade licence?"
 
 
+def _corpus(*docs: str) -> Corpus:
+    """Real, retrievable content for `Q` — the seed corpus that used to
+    supply this has been removed by design, and grounding is architecturally
+    a no-op with nothing retrieved. One relevant chunk by default; pass more
+    to test a window actually limiting something."""
+    c = Corpus(seed=False)
+    texts = docs or ("To renew a trade licence, submit Form 4B.",)
+    for i, text in enumerate(texts):
+        c.add(Document(id=f"test:trade-licence-{i}", title="Trade licence renewal",
+                       source="test", kind="txt", chars=len(text), chunks=[text],
+                       status="indexed", verdict="pass"))
+    return c
+
+
 def test_consistency_threshold_moves_the_line():
-    passing = engine_with(StubClaude(consistency=0.60),
+    passing = engine_with(StubClaude(consistency=0.60), corpus=_corpus(),
                           **{"grounding.consistency.threshold": 0.50,
                              "grounding.max_regenerations": 0})
     assert passing.converse(Q).blocked is False
 
-    failing = engine_with(StubClaude(consistency=0.60),
+    failing = engine_with(StubClaude(consistency=0.60), corpus=_corpus(),
                           **{"grounding.consistency.threshold": 0.90,
                              "grounding.max_regenerations": 0})
     assert failing.converse(Q).blocked is True
 
 
 def test_relevance_threshold_is_independent_of_consistency():
-    e = engine_with(StubClaude(consistency=1.0, relevance=0.20),
+    e = engine_with(StubClaude(consistency=1.0, relevance=0.20), corpus=_corpus(),
                     **{"grounding.relevance.threshold": 0.50,
                        "grounding.max_regenerations": 0})
     res = e.converse(Q)
@@ -371,19 +392,25 @@ def test_relevance_threshold_is_independent_of_consistency():
 
 
 def test_context_window_limits_chunks_considered():
-    e = engine_with(StubClaude(), **{"grounding.context_window": 1})
+    # `context_window` is also `retrieve()`'s own `k` on this (single-call,
+    # deterministic) chat path, so retrieval itself never fetches more than
+    # `chunks_considered` here — unlike the agent path, where multiple
+    # `search_documents` calls can accumulate past it in one turn.
+    corpus = _corpus("To renew a trade licence, submit Form 4B.",
+                     "Trade licence renewal fees are 1,200 rupees under 500 sq ft.")
+    e = engine_with(StubClaude(), corpus=corpus, **{"grounding.context_window": 1})
     gr = [r for r in e.converse(Q).trace.rails if r.rail == "grounding.consistency"][0]
     assert gr.meta["chunks_considered"] == 1
 
 
 def test_require_citations_rejects_an_uncited_answer():
     """Regression: this was stored on the rail and never read."""
-    off = engine_with(StubClaude(reply="You need four documents."),
+    off = engine_with(StubClaude(reply="You need four documents."), corpus=_corpus(),
                       **{"grounding.require_citations": False,
                          "grounding.max_regenerations": 0})
     assert off.converse(Q).blocked is False
 
-    on = engine_with(StubClaude(reply="You need four documents."),
+    on = engine_with(StubClaude(reply="You need four documents."), corpus=_corpus(),
                      **{"grounding.require_citations": True,
                         "grounding.max_regenerations": 0})
     res = on.converse(Q)
@@ -393,7 +420,7 @@ def test_require_citations_rejects_an_uncited_answer():
 
 
 def test_require_citations_accepts_a_cited_answer():
-    e = engine_with(StubClaude(reply="You need four documents [1]."),
+    e = engine_with(StubClaude(reply="You need four documents [1]."), corpus=_corpus(),
                     **{"grounding.require_citations": True,
                        "grounding.max_regenerations": 0})
     assert e.converse(Q).blocked is False
@@ -467,7 +494,7 @@ def test_human_review_trigger(trigger, text, expected):
 
 
 def test_repeat_failures_trigger_queues_after_a_regeneration():
-    e = engine_with(StubClaude(consistency=0.10),
+    e = engine_with(StubClaude(consistency=0.10), corpus=_corpus(),
                     **{"policy.human_review.trigger": "repeat failures",
                        "grounding.max_regenerations": 1})
     res = e.converse(Q)

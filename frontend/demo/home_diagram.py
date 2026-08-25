@@ -27,12 +27,20 @@ def esc(s: str) -> str:
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
-def node(nid, kind, title, lines, w, h, cx=CX, gate_label=None):
-    """One box. `kind` picks the class; gates are left-aligned like the reference."""
+def node(nid, kind, title, lines, w, h, cx=CX, gate_label=None, agent=False):
+    """One box. `kind` picks the class; gates are left-aligned like the reference.
+
+    `agent=True` marks a box as part of the tool-use agent itself — PLAN,
+    the tool run, or the final generation — as distinct from the gates
+    around it (which already self-identify via `GATE — AGENT.TOOL` /
+    `GATE — AGENT.DATA`) and from every other dashed/solid box on this page
+    that is not the agent (entities, content, the adjudicator)."""
     global y
     x = cx - w / 2
     out.append(f'<g class="node {kind}" data-node="{nid}">')
     out.append(f'  <rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{h:.0f}" rx="11"/>')
+    if agent:
+        out.append(f'  <text class="agent-tag" x="{x + w - 16:.0f}" y="{y + 18:.0f}">AGENT</text>')
     if gate_label:
         tx = x + 20
         out.append(f'  <text class="gate-label" x="{tx:.0f}" y="{y + 26:.0f}">{esc(gate_label)}</text>')
@@ -73,8 +81,8 @@ def fanout(nid, items, w, h, gap=14):
         out.append(f'<path class="edge" d="M{cx:.0f} {bus_y:.0f} L{cx:.0f} {top - 9:.0f}" marker-end="url(#arrow)"/>')
         out.append(f'<g class="node {kind}">')
         out.append(f'  <rect x="{cx - w / 2:.0f}" y="{top:.0f}" width="{w}" height="{h}" rx="10"/>')
-        out.append(f'  <text class="title small" x="{cx:.0f}" y="{top + 29:.0f}">{esc(title)}</text>')
-        out.append(f'  <text class="mono" x="{cx:.0f}" y="{top + 50:.0f}">{esc(sub)}</text>')
+        out.append(f'  <text class="title small" x="{cx:.0f}" y="{top + h * 0.42:.0f}">{esc(title)}</text>')
+        out.append(f'  <text class="mono" x="{cx:.0f}" y="{top + h * 0.76:.0f}">{esc(sub)}</text>')
         out.append("</g>")
     bottom = top + h
     join_y = bottom + 24
@@ -126,7 +134,7 @@ fanout("rails", [
     ("Attacks", "injection", "solid"),
     ("Off-topic", "scope", "solid"),
     ("Harmful content", "content", "model"),
-], 158, 66, gap=12)
+], 140, 56, gap=30)
 
 arrow("seven opinions, one decision", 44)
 
@@ -147,7 +155,7 @@ arrow("personal details are now tokens", 46)
 # tool's arguments leave the system and a tool's answer comes back into it.
 node("plan", "model", "Decide what to do next", [
     "pick a tool, or answer — up to six rounds",
-], 600, 80)
+], 600, 80, agent=True)
 arrow("the arguments it wants to send", 44)
 
 node("gate-tool", "gate", "Are these arguments allowed out?", [
@@ -157,9 +165,9 @@ deny("gate-tool", "REFUSED, or held for approval")
 arrow(None, 40)
 
 retrieval = node("retrieval", "solid", "Run the tool", [
-    "search the documents, look up a claim, file a grievance",
+    "search_documents, lookup_fee, check_claim_status, file_grievance",
     "the office's own address stays readable; yours does not",
-], 600, 96)
+], 600, 96, agent=True)
 arrow("whatever the tool returned", 44)
 
 node("gate-data", "gate", "Is the result safe to read?", [
@@ -170,7 +178,7 @@ arrow("back around, or on to the answer", 44)
 
 node("generate", "model", "Write the answer", [
     "it only ever saw tokens, and only what the tools returned",
-], 600, 80)
+], 600, 80, agent=True)
 deny_y3 = deny("generate", "MODEL DECLINED")
 arrow("a draft nobody has seen yet", 44)
 

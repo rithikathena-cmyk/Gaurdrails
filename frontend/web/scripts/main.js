@@ -7,7 +7,7 @@ import { initDocs, loadDocs, docsLoaded } from "./docs.js";
 import { initParams, loadParams, paramsLoaded } from "./params.js";
 import { renderRecent, renderTrace } from "./trace.js";
 import { initPeople, loadPeople, peopleLoaded } from "./people.js";
-import { initHistory, loadHistory, historyLoaded } from "./history.js";
+import { initHistory, loadHistory, historyLoaded, refreshSidebarChats } from "./history.js";
 
 /* ── theme ── */
 const savedTheme = localStorage.getItem("gc-theme");
@@ -118,6 +118,11 @@ async function applyIdentity() {
   // The recent-requests rail is a trace reader's tool; without the permission
   // it is a heading over an empty box.
   $("#recent-section").hidden = !allowed.has("trace");
+
+  // The chat list, unlike the trace rail above, is not a specialist's tool —
+  // anyone who can chat can see their own titles, so it loads unconditionally
+  // rather than waiting for the History tab to be clicked.
+  if (allowed.has("history")) refreshSidebarChats();
 
   const box = $("#side-user");
   box.hidden = false;

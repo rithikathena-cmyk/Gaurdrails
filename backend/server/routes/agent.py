@@ -145,6 +145,7 @@ def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[st
         result = runner.run(
             req.message, history=state.history(req.session_id, user.name),
             session_id=req.session_id, principal=user.name,
+            permissions=frozenset(user.permissions),
         )
     except LLMError as exc:
         raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
@@ -172,7 +173,8 @@ def approve(req: ApprovalRequest, user: User = Depends(current_user)) -> dict[st
         })
     try:
         result = runner.resume(pending, req.approved, session_id=req.session_id,
-                               principal=user.name)
+                               principal=user.name,
+                               permissions=frozenset(user.permissions))
     except LLMError as exc:
         raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
 

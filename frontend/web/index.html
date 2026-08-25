@@ -58,6 +58,14 @@
         </svg>
         Chat
       </button>
+      <button class="nav-item" role="tab" data-view="history" aria-selected="false">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
+          <circle cx="8" cy="8.4" r="5.6" stroke="currentColor" stroke-width="1.4"/>
+          <path d="M8 5.4V8.4l2.4 1.4" stroke="currentColor" stroke-width="1.4"
+                stroke-linecap="round" stroke-linejoin="round"/>
+        </svg>
+        History
+      </button>
       <button class="nav-item" role="tab" data-view="trace" aria-selected="false">
         <svg width="16" height="16" viewBox="0 0 16 16" fill="none" aria-hidden="true">
           <path d="M2 12.5h12M2 4h6M2 8.25h9.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"/>
@@ -107,8 +115,13 @@
       </a>
     </nav>
 
+    <div class="side-section chats-section" id="chats-section" hidden>
+      <div class="side-label">Chats</div>
+      <div class="recent" id="sidebar-chats"></div>
+    </div>
+
     <div class="side-section" id="recent-section" hidden>
-      <div class="side-label">History</div>
+      <div class="side-label">Recent traces</div>
       <div class="recent" id="recent"></div>
     </div>
 
@@ -155,7 +168,7 @@
                       stroke-linecap="round" stroke-linejoin="round"/>
               </svg>
             </span>
-            <p class="hero-eyebrow" id="hero-eyebrow">Public services</p>
+            <p class="hero-eyebrow" id="hero-eyebrow">Document-grounded assistant</p>
             <h1>Ask anything.<br>Every answer is checked.</h1>
             <p class="hero-lede" id="hero-lede">Rails run on the way in and again on the way
               out, and the whole decision is written down.</p>
@@ -168,7 +181,7 @@
 
       <div class="composer-wrap">
         <form class="composer" id="composer">
-          <textarea id="input" rows="1" placeholder="Ask about licences, grants, records…"
+          <textarea id="input" rows="1" placeholder="Ask a question…"
                     autocomplete="off"></textarea>
           <div class="composer-bar">
             <span class="composer-hint" id="composer-hint">Tools run behind rails · writes ask first</span>
@@ -329,6 +342,19 @@
                     <th>Usage and limits</th><th>Cost</th><th>Actions</th></tr>
               </thead>
               <tbody id="u-rows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="card u-table-card" id="u-perms-card">
+          <div class="card-head">
+            <h3>Permissions</h3>
+            <span class="right u-sub">click a cell to grant or revoke — an override on top of the role</span>
+          </div>
+          <div class="u-scroll">
+            <table class="u-table u-perm-table">
+              <thead id="u-perm-head"></thead>
+              <tbody id="u-perm-rows"></tbody>
             </table>
           </div>
         </div>

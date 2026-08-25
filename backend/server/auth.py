@@ -107,6 +107,8 @@ PERMISSIONS: dict[str, str] = {
     "audit": "Read the policy and verify the audit chain",
     "users": "Add people and set what they may spend",
     "agents": "Run the autonomous guardrail agents directly, outside a chat turn",
+    "records": "Look up or act on a resident's record without owning it — "
+               "the one override on the agent's resource-ownership check",
 }
 
 ROLES: dict[str, dict[str, Any]] = {
@@ -185,6 +187,14 @@ class User:
     #: "" follows the deployment default rather than pinning a model.
     model: str = ""
 
+    #: Per-person overrides on top of the role's own list — grants something
+    #: the role does not give, or revokes something it does. Sparse by
+    #: design; the common case is both empty and `permissions` below is just
+    #: the role's list. Same "diff from a baseline" shape config/overrides.yaml
+    #: already uses for policy parameters, one level down.
+    extra_permissions: frozenset[str] = field(default_factory=frozenset)
+    denied_permissions: frozenset[str] = field(default_factory=frozenset)
+
     # -- windows ---------------------------------------------------
     def roll(self, today: str = "", month: str = "") -> None:
         """Zero a window's counters when its period has turned over."""
@@ -228,8 +238,14 @@ class User:
         return self.breached_window() is not None
 
     @property
+    def role_permissions(self) -> frozenset[str]:
+        """What the role alone gives — the baseline `permissions` overrides."""
+        return frozenset(ROLES.get(self.role, {}).get("permissions", []))
+
+    @property
     def permissions(self) -> list[str]:
-        return list(ROLES.get(self.role, {}).get("permissions", []))
+        return sorted((self.role_permissions | self.extra_permissions)
+                     - self.denied_permissions)
 
     def can(self, permission: str) -> bool:
         return permission in self.permissions
@@ -241,6 +257,9 @@ class User:
             "role": self.role,
             "role_label": ROLES.get(self.role, {}).get("label", self.role),
             "permissions": self.permissions,
+            "role_permissions": sorted(self.role_permissions),
+            "extra_permissions": sorted(self.extra_permissions),
+            "denied_permissions": sorted(self.denied_permissions),
             "views": [v for v, p in VIEW_PERMISSION.items() if self.can(p)],
             "token_limit": self.token_limit,
             "daily_limit": self.daily_limit,
@@ -363,6 +382,8 @@ class Directory:
                 day_stamp=entry.get("day_stamp", ""),
                 month_stamp=entry.get("month_stamp", ""),
                 model=entry.get("model", ""),
+                extra_permissions=frozenset(entry.get("extra_permissions", [])),
+                denied_permissions=frozenset(entry.get("denied_permissions", [])),
             )
 
     def _save(self) -> None:
@@ -377,7 +398,9 @@ class Directory:
              "day_cost_micros": u.day_cost_micros,
              "month_cost_micros": u.month_cost_micros,
              "day_stamp": u.day_stamp, "month_stamp": u.month_stamp,
-             "model": u.model}
+             "model": u.model,
+             "extra_permissions": sorted(u.extra_permissions),
+             "denied_permissions": sorted(u.denied_permissions)}
             for u in self.users.values()
         ]}
         tmp = USERS_PATH.with_suffix(".tmp")
@@ -506,6 +529,48 @@ class Directory:
             if user is None:
                 return None
             user.password_hash = hash_password(password)
+            self._save()
+        return user
+
+    def set_permission(self, name: str, permission: str, held: bool,
+                       *, protect: str = "") -> User | None:
+        """Grant or revoke one permission for one person, as an override on
+        top of their role's own list.
+
+        `protect` is a permission this call must not be allowed to take away
+        — the route passes `"users"` when the caller is editing their own
+        account, so an administrator cannot revoke their own access to the
+        one screen that could undo it. The same reasoning `remove_user`
+        already applies to deleting yourself, one level down.
+
+        Stores only the exceptions: granting something the role already
+        gives, or revoking something it never gave, touches nothing — the
+        override sets stay empty for the overwhelmingly common case.
+        """
+        if permission not in PERMISSIONS:
+            raise ValueError(f"unknown permission {permission!r}")
+        with self._lock:
+            user = self.users.get((name or "").strip().lower())
+            if user is None:
+                return None
+            if protect and permission == protect and not held:
+                raise ValueError(f"cannot remove your own {protect!r} permission")
+            base = user.role_permissions
+            extra, denied = set(user.extra_permissions), set(user.denied_permissions)
+            if held:
+                denied.discard(permission)
+                if permission not in base:
+                    extra.add(permission)
+                else:
+                    extra.discard(permission)   # role already covers it
+            else:
+                extra.discard(permission)
+                if permission in base:
+                    denied.add(permission)
+                else:
+                    denied.discard(permission)  # role never had it — nothing to revoke
+            user.extra_permissions = frozenset(extra)
+            user.denied_permissions = frozenset(denied)
             self._save()
         return user
 

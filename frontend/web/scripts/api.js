@@ -53,6 +53,9 @@ export const api = {
                                     { method: "PATCH", body: JSON.stringify({ password }) }),
   deleteUser:  (name)           => request(`/api/users/${encodeURIComponent(name)}`, {
                                     method: "DELETE" }),
+  setPermission: (name, permission, held) => request(
+                                    `/api/users/${encodeURIComponent(name)}/permissions`,
+                                    { method: "PATCH", body: JSON.stringify({ permission, held }) }),
 
   chat: (message, sessionId) =>
     request("/api/chat", {

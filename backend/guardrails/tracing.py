@@ -167,6 +167,44 @@ class AuditLog:
         }
         return self._commit(body)
 
+    def write_guardrail_supervisor_run(self, *, request_id: str, who: str, status: str,
+                                       hard_blocked: bool, tools_run: list[str],
+                                       risk_score: float | None, judge_calls: int,
+                                       policy_decision: dict[str, Any] | None,
+                                       final_action: str, escalation_reason: str,
+                                       duration_ms: float, trace: list[dict[str, Any]],
+                                       surface: str = "") -> str:
+        """One entry per `GuardrailSupervisor.run()` — the flat MVP loop in
+        `guardrail_supervisor.py`. Same hash-chained file as `write()` and
+        `write_agent_run()`, deliberately: one audit trail. `kind`
+        distinguishes it from an ordinary chat entry or a `Supervisor` run.
+
+        Deliberately narrow, the same reasoning `write_agent_run()` already
+        documents: no request text, no model-authored free text beyond a
+        rationale field the model does not control the length or content of
+        arbitrarily. `hard_blocked` and `judge_calls` are what let an
+        auditor answer "was the judge even asked" without reading the full
+        trace.
+        """
+        body = {
+            "kind": "guardrail_supervisor_run",
+            "request_id": request_id,
+            "who": who,
+            "ts": time.time(),
+            "surface": surface,
+            "status": status,
+            "hard_blocked": hard_blocked,
+            "tools_run": list(tools_run),
+            "risk_score": round(risk_score, 4) if risk_score is not None else None,
+            "judge_calls": judge_calls,
+            "policy_decision": policy_decision,
+            "final_action": final_action,
+            "escalation_reason": escalation_reason,
+            "duration_ms": round(duration_ms, 2),
+            "trace": trace,
+        }
+        return self._commit(body)
+
     def _commit(self, body: dict[str, Any]) -> str:
         with self._lock:
             body = {**body, "prev": self._prev}

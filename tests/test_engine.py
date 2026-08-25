@@ -6,8 +6,10 @@ happens to be present, a keyless deployment is unguarded and looks fine.
 
 from __future__ import annotations
 
+from backend.guardrails import Corpus, Document, Engine, load
 from backend.guardrails.tracing import AuditLog, Tracer
 from backend.guardrails.types import Verdict, precedence
+from tests.conftest import REPO
 
 
 # ── precedence (locked) ────────────────────────────────────────────
@@ -43,8 +45,19 @@ def test_pii_is_masked_before_dispatch(engine):
     assert "CUSTOM_1" in kinds     # the CLM- regex from policy.yaml
 
 
-def test_clean_prompt_passes_and_retrieves(engine):
-    res = engine.converse("What documents do I need to renew a trade licence?")
+def test_clean_prompt_passes_and_retrieves(tmp_path):
+    # This one needs something real to retrieve — the seed corpus that used to
+    # supply that has been removed by design, and `engine` (no LLM) has an
+    # empty one on purpose for the tests around it that want exactly that.
+    corpus = Corpus(seed=False)
+    corpus.add(Document(id="test:trade-licence-renewal", title="Trade licence renewal",
+                        source="test", kind="txt",
+                        chars=64, chunks=["To renew a trade licence, submit Form 4B."],
+                        status="indexed", verdict="pass"))
+    local_engine = Engine(load(REPO / "config" / "policy.yaml"), llm=None,
+                          audit=AuditLog(tmp_path / "audit.log"), corpus=corpus)
+
+    res = local_engine.converse("What documents do I need to renew a trade licence?")
     assert res.blocked is False
     assert res.trace.verdict is Verdict.PASS
     assert res.chunks

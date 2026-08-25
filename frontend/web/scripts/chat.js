@@ -4,6 +4,7 @@ import { api } from "./api.js";
 import { $, $$, esc } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
 import { addTrace, showTrace } from "./trace.js";
+import { refreshSidebarChats } from "./history.js";
 
 
 /* Badge glyphs. The sample declares which one it wants, so a new sample is a
@@ -26,6 +27,35 @@ const badge = (name) => {
 
 const SESSION = "web-" + Math.random().toString(36).slice(2, 8);
 let busy = false;
+
+// The backend runs the whole agent loop in one blocking call and returns a
+// single result — there is no step-by-step feed to render truthfully. This
+// cycles through the pipeline's own stage names (same order as the trace
+// waterfall) so the pending turn reads as "something is happening" rather
+// than a bare spinner, without claiming to know which stage is live right now.
+const PROGRESS_STEPS = [
+  "Running input checks…",
+  "Agent is planning…",
+  "Calling a tool…",
+  "Reading what came back…",
+  "Checking the answer…",
+  "Grounding against the sources…",
+];
+let progressTimer = null;
+
+function startProgress(label) {
+  let i = 0;
+  label.textContent = PROGRESS_STEPS[0];
+  progressTimer = setInterval(() => {
+    i = (i + 1) % PROGRESS_STEPS.length;
+    label.textContent = PROGRESS_STEPS[i];
+  }, 2200);
+}
+
+function stopProgress() {
+  clearInterval(progressTimer);
+  progressTimer = null;
+}
 // One flow. The agent is the pipeline; there is nothing to switch to.
 let agentSamples = [];
 
@@ -100,17 +130,20 @@ async function send() {
   pending.className = "turn assistant";
   pending.innerHTML = `
     <div class="turn-meta"><span class="who">agent</span></div>
-    <div class="thinking"><span class="pulse"></span> ${
-      "planning, calling tools…"}</div>`;
+    <div class="thinking"><span class="pulse"></span> <span class="thinking-label"></span></div>`;
   $("#messages").appendChild(pending);
   scroll();
+  startProgress(pending.querySelector(".thinking-label"));
 
   try {
     const data = await api.agentChat(text, SESSION);
+    stopProgress();
     pending.remove();
     addAssistant(data);
     addTrace(data.trace);
+    refreshSidebarChats();
   } catch (err) {
+    stopProgress();
     pending.remove();
     addError(err.message);
   } finally {
@@ -124,6 +157,7 @@ const IDLE_HINT = "Tools run behind rails · writes ask first";
 function setBusy(on) {
   busy = on;
   $("#send").disabled = on;
+  $("#input").disabled = on;
   $("#composer-hint").textContent = on
     ? "planning…"
     : IDLE_HINT;
@@ -219,6 +253,7 @@ function wireApproval(node, token) {
       card.remove();
       addAssistant(data);
       addTrace(data.trace);
+      refreshSidebarChats();
     } catch (err) {
       addError(err.message);
     }

@@ -361,3 +361,49 @@ def test_citations_required_is_not_short_circuited(monkeypatch):
     assert rail.llm.calls == 1
     assert res.verdict is Verdict.BLOCK
     assert res.meta["failed_on"] == "citations"
+
+
+class _ContentSensitiveJudge:
+    """Scores on whether a marker string actually reached the judge payload —
+    proof of what `evaluate()` did or did not include, not a canned answer."""
+
+    model = "stub"
+
+    def __init__(self, marker: str):
+        self.marker = marker
+
+    def judge(self, system, user, schema, *, max_tokens=2048):
+        props = set(schema.get("properties", {}))
+        if "consistency" in props:
+            found = self.marker in user
+            return {"consistency": 1.0 if found else 0.0, "relevance": 1.0,
+                    "unsupported": [] if found else [1], "rationale": "stub"}
+        return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}
+
+
+def test_context_window_of_6_keeps_a_relevant_chunk_ranked_5th_or_6th():
+    """The exact shape of the bug the default was raised for: an agent turn
+    that calls `search_documents` twice accumulates chunks past the old
+    context_window=4, and a genuinely relevant chunk from the *second* call
+    used to be silently dropped from what grounding — and the judge payload
+    itself — ever saw, however well it had ranked within its own call.
+    `engine_mode="judge"` isolates this from the separate local-NLI layer.
+    """
+    marker = "the water connection needs a 3000 rupee deposit"
+    chunks = [f"filler chunk about something else {i}" for i in range(4)] + [marker, "filler chunk 5"]
+    assert len(chunks) == 6
+
+    old = GroundingRail(_ContentSensitiveJudge(marker), consistency_threshold=0.5,
+                        relevance_threshold=0.5, context_window=4, engine_mode="judge")
+    new = GroundingRail(_ContentSensitiveJudge(marker), consistency_threshold=0.5,
+                        relevance_threshold=0.5, context_window=6, engine_mode="judge")
+
+    dropped = old.evaluate("q", "claim about the deposit", chunks, "block", _result())
+    kept = new.evaluate("q", "claim about the deposit", chunks, "block", _result())
+
+    assert dropped.meta["chunks_considered"] == 4
+    assert dropped.verdict is Verdict.BLOCK           # the judge never saw the marker
+    assert dropped.meta["failed_on"] == "consistency"
+
+    assert kept.meta["chunks_considered"] == 6
+    assert kept.verdict is Verdict.PASS               # this time, it did

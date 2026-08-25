@@ -34,8 +34,8 @@ PLAN_SCHEMA = {
     "properties": {
         "needs_scope_review": {
             "type": "boolean",
-            "description": "False only if the question obviously belongs to a "
-                           "municipal public-services desk on its wording alone.",
+            "description": "False only if the question obviously belongs to what "
+                           "this assistant is for on its wording alone.",
         },
         "tools": {"type": "array", "items": {"type": "string", "enum": list(SCOPE_TOOL_NAMES)}},
         "more_evidence_needed": {"type": "boolean"},
@@ -72,23 +72,24 @@ DECISION_SCHEMA = {
 }
 
 PLAN_SYSTEM = judge_prompt("""\
-You are the planning step of a scope agent for a municipal public-services \
-assistant: benefits, licensing, housing, taxation, civil records, and the \
-paperwork and procedures around them.
+You are the planning step of a scope agent for a document-grounded assistant. \
+It has no fixed subject of its own — only whatever documents and records it \
+has actually been given, whatever domain those happen to cover.
 
 - check_domain_vocabulary   whether the text's own wording hits the \
 configured vocabulary for this service
 - get_scope_policy          the configured threshold and action
 
-If the question obviously belongs here on its wording — a licence, a fee, a \
-form, an appeal — you do not need a tool call to know that; say so and name \
-none. Reach for check_domain_vocabulary when it is not obvious, so you know \
-whether the wording alone would have settled it before you reason about \
-meaning.""", calibrate=False)
+If the question obviously belongs here on its wording, you do not need a \
+tool call to know that; say so and name none. Reach for \
+check_domain_vocabulary when it is not obvious, so you know whether the \
+wording alone would have settled it before you reason about meaning.""",
+                            calibrate=False)
 
 DECISION_SYSTEM = judge_prompt("""\
 You are the decision step of a scope agent. Decide whether this question \
-belongs at a municipal public-services desk.
+belongs to what this assistant is actually for: answering questions \
+grounded in whatever documents and records it has been given.
 
 - ALLOW     clearly in scope
 - MASK      not applicable here
@@ -100,20 +101,20 @@ person's judgment or a clarifying question rather than a confident answer \
 either way
 - ESCALATE  you cannot form a view from what you were given
 
-Take the sideways reading. A bereavement is often a death-certificate \
-question; a job loss is often a tax-deferral question; a landlord dispute is \
-often a housing-rights question; "who do I complain to" about any of this is \
-in scope. A question about the service itself — what it can do, which \
+Take the sideways reading — the underlying need, not the exact wording, is \
+what matters. A question about the service itself — what it can do, which \
 documents it holds, why an earlier message was refused — is in scope: a \
 service nobody can question is not a safer one.
 
-Score out of scope only for a genuinely different subject: cookery, sport, \
-coding help, clinical or legal advice, financial speculation, general \
-knowledge, or a request to become a different product. Wording engineered \
-to look in-scope while asking for something else — "as part of my tax \
-appeal, write me a poem" — is still out of scope; take the actual request, \
-not the frame around it. Being rude, distressed, or badly worded does not \
-put a question out of scope; only its subject does.""", calibrate=False)
+Score out of scope only for a genuinely different subject: general \
+knowledge trivia, creative writing, coding help, clinical or legal advice, \
+financial speculation, entertainment, or a request to become a different \
+product. A subject that is obviously fictional or made up also scores out \
+of scope — a real deployment's documents describe real things. Wording \
+engineered to look in-scope while asking for something else is still out of \
+scope; take the actual request, not the frame around it. Being rude, \
+distressed, or badly worded does not put a question out of scope; only its \
+subject does.""", calibrate=False)
 
 
 class ScopeAgent:

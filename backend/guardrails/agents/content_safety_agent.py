@@ -8,9 +8,9 @@ runs several specialists together needs one property name per agent to tell
 their DECIDE calls apart, not just per pair.
 
 The one thing worth naming: `judge_prompt(calibrate=True)` — the default —
-already includes `CITIZEN_CALIBRATION`, the block every judge in this
-codebase scoring what a person wrote already carries: distress, bereavement,
-anger at the department, and poor phrasing are ordinary traffic, not
+already includes `USER_CALIBRATION`, the block every judge in this
+codebase scoring what a person wrote already carries: distress, frustration,
+anger at the service, and poor phrasing are ordinary traffic, not
 signals. This agent's DECIDE prompt does not re-derive that calibration; it
 inherits it, the same way `ContentRail`'s own judge call already does.
 """
@@ -95,9 +95,9 @@ violence, insults — it does not cover misconduct or self-harm, and returns \
 which categories it can even speak to
 - get_content_policy         the configured threshold and enabled categories
 
-Most requests worth a second look need score_content_categories. A citizen \
+Most requests worth a second look need score_content_categories. A user \
 describing something distressing that happened to them, reporting a crime, \
-or expressing frustration at the department is not what this agent exists \
+or expressing frustration at the service is not what this agent exists \
 to catch — say so and name no tools rather than running one to be sure.""")
 
 DECISION_SYSTEM = judge_prompt("""\
@@ -115,7 +115,7 @@ sexual content out of place here
 - ESCALATE  the evidence does not clearly support any of the above
 
 The distinction that matters most: discussion, reporting, and help-seeking \
-are not the thing they describe. A citizen who says a fine is "killing me" \
+are not the thing they describe. A user who says a decision is "killing me" \
 is describing distress, not planning violence. Someone reporting they were \
 defrauded is not seeking to defraud anyone. Someone quoting abuse they \
 received is not producing it. Someone naming a disability, an eviction, a \

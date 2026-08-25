@@ -22,8 +22,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
-from ..auth import (ASSIGNABLE_MODELS, PRICING, ROLES, User, current_user,
-                    directory, require)
+from ..auth import (ASSIGNABLE_MODELS, PERMISSIONS, PRICING, ROLES, User,
+                    current_user, directory, require)
 from ..history import history
 
 router = APIRouter()
@@ -51,6 +51,11 @@ class PasswordPatch(BaseModel):
     password: str = Field(min_length=4, max_length=128)
 
 
+class PermissionPatch(BaseModel):
+    permission: str = Field(min_length=1, max_length=32)
+    held: bool
+
+
 def _row(u: User) -> dict[str, Any]:
     d = u.to_dict()
     d["active_sessions"] = directory.sessions_for(u.name)
@@ -72,6 +77,10 @@ def _snapshot() -> dict[str, Any]:
              "permissions": v.get("permissions", [])}
             for k, v in ROLES.items()
         ],
+        # The full catalogue, independent of who holds what — the matrix in
+        # the UI is built by crossing this against each role's own list above,
+        # rather than the client having to know the permission vocabulary.
+        "permissions": [{"key": k, "desc": v} for k, v in PERMISSIONS.items()],
         "tokens_spent": sum(r["tokens_used"] for r in users),
         "cost_usd": round(sum(r["cost_usd"] for r in users), 4),
         "day_cost_usd": round(sum(r["day_cost_usd"] for r in users), 4),
@@ -129,6 +138,26 @@ def set_password(name: str, body: PasswordPatch) -> dict[str, Any]:
     """
     try:
         user = directory.set_password(name, body.password)
+    except ValueError as exc:
+        raise HTTPException(422, detail={"kind": "invalid", "message": str(exc)}) from exc
+    if user is None:
+        raise HTTPException(404, detail={"kind": "missing", "message": f"no user {name!r}"})
+    return {"ok": True, "user": _row(user), **_snapshot()}
+
+
+@router.patch("/users/{name}/permissions", dependencies=[Depends(require("users"))])
+def set_permission(name: str, body: PermissionPatch,
+                   me: User = Depends(current_user)) -> dict[str, Any]:
+    """Grant or revoke one permission for one person — an override on top of
+    what their role already gives, not a new role. Blocked from removing your
+    own `users` permission, the one action here that would be irreversible
+    without a second administrator to undo it."""
+    is_self = (name or "").strip().lower() == me.name
+    try:
+        user = directory.set_permission(
+            name, body.permission, body.held,
+            protect="users" if is_self else "",
+        )
     except ValueError as exc:
         raise HTTPException(422, detail={"kind": "invalid", "message": str(exc)}) from exc
     if user is None:

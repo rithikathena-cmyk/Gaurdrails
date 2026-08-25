@@ -27,7 +27,7 @@ from .rails.adjudicator import Adjudicator
 from .rails import toxicity_check
 from .rails.content import CATEGORIES, ContentRail, PromptAttackRail
 from .rails.entities import EntityRail
-from .rails.scope import ScopeRail
+from .rails.scope import ScopeRail, requires_retrieval
 from .rails.grounding import GroundingRail
 from .rails.normalize import normalize
 from .rails.pii import CORPUS_OWNER, SYSTEM_OWNER, PIIRail, Vault
@@ -46,8 +46,10 @@ from .types import (
 
 log = logging.getLogger("guardrails.engine")
 
-SYSTEM_PROMPT = """You are a public-services assistant for a municipal government \
-(benefits, licensing, housing, tax, civil records).
+SYSTEM_PROMPT = """You are a document-grounded assistant. Your knowledge of anything \
+specific comes from what has been ingested into your knowledge base, not from general \
+training knowledge — you have no fixed subject area of your own; it is whatever has \
+been uploaded.
 
 Answer only from the CONTEXT provided in the user turn. If the context does not \
 contain what is needed, say so plainly and name what you would need — do not fill \
@@ -132,6 +134,16 @@ REVIEW_TEMPLATE = (
     "this has gone to a person to review. Reference {rid}."
 )
 
+# `scope.domain` no longer decides whether a question's topic is covered here
+# (see rails/scope.py) — retrieval does. A question `requires_retrieval()`
+# that came back with nothing is refused here, before paying for a model call
+# that would otherwise be asked to answer from "(nothing retrieved)" and
+# relying on the grounding rail to catch it after the fact.
+NOT_FOUND_TEMPLATE = (
+    "I don't have anything in the knowledge base that answers this. Try rephrasing, "
+    "or ask what this service can help with — reference {rid}."
+)
+
 
 class Engine:
     def __init__(self, policy: Policy, llm: Claude | None = None,
@@ -145,6 +157,55 @@ class Engine:
         self.corpus = corpus if corpus is not None else Corpus(seed=True)
         knowledge.use(self.corpus)
         self._build_rails()
+        self.reseed_builtin_rails()
+
+    # -----------------------------------------------------------------
+    def reseed_builtin_rails(self) -> None:
+        """Replace every built-in document that has never actually been
+        rail-checked with the output of running it through `ingest()` for
+        real — the exact path an uploaded document already takes.
+
+        Public, and called from two places: here, at construction, and again
+        by `POST /api/documents/reset` after `Corpus.reset()` — `reset()` is
+        a plain `Corpus` method with no `Engine` in reach, so it puts the
+        built-ins straight back the same unrailed way `seed_builtin()`
+        always has. A reset that silently undid this fix would be worse than
+        never having it.
+
+        `Corpus(seed=True)` loads its built-ins straight into the store,
+        synchronously, with no `Engine` involved, because plenty of callers
+        (tests, `--ask`, anything that just wants a searchable corpus) want
+        exactly that and have no rails to run anyway. An `Engine` has rails,
+        though, and this is the one place worth paying their cost for: a
+        built-in that was never actually scanned had `verdict="pass"` as a
+        hardcoded literal, not a finding, and its stored text was the raw
+        seed string, PII and all — `agent.data`/`retrieval` catch that on the
+        way *out* today, but a direct read of the document (the `documents`
+        permission, not `chat`) had no such rail in front of it at all.
+
+        Runs once per document, ever: `rails_applied` is persisted, so a
+        second boot against the same `data/corpus.json` finds nothing left
+        to do.
+
+        Gated on the corpus actually being disk-backed (`self.corpus.path`
+        is set) — an ephemeral, in-memory `Corpus(seed=True)` with no path,
+        which is what the overwhelming majority of tests construct, gets
+        nothing durable out of paying this cost, so it does not pay it. The
+        real deployment (`server/state.py` always passes a real path) is the
+        one place this matters, and the one place it runs.
+        """
+        if self.corpus.path is None:
+            return
+
+        from .knowledge.seed import CORPUS as SEED_CORPUS
+
+        by_id = {f"seed:{d['id']}": d for d in SEED_CORPUS}
+        pending = [doc for doc in self.corpus.all()
+                  if doc.id in by_id and not doc.rails_applied]
+        for doc in pending:
+            seed = by_id[doc.id]
+            self.ingest(seed["title"], seed["text"], source="built-in", kind="txt",
+                       method="seed", doc_id=doc.id)
 
     # -----------------------------------------------------------------
     def _build_rails(self) -> None:
@@ -190,6 +251,7 @@ class Engine:
             threshold=float(p.get("scope.threshold")),
             terms=list(p.get("scope.domain_terms") or []),
             use_judge=self.llm is not None,
+            hard_block_threshold=float(p.get("scope.hard_block_threshold")),
         )
         # Names and addresses have no shape for a regex to match, so this one
         # is model-only. It shares the vault with pii.detect.
@@ -200,6 +262,8 @@ class Engine:
             kinds=list(p.get("pii.entity_kinds") or []),
             engine_mode=str(p.get("pii.entity_engine")),
             allowlist=list(p.get("pii.allowlist") or []),
+            partial_reveal=int(p.get("pii.partial_reveal")),
+            partial_reveal_prefix=int(p.get("pii.partial_reveal_prefix")),
         )
         # The adjudicator is not a rail: it reviews what the rails decided,
         # and only when one of them landed within a margin of its threshold.
@@ -440,7 +504,7 @@ class Engine:
     # -----------------------------------------------------------------
     def ingest(self, title: str, text: str, *, source: str = "upload",
                kind: str = "txt", session_id: str = "",
-               method: str = "text") -> IngestResult:
+               method: str = "text", doc_id: str = "") -> IngestResult:
         """Take one document into the knowledge base.
 
             extract → normalize → ingest rails → chunk → index
@@ -451,6 +515,12 @@ class Engine:
         fails a rail is quarantined, not indexed with a flag
         (`ingest.quarantine_on_block`, locked) — a flag makes retrieval safety
         something a future caller has to remember.
+
+        `doc_id`, when given, replaces whatever entry already holds that id
+        instead of minting a fresh one — the one caller that needs this is
+        `Engine.__init__`'s own re-ingest of a seed document that was placed in
+        the store before rails existed to check it, and it has to land on the
+        exact same id the corpus already indexes it under.
         """
         p = self.policy
         tracer = Tracer(session_id=session_id)
@@ -517,12 +587,12 @@ class Engine:
             reason = "no text to index"
 
         doc = Document(
-            id=new_document_id(title), title=title, source=source, kind=kind,
+            id=doc_id or new_document_id(title), title=title, source=source, kind=kind,
             chars=len(text), chunks=chunks,
             status="quarantined" if quarantined else "indexed",
             verdict=scan.verdict.value, masked=masked_count,
             findings=detections, reason=reason, request_id=tracer.trace.request_id,
-            method=method,
+            method=method, rails_applied=True,
         )
 
         with tracer.stage("Index", "bm25 over chunks", kind="rail"):
@@ -707,6 +777,24 @@ class Engine:
             return ConversationResult(
                 reply="No API key configured — rails ran, generation skipped.",
                 trace=trace, chunks=chunks, detections=all_detections,
+            )
+
+        # --- retrieval-relevance domain gate ----------------------------
+        # The actual "is this in scope" answer, for anything the prompt rails
+        # did not already settle: did the corpus have anything relevant?
+        # `requires_retrieval` reads what `scope.domain` already computed —
+        # PASS or FLAG alike — and excludes only a bare greeting and the
+        # "nothing configured" skip, neither of which classified anything.
+        # Checked here, after the no-key path above: with no model there is
+        # no generation to protect from hallucinating, and that branch
+        # already gives the honest reason nothing was answered.
+        if not chunks and requires_retrieval(question_n, ingress.results):
+            trace = tracer.finish(Verdict.BLOCK)
+            self.audit.write(trace, all_detections)
+            return ConversationResult(
+                reply=NOT_FOUND_TEMPLATE.format(rid=trace.request_id),
+                trace=trace, blocked=True, refusal_reason="retrieval_not_found",
+                detections=all_detections,
             )
 
         # --- generation + output rails, with regeneration --------------

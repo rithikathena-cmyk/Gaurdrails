@@ -125,6 +125,15 @@ code {
 .recent-item .ms { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
 .recent-empty { padding: 4px 11px; font-size: 12.5px; color: var(--ink-3); }
 
+/* The chat list dominates the sidebar, ChatGPT-style — it grows to fill
+   whatever space the fixed-height sections around it leave. */
+.chats-section { flex: 1 1 auto; }
+.chats-section .recent { flex: 1 1 auto; }
+.recent-item .chat-title {
+  flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.recent-item.on { background: var(--accent-soft); color: var(--ink); }
+
 .side-foot {
   margin-top: auto; padding-top: 10px; border-top: 1px solid var(--border);
   display: flex; align-items: center; gap: 8px;
@@ -260,6 +269,7 @@ code {
   padding: 4px 6px; max-height: 200px;
 }
 .composer textarea::placeholder { color: var(--ink-3); }
+.composer textarea:disabled { opacity: .55; cursor: not-allowed; }
 .composer-bar { display: flex; align-items: center; gap: 10px; padding: 4px 4px 0; }
 .composer-hint { font-size: 12px; color: var(--ink-3); }
 .send {
@@ -810,6 +820,21 @@ button.cell:hover { transform: translateY(-1px); filter: brightness(1.06); }
 .u-role { font-size: 11.5px; padding: 3px 9px; border-radius: 999px;
           background: var(--surface-2); border: 1px solid var(--border); white-space: nowrap; }
 .u-role.admin { background: var(--accent-soft); border-color: transparent; color: var(--accent-ink); font-weight: 600; }
+
+.u-perm-table th.u-perm-role, .u-perm-table td.u-perm-cell { text-align: center; }
+.u-perm-table th.u-perm-role { white-space: normal; }
+.u-perm-table th.u-perm-role .u-sub { text-transform: none; letter-spacing: 0; font-family: var(--sans); }
+.u-perm-cell { padding: 2px !important; }
+.u-perm-btn { display: flex; flex-direction: column; align-items: center; gap: 1px;
+              width: 100%; min-width: 76px; border: none; background: transparent;
+              cursor: pointer; padding: 9px 4px; border-radius: 8px; font: inherit; }
+.u-perm-btn:hover { background: var(--hover); }
+.u-perm-btn:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.u-perm-mark { font-size: 15px; color: var(--ink-3); }
+.u-perm-mark[data-held="1"] { color: var(--pass); font-weight: 700; }
+.u-perm-btn.granted .u-perm-mark { color: var(--accent-ink); }
+.u-perm-btn.revoked .u-perm-mark { color: var(--block); }
+.u-perm-note { font-size: 9px; letter-spacing: .05em; text-transform: uppercase; color: inherit; }
 
 .u-budget { min-width: 268px; }
 .u-win { display: grid; grid-template-columns: 40px minmax(48px, 1fr) 52px 78px;

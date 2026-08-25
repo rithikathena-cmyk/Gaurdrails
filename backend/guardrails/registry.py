@@ -192,6 +192,10 @@ FAMILIES: dict[str, dict[str, str]] = {
         "name": "Agent & Tools",
         "engine": "claude tool use · per-call rails · approval gate",
     },
+    "supervisor": {
+        "name": "Guardrail Supervisor",
+        "engine": "deterministic hard-blocks · risk-band gate · claude judge",
+    },
 }
 
 
@@ -259,7 +263,7 @@ PARAMS: list[Param] = [
     _a("prompt_attack.local_block_threshold", "content",
        "How sure the local injection classifier must be before it blocks without the "
        "judge. Kept high because this model reports injection on text that merely "
-       "discusses prompts — including a citizen asking why they were refused.",
+       "discusses prompts — including a user asking why they were refused.",
        "float", 0.90, minimum=0.5, maximum=1, step=0.01),
 
     _l("content.local_short_circuit_scope", "content",
@@ -464,7 +468,7 @@ PARAMS: list[Param] = [
        "float", 0.35, minimum=0, maximum=1, step=0.01),
     _a("grounding.context_window", "grounding",
        "How many retrieved chunks the check considers.",
-       "int", 4, minimum=1, maximum=20, step=1),
+       "int", 6, minimum=1, maximum=20, step=1),
     _a("grounding.action_on_fail", "grounding",
        "What happens to an ungrounded response.", "enum", "regenerate",
        options=["regenerate", "flag", "human_review", "block"]),
@@ -509,6 +513,21 @@ PARAMS: list[Param] = [
        "const", Lock.SAFETY, "excluded",
        "Its verdict is a fail-closed default, not a score. Letting the adjudicator soften "
        "it would undo the fail-closed guarantee exactly when the stack is least healthy."),
+
+    # The guardrail_supervisor MVP's own marginal-band gate — a deterministic
+    # risk score computed from what its tools actually found, not a rail
+    # score. Below the low threshold: ALLOW with no judge call. Above the
+    # high one: BLOCK with no judge call. Only the band between calls the
+    # judge, the same "do not ask a model about the obvious cases" reasoning
+    # the adjudicator's own `margin` already applies one layer down.
+    _a("supervisor.risk_low_threshold", "supervisor",
+       "Deterministic risk score below which the guardrail_supervisor allows "
+       "a request without calling the judge.",
+       "float", 0.40, minimum=0, maximum=1, step=0.05),
+    _a("supervisor.risk_high_threshold", "supervisor",
+       "Deterministic risk score above which the guardrail_supervisor blocks "
+       "a request without calling the judge.",
+       "float", 0.80, minimum=0, maximum=1, step=0.05),
 
     _l("grounding.score_direction", "grounding",
        "Higher score means better grounded.",
@@ -606,6 +625,29 @@ PARAMS: list[Param] = [
        "Vocabulary that settles the common case without a model call. A question "
        "containing any of these is in scope, full stop.",
        "set", []),
+    _a("scope.hard_block_threshold", "scope",
+       "Below this, the judge is confident enough that the question is unrelated "
+       "— general trivia, creative writing, a fictional subject — to refuse it "
+       "without paying for retrieval. Between this and `scope.threshold` the judge "
+       "is merely uncertain, which is not the same thing: whether *this* "
+       "deployment's knowledge base actually covers a specific, real-sounding "
+       "topic is a question retrieval can answer and a topic classifier cannot, so "
+       "that band is flagged rather than blocked and left to retrieval to settle. "
+       "Only takes effect under `scope.action: block`; `flag` and `pass` are "
+       "unaffected. Must stay below `scope.threshold` to mean anything.\n\n"
+       "Ships at 0.0 — meaning this never fires — on measured evidence, not by "
+       "default caution alone: 'Tell me about cooperative societies', a question "
+       "this deployment's own corpus answers, scored 0.0 from the live judge on "
+       "one real run (0.6-1.0 on others, same wording). A question with no "
+       "corpus connection at all — 'what is the capital of France' — also scores "
+       "0.0, every time, no variance. The two are indistinguishable at that "
+       "value, so no threshold above 0.0 can separate them safely; only 0.0 "
+       "itself (never blocks, since a clamped score cannot go below its own "
+       "floor) is safe as a default. Raise it only after collecting enough of "
+       "*this* deployment's own traffic to confirm its genuinely-unrelated "
+       "questions score low with low variance, and stay well clear of any score "
+       "a real corpus topic has ever produced.",
+       "float", 0.0, minimum=0, maximum=1, step=0.01),
 
     _l("scope.judge_order", "scope",
        "When the semantic check runs.",
@@ -689,7 +731,24 @@ PARAMS: list[Param] = [
        "How the agent reports a retrieved field that arrived masked — show "
        "the token placeholder as-is, or explain in prose that it is protected.",
        "enum", "relay", options=["relay", "explain"]),
+    _a("agent.retrieval_max_retries", "agent",
+       "Corrective retries before a factual, in-domain question the agent "
+       "never grounded in a tool result fails closed. Each one costs a full "
+       "model call.",
+       "int", 1, minimum=0, maximum=3, step=1),
 
+    _l("agent.retrieval_required_for_domain_questions", "agent",
+       "Whether an in-domain factual question must be backed by a tool call "
+       "before the agent's answer is accepted.",
+       "const", Lock.SAFETY, "locked on — always enforced",
+       "The system prompt already tells the model to search before answering "
+       "anything factual; a model can still choose not to — that is exactly "
+       "how an ungrounded-but-coincidentally-correct answer reaches a user "
+       "with no rail ever having looked at it. This is the code-enforced "
+       "backstop: scope.domain has already classified the question as "
+       "belonging to this desk before the agent loop even starts, and an "
+       "answer to it is not accepted unless some tool actually ran. An "
+       "adjustable version of this is the exact bypass it exists to close."),
     _l("agent.approval_required_for", "agent",
        "Which tool calls stop and ask a person.",
        "const", Lock.SAFETY, "every write tool, always",

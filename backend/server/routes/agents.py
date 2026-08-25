@@ -60,9 +60,13 @@ from pydantic import BaseModel, Field
 from backend.guardrails import LLMError
 from backend.guardrails.agents.authorization_tools import AuthorizationContext
 from backend.guardrails.agents.capabilities import PIICapabilities
+from backend.guardrails.agents.guardrail_supervisor import GuardrailSupervisor
+from backend.guardrails.agents.guardrail_tools import ALLOWED_GUARDRAIL_TOOLS
 from backend.guardrails.agents.supervisor import (
     SUPERVISOR_AGENTS, AgentNotRegistered, Supervisor, SupervisorResult,
 )
+from backend.guardrails.agents.tools import ToolNotAllowed
+from backend.guardrails.agents.types import GuardrailSupervisorResult
 from backend.guardrails.types import Surface
 
 from ..auth import User, current_user
@@ -146,6 +150,101 @@ def run_supervisor(req: AgentRunRequest, user: User = Depends(current_user)) -> 
         "result": result.to_dict(),
         "wall_clock_ms": round((time.perf_counter() - began) * 1000, 1),
     }
+
+
+@router.post("/agents/guardrail-supervisor/run")
+def run_guardrail_supervisor(req: AgentRunRequest,
+                             user: User = Depends(current_user)) -> dict[str, Any]:
+    """The flat, single-hop MVP — `PLAN -> SELECT -> EXECUTE -> OBSERVE ->
+    DECIDE -> ENFORCE -> TRACE` over the six tools in `ALLOWED_GUARDRAIL_TOOLS`
+    directly, rather than `run_supervisor`'s six specialist agents. Additive,
+    same as that endpoint: `POST /api/chat` is untouched either way.
+
+    Deliberately no upfront `engine.llm is None` check, unlike
+    `run_supervisor` above: the hard-block pre-check and the deterministic
+    risk-band gate both work with no live model at all, exactly like the
+    deterministic pipeline's own pattern layer. A request that genuinely
+    needs the judge (PLAN, or DECIDE inside the marginal band) and finds no
+    key still comes back as a normal 200 with `status: "escalated"` —
+    `GuardrailSupervisor.run()` catches that `LLMError` internally, the same
+    way it handles any other judge failure.
+    """
+    engine = _engine()
+    try:
+        surface = Surface(req.surface)
+    except ValueError:
+        raise HTTPException(422, detail={"kind": "bad_surface", "message": req.surface})
+
+    ctx = AuthorizationContext(
+        principal=user.name, role=user.role, permissions=frozenset(user.permissions),
+        resource_kind=req.resource_kind, resource_owner=req.resource_owner,
+    )
+    request_id = f"guardrail_supervisor_{uuid.uuid4().hex[:10]}"
+
+    began = time.perf_counter()
+    try:
+        result = GuardrailSupervisor(engine.llm, engine).run(
+            req.text, surface=surface, owner=user.name, request_id=request_id, ctx=ctx)
+    except ToolNotAllowed as exc:
+        _audit_failed_guardrail_run(request_id, user.name, req.surface, str(exc),
+                                    (time.perf_counter() - began) * 1000)
+        raise HTTPException(500, detail={"kind": "tool_not_allowed",
+                                         "message": str(exc)}) from exc
+    except LLMError as exc:
+        _audit_failed_guardrail_run(request_id, user.name, req.surface, str(exc),
+                                    (time.perf_counter() - began) * 1000)
+        raise HTTPException(502, detail={"kind": "llm", "message": str(exc)}) from exc
+
+    _resolve_guardrail_result_for_reader(result, engine, user.name)
+    _audit_completed_guardrail_run(result, user.name, req.surface)
+
+    return {
+        "result": result.to_dict(),
+        "wall_clock_ms": round((time.perf_counter() - began) * 1000, 1),
+    }
+
+
+# ---------------------------------------------------------------------------
+def _resolve_guardrail_result_for_reader(result: GuardrailSupervisorResult, engine: Any,
+                                         reader: str) -> None:
+    """Same deterministic egress step `_resolve_for_reader` runs for
+    `run_supervisor`, applied to the flat result's own single `outcome`."""
+    caps = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+    if result.outcome is not None and result.outcome.text_out:
+        result.outcome.text_out, _ = caps.resolve_for_reader(result.outcome.text_out, reader)
+
+
+def _audit_completed_guardrail_run(result: GuardrailSupervisorResult, who: str,
+                                   surface: str) -> None:
+    policy_decision = None
+    if result.policy_decision is not None:
+        policy_decision = {
+            "final_action": result.policy_decision.final_action,
+            "recommended_action": result.policy_decision.recommended_action,
+            "floor_action": result.policy_decision.floor_action,
+            "overridden": result.policy_decision.overridden,
+        }
+    state.audit.write_guardrail_supervisor_run(
+        request_id=result.request_id, who=who, status=result.status,
+        hard_blocked=result.hard_blocked,
+        tools_run=sorted({c.tool for c in result.tool_calls}),
+        risk_score=result.decision.risk_score if result.decision else None,
+        judge_calls=result.judge_calls, policy_decision=policy_decision,
+        final_action=result.policy_decision.final_action if result.policy_decision else "ESCALATE",
+        escalation_reason=result.escalation_reason, duration_ms=result.duration_ms,
+        trace=[{"phase": t.phase, "at_ms": t.at_ms} for t in result.trace],
+        surface=surface,
+    )
+
+
+def _audit_failed_guardrail_run(request_id: str, who: str, surface: str, reason: str,
+                                duration_ms: float) -> None:
+    state.audit.write_guardrail_supervisor_run(
+        request_id=request_id, who=who, status="failed", hard_blocked=False,
+        tools_run=[], risk_score=None, judge_calls=0, policy_decision=None,
+        final_action="ESCALATE", escalation_reason=reason,
+        duration_ms=round(duration_ms, 1), trace=[], surface=surface,
+    )
 
 
 # ---------------------------------------------------------------------------

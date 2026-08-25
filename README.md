@@ -43,10 +43,10 @@ egress, for an authorized caller — the model never sees a raw SSN. A failed ou
 returns to the model, never to the user; only a second failure surfaces a human. A tool
 that changes state outside the system stops and asks a person, always.
 
-See it: **`/summary`** carries the pipeline diagram, eight real turns, and a Run button
-on each of the six scenarios — they execute against the deployment you are reading,
-not a recording. **`/demo/stages`** is the same pipeline stage by stage, in depth, with
-a live trace overlaid.
+See it: **`/summary`** carries the pipeline diagram and four real turns through the stack.
+The six scenarios below still run against the deployment you are reading, not a recording —
+via `POST /api/scenarios/{id}/run`, no longer from a button on this page.
+**`/demo/stages`** is the same pipeline stage by stage, in depth, with a live trace overlaid.
 
 ### Five guardrail families
 
@@ -162,8 +162,8 @@ at once. Click any cell in the Parameters view to cycle it.
 
 ## Adjustable vs fixed
 
-Every parameter is declared once in `guardrails/registry.py`. **77 are adjustable and
-live-editable in the UI. 38 are fixed**, and the registry records *why*, in one of four
+Every parameter is declared once in `guardrails/registry.py`. **82 are adjustable and
+live-editable in the UI. 39 are fixed**, and the registry records *why*, in one of four
 categories:
 
 | | Meaning |
@@ -388,8 +388,19 @@ didn't finish checking" is not the same as "the check errored".
 │   │   │   ├── tools.py         what it may call, and what each may see unmasked
 │   │   │   └── runner.py        the loop, and the rails on every edge of it
 │   │   │
+│   │   ├── agents/              a second, deeper path — see "The supervisor pipeline" below
+│   │   │   ├── guardrail_supervisor.py   fast, cheap, mostly-deterministic precheck
+│   │   │   ├── supervisor.py             plans, runs up to six specialist agents, decides
+│   │   │   ├── policy_engine.py          combines both layers' verdicts into one floor
+│   │   │   ├── pii_agent.py · injection_agent.py · content_safety_agent.py ·
+│   │   │   │   scope_agent.py · authorization_agent.py · grounding_agent.py
+│   │   │   │                            the six specialists SUPERVISOR_AGENTS registers
+│   │   │   └── *_tools.py · *_capabilities.py · types.py
+│   │   │                                per-specialist tool declarations and shared types
+│   │   │
 │   │   ├── knowledge/           what the answers are grounded in
-│   │   │   ├── seed.py          thirty-six built-in documents
+│   │   │   ├── seed.py          empty by design — nothing is grounded until
+│   │   │   │                    something real is ingested (see below)
 │   │   │   └── ingest.py        extract → chunk → mask → BM25 index
 │   │   │
 │   │   └── evaluation/          does it still work, and how well
@@ -406,7 +417,10 @@ didn't finish checking" is not the same as "the check errored".
 │           ├── session.py       sign in, sign out, who am I
 │           ├── system.py        health, policy, audit
 │           ├── chat.py          chat turns, traces, token accounting
-│           ├── agent.py         agent turns and approvals
+│           ├── agent.py         agent turns and approvals — the AgentRunner tool loop
+│           ├── agents.py        one specialist agent, run standalone, HTTP-facing
+│           ├── pipeline.py      POST /api/pipeline/run — the real chain: GuardrailSupervisor
+│           │                    → Supervisor → PolicyEngine → Engine.converse()
 │           ├── documents.py     ingestion, listing, deletion
 │           ├── history.py       transcripts — authorised per request
 │           ├── users.py         accounts, budgets, model assignment
@@ -426,7 +440,10 @@ didn't finish checking" is not the same as "the check errored".
 │   └── demo/                 the pipeline, drawn and explained
 │       ├── stages.html       the same request, stage by stage    (/demo/stages)
 │       ├── flow.py           the terminal chart, with a live trace
-│       ├── home_diagram.py   computes the home page flowchart geometry
+│       ├── home_diagram.py   computes the main flow diagram's geometry —
+│       │                     run it, then splice web/_diagram.svg.part into home.html
+│       ├── supervisor_diagram.py   same, for the GuardrailSupervisor's own
+│       │                     PLAN → judge → TRACE loop — splices _supervisor_diagram.svg.part
 │       └── README.md         the written account, with a mermaid chart
 │
 ├── config/
@@ -435,18 +452,24 @@ didn't finish checking" is not the same as "the check errored".
 │   └── lexicons/             blocklist.txt · allowlist.txt
 │
 ├── docs/
-│   ├── architecture.html     the full architecture reference
-│   └── architecture.pdf      the same, 16 pages, print palette
+│   ├── architecture.html          the full architecture reference
+│   ├── architecture.pdf           the same, 16 pages, print palette
+│   ├── guardrails-explained.html  a plainer walkthrough, for a non-engineer reader
+│   ├── guardrails-explained.pdf   the same
+│   ├── guardrails-use-cases.html  what it's for, by scenario
+│   └── guardrails-use-cases.pdf   the same
 │
 ├── eval/
 │   └── suite.yaml            labelled cases: retrieval, rails, answers
 │
-├── tests/                    863 tests — all but one need no API key
+├── tests/                    966 tests — all but one need no API key
 │   ├── conftest.py           policy sandbox, and the signed-in clients
 │   ├── test_engine · test_registry · test_config · test_parameters
 │   ├── test_words · test_pii · test_checksums · test_scope_entities
 │   ├── test_adjudicator · test_agent · test_regeneration · test_explain
 │   ├── test_ingest · test_eval · test_llm · test_api · test_history
+│   ├── test_guardrail_supervisor · test_pipeline_http · test_scope_retrieval
+│   │                          the supervisor pipeline — see that section above
 │   └── test_enterprise_e2e   the deploy check: PII, allowlist, control surface
 │
 └── data/                     runtime state, gitignored
@@ -484,7 +507,7 @@ python run.py --ask "..."     # one request through the stack, printed as a trac
 python frontend/demo/flow.py           # the same request, drawn as a flow chart
 python frontend/demo/flow.py --sample injection
 python run.py --eval          # score against the labelled suite
-python -m pytest tests/ -q    # 863 tests — one live-evaluation test needs a key, and skips without one
+python -m pytest tests/ -q    # 966 tests — one live-evaluation test needs a key, and skips without one
 ```
 
 Then open **http://127.0.0.1:8000** — the pipeline diagram, with the console at
@@ -607,9 +630,84 @@ GET  /api/agent/tools                             → the tool set, with its gat
 
 ---
 
+## The supervisor pipeline
+
+A second, deeper path alongside `AgentRunner`, in `guardrails/agents/`. Where the rail
+stack above asks "what does the text match", this asks a model to reason about the request
+as a whole — and it is layered so the expensive reasoning is the last resort, not the
+first check.
+
+```
+POST /api/pipeline/run   {text, surface}
+
+  GuardrailSupervisor        cheap, fast, mostly-deterministic. Its own hard-block
+                              precheck (detect_prompt_injection, detect_destructive_intent)
+                              needs zero judge calls; only a genuinely unclear request
+                              costs the one PLAN call. A request it already blocks never
+                              reaches the next layer, or the model, at all.
+        │  (only if not already stopped, and a model is configured)
+        ▼
+  Supervisor                 the deeper pass. One judge call plans which of six
+                              specialists are worth running; each planned specialist runs
+                              in turn; a second judge call weighs the results if more
+                              than one ran, or upholds the lone agent's decision if only
+                              one did.
+        │
+        ▼
+  PolicyEngine.decide()      combines both layers' already-enforced final actions —
+                              the same "recommendation + floor" rule every other verdict
+                              in this codebase already uses.
+        │  (only if the combined action is not BLOCK / REDACT / ESCALATE)
+        ▼
+  Engine.converse()          the real retrieval → LLM → output-rails → grounding
+                              pipeline, unmodified — everything documented above.
+```
+
+**The six specialists** `Supervisor` can plan (`agents/supervisor.py`'s `SUPERVISOR_AGENTS`):
+
+| Agent | Watches for |
+|---|---|
+| `pii` | personal data in the request |
+| `injection` | override / exfiltration attempts a pattern alone might miss |
+| `content` | hate, violence, self-harm and the rest of the content family |
+| `scope` | off-topic requests |
+| `authorization` | someone else's record — resolved against the caller's own permissions |
+| `grounding` | claims the retrieved context won't support |
+
+They run **sequentially, not concurrently** — unlike the rail stack's own jobs, which
+share one deadline and run in parallel. A planned-but-unneeded specialist (the common
+case: most requests need none) costs nothing, because `Supervisor._plan()` simply doesn't
+select it.
+
+**Response shape:**
+
+```json
+{
+  "request_id": "...", "final_action": "ALLOW",
+  "stopped_at": null,                          // or "guardrail_supervisor" / "policy_engine"
+  "guardrail_supervisor": {...}, "supervisor": {...},
+  "policy_engine": {...}, "conversation": {...},   // conversation is null if stopped early
+  "wall_clock_ms": 28097.3
+}
+```
+
+`stopped_at` names which stage ended the request — check it first when a response looks
+short: `null` means it ran the full chain through `Engine.converse()`.
+
+**Measured, one real request** ("what are the Objects of Tamil Nadu Cooperative Union?",
+nothing risky, both layers correctly found nothing to add): `GuardrailSupervisor` 5.7s (one
+PLAN call), `Supervisor` 3.4s (one plan call, selected zero specialists), `Engine.converse()`
+19.0s (its own six sequential stages, each parallel internally) — **28.1s wall clock**, almost
+entirely spent on two *planning* calls that ultimately decided nothing extra was needed.
+Retrieval itself (`corpus.search()`) is not the cost here — it ran in 1.6ms of that total.
+Worth knowing before assuming a slow response means retrieval is slow: it usually means the
+planning calls are.
+
+---
+
 ## Six scenarios
 
-`guardrails/scenarios.py` drives the real engine and asserts on what came back — they can
+`guardrails/evaluation/scenarios.py` drives the real engine and asserts on what came back — they can
 fail, and they say so. Run them with `POST /api/scenarios/{id}/run`.
 
 | | Scenario | What it proves |
@@ -647,15 +745,29 @@ legitimate traffic look like an improvement. A third of the rails suite is delib
 housing, someone quoting an eviction threat, a bereaved relative wanting a death record.
 Every one must pass. A block there is a person turned away.
 
-Current numbers on the built-in corpus:
+Current numbers, from `python run.py --eval` against this checkout:
 
 ```
-RETRIEVAL   recall@4 1.0 · precision@4 0.456 · MRR 1.0 · hit@1 1.0 · out-of-corpus silent 1/1
-RAILS       22 cases · false positives 0.0 · false negatives 0.0 · exact match 1.0
-ANSWERS     5 questions · fact coverage 1.0 · consistency 1.0 · relevance 1.0 · unsupported figures 0
+RETRIEVAL   recall@4 0.0 · precision@4 0.0 · MRR 0.0 · hit@1 0.0 · out-of-corpus silent 1/1
+RAILS       38 cases · false positives 0.0 · false negatives 0.056 · exact match 0.974
+ANSWERS     skipped — not requested — pass --answers
 ```
 
-Two of those numbers were earned rather than observed. The first run scored **0.933 recall**
+**RETRIEVAL reading 0.0 across the board is the suite going stale, not the index breaking.**
+`knowledge/seed.py`'s built-in corpus is now deliberately empty — nothing is grounded until
+something real is ingested (see [Layout](#layout)). `eval/suite.yaml`'s 15 retrieval cases
+still point at the old `seed:trade-licence-renewal`-style ids, none of which exist any more,
+so every one reports `missed ... got nothing`. That is expected, not a regression to chase —
+until the suite is repointed at a real ingested document, RETRIEVAL is not measuring anything
+and should not be read as evidence either way. RAILS does not depend on the corpus and is a
+live number: 38 cases, one borderline miss (`content-violence` — a plain insult scored just
+under the local short-circuit bar, so it fell through to a judge call that passed it).
+
+The two paragraphs below describe the *old* built-in-corpus baseline (recall@4 1.0,
+precision@4 0.456), kept for the story of how that number was earned. They no longer match
+what `--eval` reports today, only how the suite's shape came to be.
+
+Two of those old numbers were earned rather than observed. The first run scored **0.933 recall**
 and failed `grievance-response`: "where do I file a grievance" returned nothing, because the
 document says *filed* and *filing* while the question says *file*, and coverage landed at
 0.143 against a 0.15 gate. Light stemming and a longer stopword list fixed it. The other
@@ -663,16 +775,18 @@ failure was a bad label of my own — a question about a penalty the corpus does
 was labelled as an out-of-corpus *retrieval* miss, when returning the trade licence documents
 is correct and catching the missing fact is the grounding rail's job.
 
-`precision@4` sits at 0.456 and that is expected: `k=4` returns four chunks for questions
+`precision@4` sat at 0.456 and that was expected: `k=4` returns four chunks for questions
 that usually have one relevant document, so three quarters of the slots are near-misses by
-construction. It is worth watching for drops, not for its absolute value.
+construction. Re-establish both numbers once the eval suite is repointed at real content.
 
 ---
 
 ## Sign-in and roles
 
-`/` is public — the pipeline diagram is the pitch. **Start app** goes to `/login`, and the
-console lives behind it at `/console`.
+`/` is the door — sign in, or be shown where you already are (a live session skips
+straight past it). `/summary`, behind sign-in, is the pitch: the pipeline diagram and four
+real turns through it. `/console` is the assistant and the control surface themselves,
+behind the same session.
 
 | Role | Holds | Sees |
 |---|---|---|
@@ -727,6 +841,11 @@ so rather than showing green.
   rate limiting, and a restart signs everyone out. It exists so the console has a principal
   to enforce against, not as an identity system. Put a real IdP in front of it before this
   faces anything but localhost.
-- The evaluation suite is 43 cases over an eight-document corpus. It is a regression gate,
-  not a benchmark: the numbers below say the stack still behaves as labelled, not that it
-  would hold up on someone else's corpus.
+- The evaluation suite is 54 cases (16 retrieval, 38 rails). It is a regression gate, not a
+  benchmark: the numbers say the stack still behaves as labelled, not that it would hold up
+  on someone else's corpus — and right now the retrieval half doesn't even say that, since
+  its cases target the built-in corpus this session emptied out (see
+  [Measuring it](#measuring-it)). Repointing it at real ingested content is open work.
+- The built-in seed corpus is empty by design (`backend/guardrails/knowledge/seed.py`).
+  Nothing is grounded until a document is actually ingested — the console starts with a
+  genuinely empty knowledge base, not a demo one.

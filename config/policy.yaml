@@ -351,7 +351,7 @@ grounding:
 
     threshold: 0.35
 
-  context_window: 4
+  context_window: 6
 
   action_on_fail: regenerate    # regenerate | flag | human_review | block
 
@@ -363,101 +363,41 @@ grounding:
 
 # ---------------------------------------------------------------------------
 
-# Scope. The vocabulary below settles the ordinary case in microseconds; only a
-
-# question that matches none of it is worth a model call. Add the words your
-
-# service is actually about — that list is what keeps the semantic check cheap.
-
+# Scope. Empty by design: this deployment has no fixed subject of its own, only
+# whatever its knowledge base actually covers, so there is no safe word list to
+# hardcode here. Every question falls straight to the judge (`layer 2`) until a
+# deployment fills this in for its own domain — the vocabulary below, once
+# populated, is what settles the ordinary case in microseconds and keeps the
+# semantic check to only what matches none of it. Add the words your service
+# is actually about.
+#
+# The judge only refuses outright below `hard_block_threshold` — a confident
+# "this is trivia / fiction / a different remit" call. Between that and
+# `threshold` it is merely unsure, and unsure is not the same as unrelated:
+# whether this deployment's own documents cover a specific real-sounding topic
+# is what retrieval is for. That band is flagged, not blocked, and left to
+# reach retrieval — see `requires_retrieval()` in `rails/scope.py`.
+#
+# `hard_block_threshold` ships at 0.0 (never fires) on measured evidence, not
+# caution alone: "Tell me about cooperative societies" — a question this
+# deployment's own corpus answers — scored 0.0 from the live judge on one real
+# run, and 0.6-1.0 on others for the identical wording. "What is the capital
+# of France" also scores 0.0, with no variance across repeated runs. The two
+# are indistinguishable at that value, so nothing above 0.0 is safe as a
+# default; raise it only after confirming, on this deployment's own traffic,
+# that its genuinely-unrelated questions score low with low variance and
+# never overlap a real corpus topic's own range.
 # ---------------------------------------------------------------------------
 
 scope:
 
   threshold: 0.40
 
+  hard_block_threshold: 0.0
+
   action: block             # block | flag | pass
 
-  domain_terms:
-
-    - licence
-
-    - license
-
-    - permit
-
-    - renew
-
-    - registration
-
-    - certificate
-
-    - birth
-
-    - death
-
-    - marriage
-
-    - grant
-
-    - benefit
-
-    - subsidy
-
-    - housing
-
-    - tenancy
-
-    - eviction
-
-    - property
-
-    - tax
-
-    - assessment
-
-    - levy
-
-    - fee
-
-    - payment
-
-    - refund
-
-    - claim
-
-    - application
-
-    - form
-
-    - document
-
-    - grievance
-
-    - complaint
-
-    - appeal
-
-    - council
-
-    - municipal
-
-    - corporation
-
-    - ward
-
-    - zone
-
-    - office
-
-    - registrar
-
-    - officer
-
-    - deadline
-
-    - eligibility
-
-    - income
+  domain_terms: []
 
 
 
@@ -638,6 +578,17 @@ policy:
     - '\bBEGIN (?:RSA |OPENSSH |EC )?PRIVATE KEY\b => block'
 
     - '\bbearer\s+[A-Za-z0-9._-]{20,}\b => block'
+
+    # Capability escalation. A request that asks to change what the system is
+    # permitted to do, rather than what it should answer — RBAC, guardrails,
+    # the vault, or the approval gate itself. These are hard-block cases for
+    # the guardrail_supervisor's deterministic pre-check (§13): obviously
+    # dangerous, and answered without ever calling a judge.
+    - '\bmodify\s+(?:the\s+)?rbac\b => block'
+    - '\b(?:grant|give)\s+(?:me\s+)?(?:admin|administrator)(?:\s+access)?\b => block'
+    - '\bdisable\s+(?:the\s+)?guardrails?\b => block'
+    - '\breveal\s+(?:the\s+)?(?:secret|vault)\b => block'
+    - '\bbypass\s+(?:the\s+)?approval\b => block'
 
 
 

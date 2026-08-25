@@ -22,9 +22,9 @@ cryptography>=43.0.0
 presidio-analyzer>=2.2.0
 spacy>=3.7.0
 
-# ingestion: spreadsheets, PDF text layers, and rasterising scans for transcription
+# ingestion: spreadsheets, and PDFs — text layers (tables included, via table
+# detection) and rasterising scans for transcription, both through the one library
 openpyxl>=3.1.0
-pypdf>=5.0.0
 pymupdf>=1.24.0
 
 # dev

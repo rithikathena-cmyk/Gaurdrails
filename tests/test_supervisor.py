@@ -590,6 +590,38 @@ def test_disagreeing_agents_are_reconciled_by_the_supervisors_own_decide(engine)
     assert "supervisor_decide" in llm.calls
 
 
+def test_unresolvable_disagreement_escalates_rather_than_defaulting_to_allow(engine):
+    """Both agents individually found nothing concrete (empty findings, so
+    each agent's own deterministic floor is ALLOW) — but the reconciliation
+    DECIDE call itself is scripted to distrust their contradicting rationale
+    and return ESCALATE, per DECIDE_SYSTEM's own instruction ('the agents
+    disagree in a way you cannot resolve ... choose ESCALATE').
+
+    This is the one case an all-ALLOW floor does *not* override: an
+    ESCALATE recommendation stands exactly when nothing concrete was found
+    to ground a stricter floor in (`floor_from_agent_results` == "ALLOW"),
+    proving an unresolved call surfaces as ESCALATE rather than being
+    silently defaulted to ALLOW because the model itself was uncertain.
+    """
+    llm = SupervisorLLM(
+        sup_plans=[sup_plan(["content", "scope"])],
+        sup_decisions=[sup_decision("ESCALATE", confidence=0.3, reasoning_summary=
+                                    "both agents returned ALLOW but their own rationale "
+                                    "contradicts the request — not confident enough to "
+                                    "allow automatically")],
+        content_plans=[content_plan_all()],
+        content_decisions=[content_decision("ALLOW", confidence=0.5, findings=[])],
+        scope_plans=[scope_plan_all()],
+        scope_decisions=[scope_decision("ALLOW", confidence=0.4, findings=[])])
+    result = Supervisor(llm, engine).run("an ambiguous request", owner="citizen")
+    assert result.agent_results["content"].outcome.action == "ALLOW"
+    assert result.agent_results["scope"].outcome.action == "ALLOW"
+    assert result.final_action == "ESCALATE"
+    assert result.final_action != "ALLOW"
+    assert result.policy_decision is not None
+    assert result.policy_decision.recommended_action == "ESCALATE"
+
+
 def test_all_registered_agents_can_run_together(engine, monkeypatch):
     """pii, injection, content, and scope together — authorization and
     grounding are registered but need extra context (`ctx`, `chunks`) their

@@ -127,6 +127,52 @@ function row(u, models) {
   </tr>`;
 }
 
+/* Every permission the app defines, crossed against every actual person —
+   this is the one place "what can Meera actually do" is answerable by
+   looking and *changing* rather than reading auth.py and editing a role
+   table. Built from snapshot.permissions (the catalogue) and each user's own
+   permissions/extra_permissions/denied_permissions, not hand-listed here, so
+   a new permission or a new person shows up without a frontend change.
+
+   A cell shows the *effective* state (role default, folded together with
+   this person's own override) and, only when an override exists, a small
+   label naming which kind — the same "show the exception, not the whole
+   state" restraint config/overrides.yaml already uses. Click toggles it. */
+function permCell(user, p) {
+  const held = user.permissions.includes(p.key);
+  const state = user.extra_permissions.includes(p.key) ? "granted"
+              : user.denied_permissions.includes(p.key) ? "revoked" : "";
+  const who = esc(user.display || user.name);
+  return `
+    <button type="button" class="u-perm-btn ${state}" data-user="${esc(user.name)}"
+            data-perm="${esc(p.key)}" data-held="${held ? "1" : "0"}"
+            aria-label="${esc(p.key)} for ${who}: ${held ? "held" : "not held"} — click to ${held ? "revoke" : "grant"}">
+      <span class="u-perm-mark" data-held="${held ? "1" : "0"}">${held ? "✓" : "—"}</span>
+      ${state ? `<span class="u-perm-note">${state}</span>` : ""}
+    </button>`;
+}
+
+function permTable() {
+  const { users, permissions } = snapshot;
+  if (!users || !permissions) return;
+
+  const head = $("#u-perm-head");
+  if (head) {
+    head.innerHTML = `<tr><th>Permission</th>${
+      users.map((u) => `<th class="u-perm-role">${esc(u.display || u.name)}<span class="u-sub">${esc(u.role_label)}</span></th>`).join("")
+    }</tr>`;
+  }
+
+  const rows = $("#u-perm-rows");
+  if (rows) {
+    rows.innerHTML = permissions.map((p) => `
+      <tr>
+        <td><b>${esc(p.key)}</b><span class="u-sub">${esc(p.desc)}</span></td>
+        ${users.map((u) => `<td class="u-perm-cell">${permCell(u, p)}</td>`).join("")}
+      </tr>`).join("");
+  }
+}
+
 function render() {
   if (!snapshot) return;
   const { users, models } = snapshot;
@@ -150,6 +196,7 @@ function render() {
   over.textContent = `${snapshot.over_budget} over budget`;
 
   $("#u-rows").innerHTML = users.map((u) => row(u, models)).join("");
+  permTable();
 
   const sel = $("#nu-role");
   if (sel && !sel.dataset.filled) {
@@ -256,6 +303,15 @@ export function initPeople() {
     const label = sel.options[sel.selectedIndex].textContent;
     apply(() => api.setUser(sel.dataset.name, { model: sel.value }),
           `${sel.dataset.name} now uses ${label}.`);
+  });
+
+  $("#u-perm-rows").addEventListener("click", (e) => {
+    const btn = e.target.closest("button.u-perm-btn");
+    if (!btn) return;
+    const { user: name, perm, held } = btn.dataset;
+    const nextHeld = held !== "1";
+    apply(() => api.setPermission(name, perm, nextHeld),
+          `${name}: ${perm} ${nextHeld ? "granted" : "revoked"}.`);
   });
 
   $("#new-user").addEventListener("submit", async (e) => {

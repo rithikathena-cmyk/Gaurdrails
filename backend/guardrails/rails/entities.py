@@ -24,6 +24,7 @@ that does not exist would corrupt the very text it is meant to protect.
 
 from __future__ import annotations
 
+import concurrent.futures as futures
 import re
 
 from ..prompts import judge_prompt
@@ -72,6 +73,11 @@ together with a house number
 
 Do not return:
 - names of public offices, departments, ministries, courts, or municipal bodies
+- a cooperative society, union, federation, institute, academy, board, or corporation \
+operating under a Registrar of Cooperative Societies, a government department, or \
+similar statutory oversight — these are public-sector bodies, not private employers, \
+whatever legal form their name takes ("... Union", "... Federation", "Institute of \
+...", "... Cooperative Management", and so on)
 - job titles with no name attached
 - cities, districts, or states on their own
 - scheme, form, statute, or programme names
@@ -89,6 +95,50 @@ _CANDIDATE = re.compile(r"(?<![.!?]\s)(?<!^)\b[A-Z][a-z]{2,}\b", re.M)
 _ALREADY_MASKED = re.compile(r"<[A-Z_0-9]+:[0-9a-f]{12}(?:\s…[^>]*)?>")
 
 KINDS = {"PERSON", "ADDRESS", "ORGANISATION", "LOCATION"}
+
+#: (trailing, leading) characters safe to reveal under partial masking, per
+#: kind — the same ceiling concept as `Recognizer.reveal`/`reveal_prefix` in
+#: `pii.py`. Zero for every kind today: unlike a phone number's last four
+#: digits, no prefix or suffix of a name, address, or organisation is
+#: established here as safe to leave visible.
+_REVEAL_CAP: dict[str, tuple[int, int]] = {}
+
+# A prompt or a reply is a few hundred characters; an ingested document can be
+# up to `ingest.max_document_chars` (200,000 by default) — and this rail runs
+# on the *whole* document, before it is ever chunked for the index. Sending
+# that whole in one judge call was two failures waiting to happen at once: the
+# call routinely blew `ingest.latency_budget_ms` by itself, and a document
+# with genuinely many named entities returns a JSON array long enough to
+# exceed `max_tokens` and come back truncated — an `LLMError` on a document
+# that had done nothing wrong except be long. Below this size nothing changes
+# — one window is the whole text, exactly as before.
+_JUDGE_WINDOW_CHARS = 6000
+#: So an entity sitting across a window boundary still appears whole in at
+#: least one window rather than being split in both and found in neither.
+_JUDGE_WINDOW_OVERLAP = 200
+#: Generous for one window's worth of entities without paying for a reply
+#: sized to a whole 200,000-character document that mostly is not this rail's.
+_JUDGE_MAX_TOKENS = 4096
+_JUDGE_MAX_WORKERS = 8
+
+
+def _windows(text: str, size: int, overlap: int) -> list[str]:
+    """`text`, split into overlapping slices small enough to judge reliably.
+
+    A single slice — the common case, every prompt and reply — is returned
+    as one window, byte-identical to the whole text.
+    """
+    if len(text) <= size:
+        return [text]
+    out: list[str] = []
+    start = 0
+    step = max(1, size - overlap)
+    while start < len(text):
+        out.append(text[start:start + size])
+        if start + size >= len(text):
+            break
+        start += step
+    return out
 
 
 def _spans_of(items: list[dict], text: str) -> list[tuple[int, int]]:
@@ -117,12 +167,19 @@ class EntityRail:
 
     def __init__(self, llm, vault, confidence_threshold: float, mask_strategy: str,
                  kinds: list[str] | None = None, engine_mode: str = "presidio+judge",
-                 allowlist: list[str] | None = None) -> None:
+                 allowlist: list[str] | None = None,
+                 partial_reveal: int = 0, partial_reveal_prefix: int = 0) -> None:
         self.llm = llm
         self.vault = vault
         self.min_conf = confidence_threshold
         self.strategy = mask_strategy
         self.kinds = {k.upper() for k in (kinds or KINDS)} & KINDS
+        # Same knobs `pii.py` reads, same reason: a caller may configure a
+        # generous reveal count meant for a phone number's last four digits,
+        # but a name or an address has no per-kind ceiling raising it above
+        # zero here yet — see `_REVEAL_CAP`.
+        self.partial_reveal = partial_reveal
+        self.partial_reveal_prefix = partial_reveal_prefix
         #: presidio | judge | presidio+judge. Local NER is a second the request
         #: does not spend on an API call, so it goes first where it is enabled.
         self.engine_mode = engine_mode
@@ -150,6 +207,39 @@ class EntityRail:
             spans.extend((m.start(), m.end()) for m in a.finditer(text))
         return spans
 
+    def _judge_entities(self, text: str) -> list[dict]:
+        """Every window's own findings, run concurrently — a stage costs as
+        much as its slowest window, not the sum, the same rule the engine
+        already applies across rails.
+
+        Each entity's `text` is still verbatim from the window, which is
+        verbatim from the original — the existing span resolution below
+        already re-locates a finding in the *whole* text regardless of which
+        window it came from, so nothing downstream needs to know windowing
+        happened at all.
+
+        A window's own failure is not swallowed: `.result()` re-raises it,
+        which fails this call the same way a single oversized call always
+        did — a document partly checked is not a document checked, and the
+        engine's own fail-closed handling is what should decide what happens
+        next, not a silent partial scan.
+        """
+        windows = _windows(text, _JUDGE_WINDOW_CHARS, _JUDGE_WINDOW_OVERLAP)
+        if len(windows) == 1:
+            found = self.llm.judge(ENTITY_SYSTEM, windows[0], ENTITY_SCHEMA,
+                                   max_tokens=_JUDGE_MAX_TOKENS)
+            return list((found.get("entities") or [])[:80])
+
+        entities: list[dict] = []
+        with futures.ThreadPoolExecutor(max_workers=min(_JUDGE_MAX_WORKERS, len(windows))) as pool:
+            jobs = [pool.submit(self.llm.judge, ENTITY_SYSTEM, w, ENTITY_SCHEMA,
+                                max_tokens=_JUDGE_MAX_TOKENS)
+                   for w in windows]
+            for job in jobs:
+                found = job.result()
+                entities.extend((found.get("entities") or [])[:80])
+        return entities
+
     def _replacement(self, kind: str, raw: str, owner: str) -> str:
         if self.strategy == "redact":
             return "[REDACTED]"
@@ -160,7 +250,20 @@ class EntityRail:
 
             return f"<{kind}:{hashlib.sha256(raw.encode()).hexdigest()[:8]}>"
         if self.strategy == "partial":
-            return raw[0] + "*" * max(0, len(raw) - 1)
+            # No kind here has a non-zero ceiling today (`_REVEAL_CAP`), so this
+            # currently always fully masks — same "other entity kinds ignore
+            # it" rule `pii.partial_reveal_prefix` documents for pii.py's own
+            # non-email/phone recognizers. Driven by config rather than a
+            # hardcoded single leading character, so a caller cannot get a
+            # name or an organisation partly revealed just by dialing
+            # `pii.partial_reveal`/`pii.partial_reveal_prefix` up for contacts.
+            tail_cap, head_cap = _REVEAL_CAP.get(kind, (0, 0))
+            tail_n = min(self.partial_reveal, tail_cap, len(raw))
+            head_n = min(self.partial_reveal_prefix, head_cap, len(raw) - tail_n)
+            head = raw[:head_n]
+            tail = raw[-tail_n:] if tail_n else ""
+            middle = max(0, len(raw) - head_n - tail_n)
+            return head + "*" * middle + tail
         return f"<{kind}:{self.vault.store(kind, raw, owner)}>"
 
     def evaluate(self, text: str, action: str, result: RailResult,
@@ -213,8 +316,7 @@ class EntityRail:
             # `ENTITY_SYSTEM` already tells the judge not to return scheme, form
             # or programme names, or public offices — exactly the class Presidio
             # gets wrong — so it is the right arbiter for this.
-            judged = list((self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
-                           .get("entities") or [])[:40])
+            judged = self._judge_entities(text)
             judged_spans = _spans_of(judged, text)
             for item in proposed:
                 start, end = int(item.get("start", -1)), int(item.get("end", -1))
