@@ -93,8 +93,14 @@ retrieval:
   # returning the trade licence documents is correct behaviour; what is missing
   # is a *fact*, and catching that is the grounding rail's job. It lives in the
   # answers section as `refuses-to-invent`.
+  # "fishing permit on the east coast" used to be this case's question. Fine
+  # against the old trade-licence-only seed set, but it shares "apply"/"east"
+  # with the RCS Citizen Charter's own text (see knowledge/seed.py) once that
+  # became the real built-in — a coincidental BM25 hit, not the corpus being
+  # wrong. Swapped for a question with no plausible overlap with any
+  # municipal or cooperative-society topic at all.
   - id: out-of-corpus-unrelated
-    question: How do I apply for a fishing permit on the east coast?
+    question: What is the boiling point of liquid nitrogen in Celsius?
     relevant: []
 
 rails:

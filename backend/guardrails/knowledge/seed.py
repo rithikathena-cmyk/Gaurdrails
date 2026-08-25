@@ -1,14 +1,17 @@
 """The knowledge base.
 
-`CORPUS` below is the built-in seed. It is empty — the seeded demo
-documents have been removed — so a fresh `Corpus(seed=True)` starts with
-nothing, and `retrieve()`'s own fallback (used only when no `Corpus` is
-bound at all) has nothing to search either. The grounding rail only means
-something if the model can plausibly reach past what it was given — a
-knowledge base that covers everything never produces an ungrounded answer,
-so it never exercises the rail you built. An empty one is the far end of
-that same idea: every factual question is now ungrounded until something
-real is ingested.
+`CORPUS` below is the built-in seed — one real document, the RCS Citizen
+Charter, read from `seed_documents/` at import time rather than a synthetic
+demo set. It exists so a deployment with no persistent disk (this app's
+Render free-tier config, notably: `data/corpus.json` resets on every deploy)
+still has something real and grounded to answer from the moment it boots —
+`Engine.reseed_builtin_rails()` runs it through the same ingest rails a real
+upload takes, every startup, so nobody has to re-upload it after a redeploy
+just to ask the assistant a question. An empty `CORPUS` (the prior state of
+this file) is still the right choice for exercising the grounding rail on
+purpose — a knowledge base that covers everything never produces an
+ungrounded answer — so keep that in mind before adding a second document
+here rather than ingesting it as a real upload instead.
 
 Everything ingested afterwards lives in a `Corpus` (see `ingest.py`), which is
 bound here with `use()` at startup. `retrieve()` asks that store when one is
@@ -19,9 +22,23 @@ retrieval call, whether or not anything has been uploaded.
 from __future__ import annotations
 
 import re
+from pathlib import Path
 from typing import Any
 
-CORPUS: list[dict[str, str]] = []
+_SEED_DIR = Path(__file__).resolve().parent / "seed_documents"
+
+
+def _read(name: str) -> str:
+    return (_SEED_DIR / name).read_text(encoding="utf-8")
+
+
+CORPUS: list[dict[str, str]] = [
+    {
+        "id": "rcs-citizen-charter-2024-2025",
+        "title": "RCS – Citizen Charter 2024-2025 (English Version)",
+        "text": _read("rcs-citizen-charter-2024-2025.txt"),
+    },
+]
 
 _STOP = {
     "the", "a", "an", "is", "are", "was", "were", "to", "of", "and", "or", "in",

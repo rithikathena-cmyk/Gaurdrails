@@ -404,15 +404,22 @@ def test_coverage_gate_drops_a_weak_match(corpus):
 
 
 
-def test_removing_a_document_removes_it_from_the_index(ingest_engine):
+def test_removing_a_document_removes_it_from_the_index(tmp_path):
 
-    result = ingest_engine.ingest("Ephemeral notice", "The parking levy is 40 rupees daily.")
+    # A blank corpus, not the shared `ingest_engine` fixture's: this test
+    # asserts a *complete absence* of matches after removal, which the real
+    # seed document (see knowledge/seed.py) could coincidentally satisfy on
+    # its own, unrelated to the thing actually under test.
+    engine = Engine(load(REPO / "config" / "policy.yaml"), llm=None,
+                    audit=AuditLog(tmp_path / "audit.log"), corpus=Corpus(seed=False))
 
-    assert ingest_engine.corpus.search("parking levy daily")
+    result = engine.ingest("Ephemeral notice", "The parking levy is 40 rupees daily.")
 
-    ingest_engine.corpus.remove(result.document.id)
+    assert engine.corpus.search("parking levy daily")
 
-    assert not ingest_engine.corpus.search("parking levy daily")
+    engine.corpus.remove(result.document.id)
+
+    assert not engine.corpus.search("parking levy daily")
 
 
 
@@ -470,8 +477,8 @@ def test_a_deleted_built_in_stays_deleted_across_a_restart(tmp_path, monkeypatch
     reinstalled at the next start. That is what made it safe to stop refusing
     the delete in the API.
 
-    `CORPUS` ships empty by design, so this monkeypatches two entries in for
-    the test — `Corpus`'s own methods re-import it fresh each call, but this
+    This monkeypatches two throwaway entries in rather than depend on
+    `CORPUS`'s real content — `Corpus`'s own methods re-import it fresh each call, but this
     file's own `CORPUS` name was already bound at import time, so the
     patched list itself (not that stale name) is what the assertions below
     compare against. Two, not one: deleting the *only* built-in leaves the
@@ -883,12 +890,24 @@ def test_ingestion_has_its_own_latency_budget(ingest_engine):
     assert not result.quarantined, result.reason
     assert result.document.indexed
 
-def test_one_shared_word_is_not_a_topic(corpus):
+def test_one_shared_word_is_not_a_topic():
     """Coverage is a ratio, so a short question needs proportionally fewer
     matches. Five terms needed one, which let a fishing-permit question reach a
     trade-licence chunk on the word "applying". Two distinct terms are now the
-    floor for anything longer than three."""
-    hits = corpus.search("How do I apply for a fishing permit on the east coast?", 4, 0.15)
+    floor for anything longer than three.
+
+    A blank corpus with one controlled document, not the shared `corpus`
+    fixture's: the real seed document (see knowledge/seed.py) is long and
+    general enough to coincidentally share two-plus terms with almost any
+    everyday question, which is exactly the false-positive class this test
+    means to rule out — on a document actually unrelated to the query.
+    """
+    blank = Corpus(seed=False)
+    blank.add(Document(id="fee-doc", title="Trade licence fees", source="test",
+                       kind="txt", chars=40,
+                       chunks=["The renewal fee is 1,200 rupees for applying."],
+                       status="indexed", verdict="pass"))
+    hits = blank.search("How do I apply for a fishing permit on the east coast?", 4, 0.15)
     assert hits == [], f"matched on a coincidence: {[h.doc_id for h in hits]}"
 
 

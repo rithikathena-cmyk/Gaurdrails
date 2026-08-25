@@ -399,8 +399,9 @@ didn't finish checking" is not the same as "the check errored".
 │   │   │                                per-specialist tool declarations and shared types
 │   │   │
 │   │   ├── knowledge/           what the answers are grounded in
-│   │   │   ├── seed.py          empty by design — nothing is grounded until
-│   │   │   │                    something real is ingested (see below)
+│   │   │   ├── seed.py          the built-in corpus — one real document, so it
+│   │   │   │                    ships with the code, not the ephemeral disk
+│   │   │   ├── seed_documents/  the extracted text seed.py reads at import time
 │   │   │   └── ingest.py        extract → chunk → mask → BM25 index
 │   │   │
 │   │   └── evaluation/          does it still work, and how well
@@ -598,6 +599,53 @@ The order is the contract:
 Retrieval is BM25 over chunks, gated by term coverage. The two answer different questions:
 BM25 ranks, coverage decides whether any of it is about the query at all.
 
+### The built-in seed corpus
+
+Documents uploaded through the console live in `data/corpus.json`, which is gitignored
+and, on Render's free plan, wiped on every deploy — no persistent disk (see
+[Render](DEPLOY.md#render)). Uploading real content there means a redeploy erases it,
+and whoever opens the app next has to re-upload before they can ask it anything.
+
+`knowledge/seed.py`'s `CORPUS` list is the other path: it ships with the *code*, not the
+ephemeral disk, and `Engine.reseed_builtin_rails()` runs every entry through the real
+ingest pipeline — the same rails, masking, and chunking a real upload gets — once at
+every startup. A document added here survives every redeploy with zero persistent disk,
+already indexed before the first request arrives.
+
+```python
+# knowledge/seed.py
+CORPUS: list[dict[str, str]] = [
+    {"id": "rcs-citizen-charter-2024-2025",
+     "title": "RCS – Citizen Charter 2024-2025 (English Version)",
+     "text": _read("rcs-citizen-charter-2024-2025.txt")},   # knowledge/seed_documents/
+]
+```
+
+To add or replace one: drop the extracted text in `knowledge/seed_documents/`, add (or
+edit) its entry in `CORPUS`. Text only, not the original PDF/DOCX — the same extraction
+a real upload runs (`knowledge/extract()`) is how to produce it, so what ships matches
+what an upload would have indexed.
+
+**The tradeoff this makes: startup itself now costs whatever ingesting that document
+costs.** `reseed_builtin_rails()` runs synchronously before the app starts serving
+anything, so a real, PDF-sized document adds real time to every boot — measured at
+around 100 seconds for the RCS Charter specifically, the same ~28-window entity-judge
+pass a real upload of it pays (see [The supervisor pipeline](#the-supervisor-pipeline)
+for why a large document costs several judge calls, not one). On Render's free plan,
+that lands on top of the 15-minute spin-down: the first request after idle now waits
+for a full re-ingest, not just a cold process start.
+
+Verified this is *safe*, not just slow: during that whole boot window the port simply
+isn't listening yet — `/api/health` gets connection-refused, then answers instantly the
+moment startup finishes — rather than accepting a connection and hanging. That distinction
+matters because a real production bug looked almost identical: `POST
+/api/documents/upload` used to run `Engine.ingest()` directly inside an `async def`
+handler instead of the plain `def` every other engine-calling route uses, which ran a
+slow upload *on* the event loop instead of off it — freezing the whole already-running
+server, including `/api/health`, until Render's own health check timed out and killed
+the instance mid-upload. A slow boot merely delays the first response; it does not take
+an already-running instance down the way that bug did.
+
 ---
 
 ## The agent
@@ -748,24 +796,37 @@ Every one must pass. A block there is a person turned away.
 Current numbers, from `python run.py --eval` against this checkout:
 
 ```
-RETRIEVAL   recall@4 0.0 · precision@4 0.0 · MRR 0.0 · hit@1 0.0 · out-of-corpus silent 1/1
-RAILS       38 cases · false positives 0.0 · false negatives 0.056 · exact match 0.974
+RETRIEVAL   16 questions · 15 in corpus · recall@4 0.0 · precision@4 0.0 · MRR 0.0
+            out-of-corpus silent 1/1 · 15 failing
+RAILS       38 cases · false positives 0.0 · false negatives 0.0 · exact match 1.0
 ANSWERS     skipped — not requested — pass --answers
 ```
 
-**RETRIEVAL reading 0.0 across the board is the suite going stale, not the index breaking.**
-`knowledge/seed.py`'s built-in corpus is now deliberately empty — nothing is grounded until
-something real is ingested (see [Layout](#layout)). `eval/suite.yaml`'s 15 retrieval cases
-still point at the old `seed:trade-licence-renewal`-style ids, none of which exist any more,
-so every one reports `missed ... got nothing`. That is expected, not a regression to chase —
-until the suite is repointed at a real ingested document, RETRIEVAL is not measuring anything
-and should not be read as evidence either way. RAILS does not depend on the corpus and is a
-live number: 38 cases, one borderline miss (`content-violence` — a plain insult scored just
-under the local short-circuit bar, so it fell through to a judge call that passed it).
+**RETRIEVAL still fails 15/15 in-corpus cases, but not the way it looks.** The built-in
+corpus is no longer empty — `knowledge/seed.py` now ships one real document, the RCS
+Citizen Charter (see [Layout](#layout) and [How to push with the corpus
+included](#the-built-in-seed-corpus)) — so every query returns *something* now, not
+`missed ... got nothing`. It's the *wrong* something: `eval/suite.yaml`'s 15 in-corpus
+cases still expect the old `seed:trade-licence-renewal`-style documents, which don't
+exist any more, so each one reports e.g. `expected seed:trade-licence-fees · got
+seed:rcs-citizen-charter-2024-2025` — a real, working retrieval, evaluated against
+labels for a corpus that isn't there. Repointing those 15 cases at the RCS Charter's
+actual content (or ingesting a second document and relabelling) is still open work.
+The one out-of-corpus case (`out-of-corpus-unrelated`) was itself a casualty of this —
+its old "fishing permit on the east coast" question coincidentally shared words with the
+new real document, so it's been reworded to something with no plausible domain overlap.
 
-The two paragraphs below describe the *old* built-in-corpus baseline (recall@4 1.0,
-precision@4 0.456), kept for the story of how that number was earned. They no longer match
-what `--eval` reports today, only how the suite's shape came to be.
+RAILS does not depend on the corpus and is a live number, but *is* a live-model number:
+this run scored a clean 1.0 exact match / 0 false positives / 0 false negatives; an
+earlier run the same session scored 0.974/0.0/0.056 with one borderline miss
+(`content-violence`, a plain insult that fell through the local short-circuit and a
+judge call passed it) — normal judge-to-judge variance, not a regression either way.
+
+The two paragraphs below describe the *original* built-in-corpus baseline (recall@4 1.0,
+precision@4 0.456, on the old 36-document seed set), kept for the story of how that
+number was earned. Neither that baseline nor the "everything's 0.0" state right above it
+match what `--eval` will report once the suite is repointed at the RCS Charter — both are
+snapshots of a suite mid-transition, not a target to reproduce.
 
 Two of those old numbers were earned rather than observed. The first run scored **0.933 recall**
 and failed `grievance-response`: "where do I file a grievance" returned nothing, because the
@@ -843,9 +904,13 @@ so rather than showing green.
   faces anything but localhost.
 - The evaluation suite is 54 cases (16 retrieval, 38 rails). It is a regression gate, not a
   benchmark: the numbers say the stack still behaves as labelled, not that it would hold up
-  on someone else's corpus — and right now the retrieval half doesn't even say that, since
-  its cases target the built-in corpus this session emptied out (see
-  [Measuring it](#measuring-it)). Repointing it at real ingested content is open work.
-- The built-in seed corpus is empty by design (`backend/guardrails/knowledge/seed.py`).
-  Nothing is grounded until a document is actually ingested — the console starts with a
-  genuinely empty knowledge base, not a demo one.
+  on someone else's corpus — and right now 15 of the 16 retrieval cases don't even say that,
+  since they still target the old 36-document seed set, not the one real document the
+  built-in corpus ships today (see [Measuring it](#measuring-it) and
+  [The built-in seed corpus](#the-built-in-seed-corpus)). Repointing them at the RCS
+  Charter's actual content is open work.
+- The built-in seed corpus is one real document (`backend/guardrails/knowledge/seed.py`),
+  not a synthetic demo set — chosen so a deployment with no persistent disk still has
+  something real to answer from after every redeploy. A second document added there costs
+  real startup time (see [The built-in seed corpus](#the-built-in-seed-corpus)); consider
+  a real upload instead unless it specifically needs to survive a disk wipe.

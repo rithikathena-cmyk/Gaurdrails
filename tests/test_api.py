@@ -264,11 +264,10 @@ def test_the_caseload_sample_ingests_the_way_its_blurb_claims(client):
         assert published in indexed, f"{published} was masked — the desk cannot give it out"
 
 
-#: `CORPUS` ships empty by design — no deployment's documents are hardcoded
-#: here — so these two tests, which are specifically about deleting *and
-#: restoring a built-in*, need at least one to exist. A monkeypatched entry
-#: exercises the real mechanism generically, for any built-in, without
-#: reintroducing seeded content.
+#: `CORPUS` ships with one real document today, but these two tests are
+#: about the *mechanism* — deleting and restoring a built-in, generically —
+#: not about that specific document, so they monkeypatch their own
+#: throwaway entry rather than depend on what `CORPUS` currently holds.
 _ONE_BUILTIN = [{"id": "test-only", "title": "Test-only built-in",
                  "text": "Exists only to prove a built-in can be deleted and restored."}]
 

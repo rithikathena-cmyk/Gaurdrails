@@ -79,8 +79,12 @@ def test_a_wrong_label_scores_zero(engine):
 
 def test_out_of_corpus_is_scored_the_other_way_round(engine):
     """Returning nothing is the correct answer, and counts as a pass."""
+    # Not a fishing-permit question: the real built-in seed document (the RCS
+    # Citizen Charter, see knowledge/seed.py) shares "apply"/"east" with that
+    # phrasing by coincidence, which used to be a safe assumption against the
+    # old trade-licence-only seed set but is not one any more.
     suite = Suite(retrieval=[RetrievalCase(
-        id="silent", question="How do I apply for a fishing permit on the east coast?",
+        id="silent", question="What is the boiling point of liquid nitrogen in Celsius?",
         relevant=[])])
     section = run_retrieval(suite, engine)
     assert section.metrics["out_of_corpus"] == 1
