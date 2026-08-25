@@ -290,7 +290,11 @@ pii:
     # leading 0 to anchor it. Immediate whitespace only between the
     # separator and the digits, so it cannot reach across intervening words
     # to an unrelated number two sentences later.
-    - '(?<![\d+])(?:\+91[\s-]?(?:\d[\s-]?){9}\d|0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}(?:\s*[,/]\s*\d{4,8})*|[6-9]\d{4}[\s-]?\d{5})(?!\d)'
+    # `[\s-]*`, not `[\s-]?`, between number groups everywhere below: a real
+    # STD code is sometimes typeset with more than one separator character —
+    # "044 -2534 0508" is a space *and* a dash — and `?` only ever allows one,
+    # so that whole number matched nothing at all.
+    - '(?<![\d+])(?:\+91[\s-]*(?:\d[\s-]*){9}\d|0\d{2,4}[\s-]*\d{3,4}[\s-]*\d{4}(?:\s*[,/]\s*\d{4,8})*|[6-9]\d{4}[\s-]*\d{5})(?!\d)'
 
 
 
