@@ -284,7 +284,13 @@ pii:
     # Indian mobile and landline. Numbers here have no checksum, so the
     # lookbehind and lookahead do the work a checksum would: they stop a
     # longer digit run being sliced into something that looks like a phone.
-    - '(?<![\d+])(?:\+91[\s-]?(?:\d[\s-]?){9}\d|0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}|[6-9]\d{4}[\s-]?\d{5})(?!\d)'
+    # The landline alternative's trailing `(?:\s*[,/]\s*\d{4,8})*` catches a
+    # second extension sharing the first number's STD code — "0452-2690055,
+    # 2690056" — which a bare 7-digit "2690056" cannot match on its own, no
+    # leading 0 to anchor it. Immediate whitespace only between the
+    # separator and the digits, so it cannot reach across intervening words
+    # to an unrelated number two sentences later.
+    - '(?<![\d+])(?:\+91[\s-]?(?:\d[\s-]?){9}\d|0\d{2,4}[\s-]?\d{3,4}[\s-]?\d{4}(?:\s*[,/]\s*\d{4,8})*|[6-9]\d{4}[\s-]?\d{5})(?!\d)'
 
 
 
