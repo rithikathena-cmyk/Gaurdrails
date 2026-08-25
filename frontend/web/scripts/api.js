@@ -109,9 +109,17 @@ export const api = {
     if (title) form.append("title", title);
     return fetch("/api/documents/upload", { method: "POST", body: form })
       .then(async (res) => {
-        const data = await res.json();
-        if (!res.ok) {
-          const err = new Error(data?.error?.message || res.statusText);
+        // A slow ingest can have its connection cut by a platform proxy
+        // before the server finishes — same empty-body case `request()`
+        // already guards against, just via a raw fetch here because this
+        // call needs multipart, not JSON, in the request body.
+        const text = await res.text();
+        const data = text ? JSON.parse(text) : null;
+        if (!res.ok || !data) {
+          const message = data?.error?.message
+            || (res.ok ? "The server closed the connection before responding — "
+                         + "the upload may have timed out." : res.statusText);
+          const err = new Error(message);
           err.kind = data?.error?.kind;
           throw err;
         }
