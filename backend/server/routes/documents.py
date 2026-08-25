@@ -163,11 +163,25 @@ def _transcriber(engine: Engine):
 
 
 @router.post("/documents/upload")
-async def ingest_file(file: UploadFile = File(...),
-                      title: str = Form(default="")) -> dict[str, Any]:
+def ingest_file(file: UploadFile = File(...),
+                title: str = Form(default="")) -> dict[str, Any]:
+    """Deliberately a plain `def`, not `async def`.
+
+    Every other route that calls into the engine (`chat`, `agent_chat`,
+    `run_pipeline`, ...) is a plain `def` too, so FastAPI runs it in
+    Starlette's threadpool automatically — the request never touches the
+    asyncio event loop. This one used to be `async def` for `await
+    file.read()`, but `extract()` and `engine.ingest()` below are the same
+    blocking, long-running calls (rails, judge calls, chunking) every other
+    route already keeps off the event loop, and calling them directly inside
+    `async def` runs them ON it instead — freezing every other request,
+    including Render's own health check, for the whole ingest. `file.file`
+    is the underlying `SpooledTemporaryFile`; reading it synchronously here
+    costs nothing `await file.read()` didn't already do under the hood.
+    """
     engine = _engine()
     allowed = [str(t) for t in (engine.policy.get("ingest.allowed_types") or [])]
-    raw = await file.read()
+    raw = file.file.read()
     name = file.filename or "upload.txt"
     try:
         result = extract(
