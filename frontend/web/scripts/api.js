@@ -1,5 +1,34 @@
 /** The only module that talks to the server. */
 
+// Every response this server ever sends is either empty or genuine JSON — an
+// HTML body (a platform gateway's own 502/504 page, never something this
+// FastAPI app produces) means something between the browser and the app
+// failed, not that the app answered badly. Parsed once, here, so `request()`
+// and `upload()` cannot drift out of sync on it the way they already have.
+async function parseBody(res) {
+  const text = await res.text();
+  if (!text) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;   // present but unparseable — distinct from "empty"
+  }
+}
+
+function bodyError(res, data) {
+  if (data === undefined) {
+    return new Error(
+      `The server sent back something that wasn't JSON (${res.status} ${res.statusText}) — `
+      + "likely a gateway timeout or an outage between you and the app, not this app's own error.");
+  }
+  const message = data?.error?.message
+    || (res.ok ? "The server sent an empty response." : `${res.status} ${res.statusText}`);
+  const err = new Error(message);
+  err.status = res.status;
+  err.kind = data?.error?.kind;
+  return err;
+}
+
 async function request(path, options = {}) {
   const res = await fetch(path, {
     headers: { "Content-Type": "application/json" },
@@ -11,15 +40,8 @@ async function request(path, options = {}) {
     location.href = `/?next=${encodeURIComponent(location.pathname)}`;
     return new Promise(() => {});
   }
-  const text = await res.text();
-  const data = text ? JSON.parse(text) : null;
-  if (!res.ok) {
-    const message = data?.error?.message || `${res.status} ${res.statusText}`;
-    const err = new Error(message);
-    err.status = res.status;
-    err.kind = data?.error?.kind;
-    throw err;
-  }
+  const data = await parseBody(res);
+  if (!res.ok || data === undefined) throw bodyError(res, data);
   return data;
 }
 
@@ -102,27 +124,17 @@ export const api = {
       body: JSON.stringify({ title, text }),
     }),
 
-  // Multipart: no Content-Type header, so the browser sets the boundary.
+  // Multipart: no Content-Type header, so the browser sets the boundary —
+  // the one call that cannot go through request() itself, but it still
+  // parses its response the same safe way, via the same shared helpers.
   upload: (file, title = "") => {
     const form = new FormData();
     form.append("file", file);
     if (title) form.append("title", title);
     return fetch("/api/documents/upload", { method: "POST", body: form })
       .then(async (res) => {
-        // A slow ingest can have its connection cut by a platform proxy
-        // before the server finishes — same empty-body case `request()`
-        // already guards against, just via a raw fetch here because this
-        // call needs multipart, not JSON, in the request body.
-        const text = await res.text();
-        const data = text ? JSON.parse(text) : null;
-        if (!res.ok || !data) {
-          const message = data?.error?.message
-            || (res.ok ? "The server closed the connection before responding — "
-                         + "the upload may have timed out." : res.statusText);
-          const err = new Error(message);
-          err.kind = data?.error?.kind;
-          throw err;
-        }
+        const data = await parseBody(res);
+        if (!res.ok || data === undefined) throw bodyError(res, data);
         return data;
       });
   },
