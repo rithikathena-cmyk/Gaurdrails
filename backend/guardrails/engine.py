@@ -776,7 +776,18 @@ class Engine:
         # whole reason for telling them at all.
         rag_results: list[RailResult] = []
         if chunks and p.enabled("pii", "retrieval"):
-            joined = "\n\n".join(chunks)
+            # A real chunk's own text already contains blank lines — a PDF
+            # table or a paragraph break — so "\n\n" cannot double as both the
+            # join separator and the split point back afterward without
+            # shattering every chunk that happens to contain one into several.
+            # \x1e (ASCII record separator) is not a character extraction, a
+            # rail, or a human ever produces, so joining and splitting on it
+            # round-trips exactly N chunks in, N chunks out — unlike "\n\n",
+            # which turned 6 retrieved chunks into 20-40+ fragments here,
+            # every one of them handed to the grounding judge as if it were
+            # its own chunk.
+            sep = "\x1e"
+            joined = sep.join(chunks)
             # `owner=CORPUS_OWNER`, not `principal`: a value found here was
             # quoted out of the corpus, not supplied by the caller asking the
             # question, so a token minted here must not unmask for them just
@@ -788,7 +799,7 @@ class Engine:
                 chunks = []
                 tracer.note("retrieved context blocked — proceeding without it")
             elif rag.text != joined:
-                chunks = rag.text.split("\n\n")
+                chunks = rag.text.split(sep)
             all_detections += [
                 {"stage": "retrieval", "rail": r.rail, **d.redacted()}
                 for r in rag.results for d in r.detections

@@ -130,11 +130,17 @@ def get_document(doc_id: str) -> dict[str, Any]:
     engine = state.engine
     chunks = body.get("chunks") or []
     if engine is not None and chunks and engine.policy.enabled("pii", Surface.RETRIEVAL.value):
-        joined = "\n\n".join(chunks)
+        # \x1e, not "\n\n": a chunk's own text already contains blank lines
+        # (a table, a paragraph break), so "\n\n" cannot double as both the
+        # join separator and the split point back without shattering every
+        # chunk that contains one — see the identical fix in engine.py's
+        # own retrieval-rails pass.
+        sep = "\x1e"
+        joined = sep.join(chunks)
         scan = engine.evaluate(joined, Surface.RETRIEVAL, Tracer(),
                                "Document view", "the same rail a retrieved chunk crosses",
                                owner=CORPUS_OWNER)
-        body["chunks"] = [] if scan.blocked else scan.text.split("\n\n")
+        body["chunks"] = [] if scan.blocked else scan.text.split(sep)
     return {"document": body}
 
 
