@@ -1161,7 +1161,17 @@ async function run() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ message: text, session_id: SESSION }),
     });
-    const body = await res.json();
+    // A platform gateway cutting off a slow request returns its own HTML
+    // error page, not JSON — res.json() would throw a raw parser error that
+    // reads like this page is broken rather than that the request timed out.
+    const raw = await res.text();
+    let body;
+    try {
+      body = raw ? JSON.parse(raw) : null;
+    } catch {
+      throw new Error(`The server didn't respond properly (${res.status} ${res.statusText}) — `
+        + "likely a gateway timeout, not a rail failure.");
+    }
     if (!res.ok) throw new Error(body?.error?.message || `${res.status} ${res.statusText}`);
     paint(body);
     note.textContent = `walked ${body.trace.stages.length} stages · ${body.trace.rails_evaluated} rails evaluated`;

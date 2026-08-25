@@ -384,7 +384,18 @@ async function signIn(username, password, card) {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ username, password }),
     });
-    const body = await res.json();
+    // A cold-started or overloaded deployment can have this request's
+    // connection cut by a platform gateway before the app ever answers —
+    // its own error page is HTML, not JSON, and res.json() would throw a
+    // raw parser error that means nothing to whoever is signing in.
+    const text = await res.text();
+    let body;
+    try {
+      body = text ? JSON.parse(text) : null;
+    } catch {
+      throw new Error(`The server didn't respond properly (${res.status} ${res.statusText}) — `
+        + "likely a slow start or an outage, not a wrong username or password. Try again in a moment.");
+    }
     if (!res.ok) throw new Error(body?.error?.message || "Sign-in failed.");
     // An explicit `next` wins — it is where they were actually going. Anything
     // they cannot open still redirects on arrival, so this only has to be
