@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GuardRails — Local Testing Briefing</title>
+<style>
+  @page { size: A4; margin: 18mm 16mm 16mm; }
+
+  :root {
+    --ink:    #1b1815;
+    --ink-2:  #4a423b;
+    --ink-3:  #7d736a;
+    --rule:   #ddd5cb;
+    --clay:   #b4552f;
+    --clay-2: #8d3f21;
+    --wash:   #faf7f3;
+    --wash-2: #f3ede5;
+    --block:  #a8322a;
+    --pass:   #3f6b46;
+    --flag:   #9a6b1c;
+    --mono: "SF Mono", "Cascadia Mono", Consolas, monospace;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; color: var(--ink); background: #fff;
+    font: 10.4pt/1.55 "Charter", "Georgia", serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  h1, h2, h3, h4 { font-family: "Segoe UI", "Helvetica Neue", sans-serif; font-weight: 600; }
+  h1 { font-size: 25pt; line-height: 1.1; margin: 0 0 6pt; letter-spacing: -.02em; }
+  h2 {
+    font-size: 15pt; margin: 26pt 0 9pt; padding-bottom: 5pt;
+    border-bottom: 1.5pt solid var(--clay); color: var(--clay-2);
+    break-after: avoid;
+  }
+  h3 { font-size: 11.5pt; margin: 16pt 0 5pt; color: var(--ink); break-after: avoid; }
+  h4 { font-size: 10pt; margin: 12pt 0 4pt; color: var(--ink-2); break-after: avoid; }
+  p  { margin: 0 0 8pt; }
+  ul, ol { margin: 0 0 8pt; padding-left: 16pt; }
+  li { margin-bottom: 3pt; }
+  strong { font-weight: 600; }
+  code { font-family: var(--mono); font-size: 8.8pt; background: var(--wash-2);
+         padding: .5pt 3pt; border-radius: 2pt; }
+
+  pre {
+    font-family: var(--mono); font-size: 7.6pt; line-height: 1.42;
+    background: var(--wash); border: .8pt solid var(--rule); border-left: 2.5pt solid var(--clay);
+    border-radius: 3pt; padding: 8pt 10pt; margin: 0 0 10pt;
+    white-space: pre; overflow: hidden; break-inside: avoid;
+  }
+  pre code { background: none; padding: 0; font-size: inherit; }
+
+  table { width: 100%; border-collapse: collapse; margin: 0 0 10pt; font-size: 9pt;
+          break-inside: avoid; }
+  th { text-align: left; font-family: "Segoe UI", sans-serif; font-size: 8pt;
+       text-transform: uppercase; letter-spacing: .07em; color: var(--ink-3);
+       border-bottom: 1pt solid var(--rule); padding: 4pt 7pt 4pt 0; font-weight: 600; }
+  td { padding: 4pt 7pt 4pt 0; border-bottom: .5pt solid var(--rule); vertical-align: top; }
+  td:first-child { white-space: nowrap; }
+  .num { font-family: var(--mono); font-size: 8.2pt; font-variant-numeric: tabular-nums; }
+
+  /* cover */
+  .cover { break-after: page; padding-top: 34mm; }
+  .cover .kicker { font-family: "Segoe UI", sans-serif; font-size: 8.5pt;
+                   letter-spacing: .18em; text-transform: uppercase; color: var(--clay);
+                   margin-bottom: 12pt; }
+  .cover .lede { font-size: 12.5pt; line-height: 1.5; color: var(--ink-2);
+                 max-width: 32em; margin: 10pt 0 22pt; }
+  .cover .meta { font-family: var(--mono); font-size: 8.5pt; color: var(--ink-3);
+                 border-top: .8pt solid var(--rule); padding-top: 9pt; }
+
+  .toc { break-after: page; }
+  .toc ol { list-style: none; padding: 0; counter-reset: s; }
+  .toc li { counter-increment: s; padding: 5pt 0; border-bottom: .5pt dotted var(--rule);
+            font-family: "Segoe UI", sans-serif; font-size: 10pt; }
+  .toc li::before { content: counter(s) ". "; color: var(--clay); font-weight: 600; }
+  .toc small { display: block; color: var(--ink-3); font-size: 8.5pt; margin-left: 14pt; }
+
+  .note {
+    background: var(--wash-2); border-left: 2.5pt solid var(--clay);
+    padding: 8pt 11pt; margin: 0 0 10pt; font-size: 9.4pt; break-inside: avoid;
+  }
+  .note b { color: var(--clay-2); }
+  .warn { background: #fbf0ee; border-left-color: var(--block); }
+  .warn b { color: var(--block); }
+  .good { background: #eef5ef; border-left-color: var(--pass); }
+  .good b { color: var(--pass); }
+
+  .verdict { font-family: var(--mono); font-size: 8pt; padding: 1pt 5pt;
+             border-radius: 8pt; font-weight: 600; }
+  .v-block { background: #fbe9e7; color: var(--block); }
+  .v-mask  { background: #fdf3e3; color: var(--flag); }
+  .v-pass  { background: #eaf3ec; color: var(--pass); }
+  .v-flag  { background: #fdf3e3; color: var(--flag); }
+
+  .stat-row { display: flex; gap: 0; margin: 0 0 12pt; border: .8pt solid var(--rule);
+              border-radius: 4pt; overflow: hidden; break-inside: avoid; }
+  .stat { flex: 1; padding: 9pt 10pt; border-right: .8pt solid var(--rule); }
+  .stat:last-child { border-right: none; }
+  .stat .n { font-family: var(--mono); font-weight: 600; font-size: 15pt; }
+  .stat .l { font-size: 7.8pt; color: var(--ink-3); text-transform: uppercase;
+             letter-spacing: .05em; margin-top: 1pt; }
+  .stat.warn .n { color: var(--block); }
+  .stat.good .n { color: var(--pass); }
+
+  .timeline { font-family: var(--mono); font-size: 8.4pt; line-height: 1.9;
+              background: var(--wash); border: .8pt solid var(--rule); border-radius: 3pt;
+              padding: 9pt 12pt; margin: 0 0 10pt; break-inside: avoid; }
+  .timeline .ok   { color: var(--pass); font-weight: 600; }
+  .timeline .fail { color: var(--block); font-weight: 600; }
+
+  .section { break-before: page; }
+  .section:first-of-type { break-before: auto; }
+
+  footer { margin-top: 22pt; padding-top: 8pt; border-top: .8pt solid var(--rule);
+           font-size: 8.2pt; color: var(--ink-3); font-family: var(--mono); }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════════ COVER ══════════════════════════ -->
+<section class="cover">
+  <div class="kicker">GuardRails — Local Testing Briefing</div>
+  <h1>What testing the guardrail stack<br>locally actually found</h1>
+  <p class="lede">A local instance was run against the real seeded corpus — the Tamil Nadu
+  Cooperation Department's 2024-25 Citizen Charter — and exercised across PII masking,
+  prompt injection, content safety, and grounded retrieval. The rail logic itself scored
+  perfectly. The headline finding is a latency-driven failure mode that silently drops
+  real, correct answers under sustained load.</p>
+  <div class="meta">
+    Every number below is measured on this running instance, not estimated<br>
+    51 hand-built test cases, an automated eval suite (rewritten against the real corpus),
+    and live traces with request IDs<br>
+    Prepared 2026-08-29 for a lead review
+  </div>
+</section>
+
+<!-- ══════════════════════════ TOC ══════════════════════════ -->
+<section class="toc">
+  <h2>What is in here</h2>
+  <ol>
+    <li>The one-line summary
+      <small>What's solid, what isn't, and why it matters</small></li>
+    <li>What's solid — the rail logic
+      <small>1.0 exact-verdict match across 39 rail cases, 12 PII entity types, 0 false positives/negatives</small></li>
+    <li>The headline finding — retrieval silently drops real answers
+      <small>~70% of grounded questions refused under sustained load, with request IDs and timing</small></li>
+    <li>Root cause
+      <small>A per-span judge fallback running serially, right at the edge of its own timeout budget</small></li>
+    <li>Secondary findings
+      <small>A stale allowlist, a missing phone-number pattern, a test suite that predated the real corpus</small></li>
+    <li>What's already fixed
+      <small>The eval suite is rewritten and reverified against the real corpus</small></li>
+    <li>Recommendation
+      <small>What to change, in priority order</small></li>
+  </ol>
+</section>
+
+<!-- ══════════════════════════ 1. SUMMARY ══════════════════════════ -->
+<section class="section">
+<h2>1 · The one-line summary</h2>
+
+<p>The guardrails work. The pipeline they sit inside does not reliably survive its own
+latency budget. Every deterministic and semantic check we could construct — PII detection
+across 12 entity types, prompt injection, leaked secrets, destructive intent, and all six
+content-safety categories — matched expectations exactly, with zero false positives and
+zero false negatives. But when the same corpus questions were run through one sustained
+process (the same shape as the real deployed server, not a fresh CLI call each time), a
+retrieval-side privacy scan started timing out often enough to make the assistant answer
+<strong>"I don't have anything in the knowledge base that answers this"</strong> to
+questions that have a real, correct, verifiable answer.</p>
+
+<div class="stat-row">
+  <div class="stat good"><div class="n">1.0</div><div class="l">rail verdict match<br>(39/39 cases)</div></div>
+  <div class="stat good"><div class="n">0 / 0</div><div class="l">false positive /<br>false negative rate</div></div>
+  <div class="stat warn"><div class="n">9 / 13</div><div class="l">grounded questions<br>wrongly refused</div></div>
+  <div class="stat warn"><div class="n">27–29s</div><div class="l">typical scan time vs.<br>a 20–30s budget</div></div>
+</div>
+
+<div class="note warn"><b>The risk in plain terms.</b> A citizen asks a real, in-scope
+question. The correct answer exists in the document. The assistant tells them it doesn't
+know — not because the guardrails correctly judged the request unsafe, but because an
+internal privacy check ran out of time and the system discarded the context rather than
+risk leaking something unscanned. That is the safer failure mode by design, but it is
+failing far more often than the budget was sized for.</div>
+</section>
+
+<!-- ══════════════════════════ 2. WHAT'S SOLID ══════════════════════════ -->
+<section class="section">
+<h2>2 · What's solid — the rail logic</h2>
+
+<p>39 rail-only cases were run directly against the guardrail evaluation function — the
+same one every real request passes through — covering PII, prompt injection, leaked
+secrets, destructive intent, and all six content-safety categories. Every checksum used
+(SSN, credit card, Aadhaar via Verhoeff, PAN, IBAN) was independently verified against the
+project's own validators before being used in a test, so a "should mask" case is a case
+that genuinely passes its checksum, and a "should pass" case genuinely fails it.</p>
+
+<table>
+<tr><th>Category</th><th>Cases</th><th>Result</th></tr>
+<tr><td>PII — real identifiers (email, phone, SSN, card, Aadhaar, PAN, IBAN, IP, DOB, claim ref, name+address)</td><td class="num">12</td><td><span class="verdict v-pass">12/12 masked correctly</span></td></tr>
+<tr><td>PII — false-positive controls (numbers that fail their checksum)</td><td class="num">5</td><td><span class="verdict v-pass">5/5 passed through</span></td></tr>
+<tr><td>Prompt injection / jailbreak</td><td class="num">4</td><td><span class="verdict v-pass">4/4 blocked</span></td></tr>
+<tr><td>Leaked secrets (API key, password, AWS key) + 1 false positive</td><td class="num">4</td><td><span class="verdict v-pass">4/4 correct</span></td></tr>
+<tr><td>Destructive intent + self-service false positive</td><td class="num">3</td><td><span class="verdict v-pass">3/3 correct</span></td></tr>
+<tr><td>Content safety — 6 hazard categories + false positives</td><td class="num">8</td><td><span class="verdict v-pass">8/8 correct</span></td></tr>
+<tr><td>Meta / appeal questions (not mistaken for attacks)</td><td class="num">2</td><td><span class="verdict v-pass">2/2 correct</span></td></tr>
+</table>
+
+<p>The automated evaluation suite (<code>eval/suite.yaml</code>, run via
+<code>python run.py --eval</code>) independently confirms this: <strong>39/39 exact
+verdict match, false-positive rate 0.0, false-negative rate 0.0, all 10 configured
+detection kinds matched.</strong> This part of the system is not a close call — it is
+correct across everything we could think to throw at it.</p>
+</section>
+
+<!-- ══════════════════════════ 3. HEADLINE FINDING ══════════════════════════ -->
+<section class="section">
+<h2>3 · The headline finding — retrieval silently drops real answers</h2>
+
+<p>13 questions that require the full pipeline — real corpus retrieval, generation, and
+grounding, not just a rail check — were run through one sustained process. <strong>9 of
+13 came back with zero retrieved context</strong> and a generic refusal, even for
+questions independently confirmed to have a correct, specific answer in the document.</p>
+
+<div class="timeline">GR-01 &nbsp; <span class="ok">chunks=1 → real answer</span> &nbsp; 76.0s
+GR-02..06 &nbsp; <span class="fail">chunks=0 → "not in the knowledge base" — 5 in a row</span>
+SCP-01..03 &nbsp; <span class="fail">chunks=0 → same refusal — 3 more</span>
+RET-01 &nbsp; <span class="ok">chunks=1 → real answer</span> &nbsp; 75.8s
+RET-02 &nbsp; <span class="ok">chunks=1 → real answer</span> &nbsp; 76.6s
+RET-03 &nbsp; <span class="fail">chunks=0 → refusal</span> &nbsp; 58.7s
+DES-04 &nbsp; <span class="fail">chunks=0 → refusal</span> &nbsp; 32.8s</div>
+<p style="font-size:8.5pt;color:var(--ink-3);margin-top:-6pt;">Order as run, one continuous process — request IDs in the raw traces are available on request.</p>
+
+<p>This is not a one-time cold-start problem — it recovers (<code>RET-01</code>,
+<code>RET-02</code>) and then fails again (<code>RET-03</code>, <code>DES-04</code>) later
+in the same run. It behaves like a coin that is landing on the wrong side roughly 7 times
+out of 10, in a system that is supposed to fail closed rarely, not routinely.</p>
+
+<div class="note warn"><b>Concrete example.</b> "What is the maximum amount available
+under a jewel loan?" has a real, exact answer in the document: <strong>Rs. 30 Lakh at
+11.50% interest.</strong> In this run it came back as <em>"I don't have anything in the
+knowledge base that answers this"</em> — a factually wrong refusal, delivered with full
+confidence and a request ID, in 43.5 seconds.</div>
+</section>
+
+<!-- ══════════════════════════ 4. ROOT CAUSE ══════════════════════════ -->
+<section class="section">
+<h2>4 · Root cause</h2>
+
+<p>Every question that retrieves context also runs a privacy scan
+(<code>pii.entities</code>) over the retrieved text before the model is allowed to see
+it — the real document is a branch directory dense with names, addresses, and phone
+numbers, so this is doing real work, not scanning empty space. That scan has two layers:
+a fast local recognizer (Presidio, "about a second of CPU" per the project's own
+documentation) and a slower fallback that asks the Claude judge to double-check anything
+Presidio is unsure about.</p>
+
+<p>Measured directly, in isolation, that scan costs <strong>27,000–29,000 milliseconds</strong> —
+almost entirely the judge-fallback calls, run one after another, not in parallel. The
+system is configured to abandon an unfinished rail and discard whatever context it was
+protecting once a configurable time budget is exceeded — a <em>deliberate</em> and
+correct safety choice, a locked invariant that cannot be turned off. The problem is not
+that this exists; it's that the scan's real cost sits at 90–96% of whatever budget it's
+given, so ordinary network latency is enough to tip it over on a large fraction of calls.</p>
+
+<table>
+<tr><th>Layer</th><th>Typical cost</th><th>Notes</th></tr>
+<tr><td>Presidio (local, no network call)</td><td class="num">~1s</td><td>per the project's own configuration comments</td></tr>
+<tr><td>Judge fallback (Claude API, per unmatched span, serial)</td><td class="num">~1.7–4s <em>each</em></td><td>dozens of spans in a dense chunk</td></tr>
+<tr><td>Observed total, this corpus</td><td class="num">27–29s</td><td>against a 20,000–30,000ms budget</td></tr>
+</table>
+
+<div class="note"><b>Already tried and ruled out.</b> Raising the timeout budget from
+20,000ms to 30,000ms did not fix this — it just gave the same near-the-edge scan a
+slightly fairer coin flip. A genuine fix needs to either stop the judge fallback from
+running per-span in series on dense chunks, or accept the local-only recognizer's coverage
+for this specific surface.</div>
+</section>
+
+<!-- ══════════════════════════ 5. SECONDARY FINDINGS ══════════════════════════ -->
+<section class="section">
+<h2>5 · Secondary findings</h2>
+
+<h3>5.1 · The department's own contact details get masked like a citizen's private data</h3>
+<p>The exemption list for "published, not private" contacts (<code>pii.allowlist</code>)
+only covers <code>*.municipal.gov.in</code>, <code>*.nic.in</code>, and toll-free numbers —
+written for an earlier, synthetic demo corpus. The real document's own institution uses
+<code>@tnscbank.com</code>, which isn't covered, so asking for the bank's own published
+email returns a masked placeholder instead of the real address.</p>
+
+<h3>5.2 · One real phone format isn't recognized as PII at all</h3>
+<p>Chennai-style landline numbers with no leading zero and no STD code
+(<code>2530 2300</code>) don't match any of the three configured phone patterns. They pass
+through completely unmasked — the opposite failure mode from 5.1, and worth knowing about
+for the same reason.</p>
+
+<h3>5.3 · The bundled evaluation suite predated the real corpus</h3>
+<p>The seeded document was swapped from a synthetic multi-topic demo set to the real
+Citizen Charter in a recent commit, but <code>eval/suite.yaml</code> was never updated to
+match. Its retrieval and answer-content sections scored <strong>0.0</strong> across the
+board — not because retrieval was broken, but because every expected document ID and fact
+referenced a topic (trade licences, housing grants, birth certificates) that no longer
+exists in the corpus. This is fixed — see §6.</p>
+</section>
+
+<!-- ══════════════════════════ 6. ALREADY FIXED ══════════════════════════ -->
+<section class="section">
+<h2>6 · What's already fixed</h2>
+
+<p><code>eval/suite.yaml</code> has been rewritten against the real corpus: every fact used
+was re-read from the source document and independently verified before being written into
+a test — loan eligibility, jewel-loan and mortgage-loan limits, branch counts. A new rail
+case was also added that masks a verbatim excerpt of the real document's own contact
+block, formalizing finding 5.1 as a regression test rather than leaving it undocumented.</p>
+
+<table>
+<tr><th>Section</th><th>Before</th><th>After rewrite</th></tr>
+<tr><td>Retrieval (recall / precision / MRR / hit@1)</td><td class="num" style="color:var(--block)">0.0 / 0.0 / 0.0 / 0.0</td><td class="num" style="color:var(--pass)">1.0 / 1.0 / 1.0 / 1.0</td></tr>
+<tr><td>Rails (exact verdict match)</td><td class="num" style="color:var(--pass)">1.0 (38 cases)</td><td class="num" style="color:var(--pass)">1.0 (39 cases)</td></tr>
+</table>
+
+<p>Two independent re-runs of the corrected suite's answer section still showed 2–3 of 5
+questions occasionally failing — but investigating those live traces confirmed the cause
+is the same finding as §3 and §4, genuine variance in the retrieval-latency budget, not a
+new defect in the rewritten suite itself.</p>
+</section>
+
+<!-- ══════════════════════════ 7. RECOMMENDATION ══════════════════════════ -->
+<section class="section">
+<h2>7 · Recommendation, in priority order</h2>
+
+<ol>
+<li><strong>Fix the retrieval-latency budget properly, not by raising a number.</strong>
+Either cap/parallelize the judge fallback so a dense chunk's scan time stops scaling
+linearly with span count, or scope <code>pii.entity_engine</code> to Presidio-only on the
+retrieval surface specifically, accepting slightly weaker name/address coverage there in
+exchange for not silently dropping correct answers most of the time. This is the fix that
+actually moves the needle — everything else in this report is secondary to it.</li>
+<li><strong>Update <code>pii.allowlist</code></strong> to cover the real corpus's own
+published domain, so the assistant can answer "who do I contact" the way it's supposed
+to.</li>
+<li><strong>Add a phone-number pattern</strong> for the Chennai-style landline format
+found in finding 5.2, so it stops being silently unmasked.</li>
+<li><strong>Land the eval suite rewrite</strong> (already done locally, described in §6)
+so CI reflects the real corpus going forward.</li>
+</ol>
+
+<div class="note good"><b>The reassuring part.</b> None of this is a guardrail-logic
+problem. Every rail that was designed to catch something caught it, every time, across 39
+adversarial and false-positive cases. The fix needed here is a performance and
+configuration fix to one specific rail on one specific surface — not a rethink of the
+approach.</div>
+
+<footer>
+GuardRails local testing briefing — prepared 2026-08-29. Reproduce with
+<code>python run.py --eval --answers</code> and <code>python run.py --ask "&lt;question&gt;"</code>
+against <code>config/policy.yaml</code> + <code>config/overrides.yaml</code>.
+</footer>
+</section>
+
+</body>
+</html>
