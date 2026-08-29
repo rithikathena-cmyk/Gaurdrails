@@ -6,11 +6,12 @@
 # Safe to delete: removing it reverts every parameter to the baseline. Safe to
 # commit: it is the record of what a deployment actually changed.
 
-updated_at: 2026-08-25T23:27:09+0530
+updated_at: 2026-08-29T09:38:55+0530
 values:
   pii.mask_strategy: partial
   pii.partial_reveal: 2
   pii.partial_reveal_prefix: 1
+  policy.latency_budget_ms: 30000
 severity_matrix:
   scope:
     llm.ask_user: medium
