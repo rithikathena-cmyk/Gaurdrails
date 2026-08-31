@@ -27,6 +27,7 @@ from __future__ import annotations
 import concurrent.futures as futures
 import re
 
+from ..llm import LLMError
 from ..prompts import judge_prompt
 from . import presidio_ner
 from ..types import Detection, RailResult, Verdict, action_verdict
@@ -116,9 +117,16 @@ _JUDGE_WINDOW_CHARS = 6000
 #: So an entity sitting across a window boundary still appears whole in at
 #: least one window rather than being split in both and found in neither.
 _JUDGE_WINDOW_OVERLAP = 200
-#: Generous for one window's worth of entities without paying for a reply
-#: sized to a whole 200,000-character document that mostly is not this rail's.
-_JUDGE_MAX_TOKENS = 4096
+#: `max_tokens` is a shared budget for adaptive thinking *and* the JSON reply
+#: (`_tuning` turns on `thinking: adaptive` for this call) — `_text_of` drops
+#: the thinking block before parsing, so a window dense enough to need real
+#: reasoning about the exclusion rules in `ENTITY_SYSTEM` (which office names
+#: are public-sector, which "...Union"/"...Federation" is a cooperative body,
+#: and so on) can spend enough of a tight budget on that reasoning to leave
+#: the entities array truncated — invalid JSON, not oversized JSON. Observed
+#: in production on a single 6,000-char window with a dense name list, at
+#: 4096; raised with headroom for both, not just for a longer entity array.
+_JUDGE_MAX_TOKENS = 8192
 _JUDGE_MAX_WORKERS = 8
 
 
@@ -226,19 +234,32 @@ class EntityRail:
         """
         windows = _windows(text, _JUDGE_WINDOW_CHARS, _JUDGE_WINDOW_OVERLAP)
         if len(windows) == 1:
-            found = self.llm.judge(ENTITY_SYSTEM, windows[0], ENTITY_SCHEMA,
-                                   max_tokens=_JUDGE_MAX_TOKENS)
+            found = self._judge_one(windows[0])
             return list((found.get("entities") or [])[:80])
 
         entities: list[dict] = []
         with futures.ThreadPoolExecutor(max_workers=min(_JUDGE_MAX_WORKERS, len(windows))) as pool:
-            jobs = [pool.submit(self.llm.judge, ENTITY_SYSTEM, w, ENTITY_SCHEMA,
-                                max_tokens=_JUDGE_MAX_TOKENS)
-                   for w in windows]
+            jobs = [pool.submit(self._judge_one, w) for w in windows]
             for job in jobs:
                 found = job.result()
                 entities.extend((found.get("entities") or [])[:80])
         return entities
+
+    def _judge_one(self, window: str) -> dict:
+        """One window's judge call, with a single retry.
+
+        Observed in production: a window well inside `_JUDGE_MAX_TOKENS` still
+        occasionally comes back as truncated, invalid JSON — a one-off glitch
+        in that generation, not a property of the text, since a repeat call
+        with the identical window succeeds. Retrying costs one extra call only
+        on that rare path; the common path is unaffected.
+        """
+        try:
+            return self.llm.judge(ENTITY_SYSTEM, window, ENTITY_SCHEMA,
+                                   max_tokens=_JUDGE_MAX_TOKENS)
+        except LLMError:
+            return self.llm.judge(ENTITY_SYSTEM, window, ENTITY_SCHEMA,
+                                   max_tokens=_JUDGE_MAX_TOKENS)
 
     def _replacement(self, kind: str, raw: str, owner: str) -> str:
         if self.strategy == "redact":
