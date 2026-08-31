@@ -6,10 +6,9 @@
 # Safe to delete: removing it reverts every parameter to the baseline. Safe to
 # commit: it is the record of what a deployment actually changed.
 
-updated_at: 2026-08-31T17:23:53+0530
+updated_at: 2026-08-31T18:06:42+0530
 values:
   grounding.engine: judge
-  pii.mask_strategy: partial
   pii.partial_reveal: 2
   pii.partial_reveal_prefix: 1
   policy.latency_budget_ms: 30000
