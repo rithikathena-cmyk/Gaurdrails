@@ -84,7 +84,7 @@ class StubClaude:
         self.in_scope = in_scope
         self.entities = entities
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "verdict" in props and "confidence" in props:
             # The adjudicator. Upholding is the honest default for a stub: it

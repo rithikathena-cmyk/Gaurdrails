@@ -73,7 +73,7 @@ class StubPipelineLLM:
         self.calls: list[str] = []
         self.generations = 0
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "checks" in props:
             self.calls.append("gs_plan")

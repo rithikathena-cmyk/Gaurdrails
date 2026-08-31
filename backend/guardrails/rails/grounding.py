@@ -17,11 +17,18 @@ no-ops rather than inventing a baseline.
 
 from __future__ import annotations
 
+import logging
 import re
+import time
 
 from ..prompts import judge_prompt
 from . import groundedness_check
 from ..types import Detection, RailResult, Verdict
+
+# Temporary diagnostic instrumentation for the grounding-latency investigation
+# — observation only, no effect on verdicts or thresholds. Remove once the
+# investigation concludes.
+diag = logging.getLogger("guardrails.diag.grounding")
 
 GROUNDING_SCHEMA = {
     "type": "object",
@@ -125,7 +132,10 @@ class GroundingRail:
         self.engine_mode = engine_mode
 
     def evaluate(self, question: str, answer: str, chunks: list[str],
-                 action: str, result: RailResult) -> RailResult:
+                 action: str, result: RailResult, attempt: int | None = None) -> RailResult:
+        # `attempt` is diagnostic only (which regeneration cycle this call
+        # belongs to) — it never changes what runs.
+        t_eval_start = time.perf_counter()
         result.higher_is_better = True
         result.threshold = self.consistency_threshold
 
@@ -148,7 +158,14 @@ class GroundingRail:
         # score relevance, and it cannot produce the verbatim unsupported-claim
         # list that regeneration is built from. So it short-circuits in one
         # direction — every claim entailed — and defers everything else.
+        t_local0 = time.perf_counter()
         local = groundedness_check.consistency(answer, used) if use_local else None
+        t_local_ms = (time.perf_counter() - t_local0) * 1000
+        if use_local:
+            diag.info(
+                "grounding.local attempt=%s elapsed_ms=%.1f ran=%s chunks=%d",
+                attempt, t_local_ms, local is not None, len(used),
+            )
         if local is not None:
             result.meta["local_consistency"] = round(local["consistency"], 3)
             result.meta["local_claims"] = local["claims"]
@@ -221,7 +238,18 @@ class GroundingRail:
         )
         # 3000 was sized for an answer quoted back sentence by sentence. The
         # reply is now a handful of integers and one short rationale.
-        verdict = self.llm.judge(GROUNDING_SYSTEM, payload, GROUNDING_SCHEMA, max_tokens=600)
+        t_judge0 = time.perf_counter()
+        verdict = self.llm.judge(
+            GROUNDING_SYSTEM, payload, GROUNDING_SCHEMA, max_tokens=600,
+            label=f"grounding[attempt={attempt}]" if attempt is not None else "grounding",
+        )
+        t_judge_ms = (time.perf_counter() - t_judge0) * 1000
+        diag.info(
+            "grounding.judge attempt=%s elapsed_ms=%.1f total_eval_ms=%.1f "
+            "payload_chars=%d claims=%d chunks=%d",
+            attempt, t_judge_ms, (time.perf_counter() - t_eval_start) * 1000,
+            len(payload), len(claims), len(used),
+        )
 
         consistency = min(1.0, max(0.0, float(verdict.get("consistency", 0.0))))
         relevance = min(1.0, max(0.0, float(verdict.get("relevance", 0.0))))

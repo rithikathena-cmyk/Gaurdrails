@@ -35,7 +35,7 @@ class ScriptedClaude:
         self.consistency = consistency
         self.in_scope = in_scope
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "consistency" in props:
             return {"consistency": self.consistency, "relevance": 1.0,

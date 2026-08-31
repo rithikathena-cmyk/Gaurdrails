@@ -34,7 +34,7 @@ class ScriptedJudge:
                         "rationale": rationale}
         self.last_user = ""
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         self.calls += 1
         self.last_user = user
         props = set(schema.get("properties", {}))

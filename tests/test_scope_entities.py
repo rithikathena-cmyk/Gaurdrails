@@ -28,7 +28,7 @@ class CountingJudge:
         self.calls = 0
         self.payload = payload or {}
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         self.calls += 1
         props = set(schema.get("properties", {}))
         if "in_scope" in props:

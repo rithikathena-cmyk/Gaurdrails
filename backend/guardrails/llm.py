@@ -28,12 +28,47 @@ from __future__ import annotations
 import json
 import logging
 import os
+import time
 from dataclasses import dataclass
 from typing import Any
 
 import anthropic
 
 log = logging.getLogger("guardrails.llm")
+# Temporary diagnostic instrumentation for the grounding-latency investigation.
+# Observation only — never changes a request's outcome, timeout, or retry
+# behavior. Safe to leave at INFO; remove once the investigation concludes.
+diag = logging.getLogger("guardrails.diag.llm")
+
+
+def _diagnostic_http_client() -> Any:
+    """An httpx client that logs every HTTP attempt the SDK makes — including
+    ones its own internal retry loop issues — without altering timeouts,
+    retry counts, or any other transport behavior. Opt-in via env var so it
+    costs nothing when not investigating.
+    """
+    if not os.getenv("GUARDRAIL_HTTP_DIAG"):
+        return None
+    import httpx2  # the SDK's actual transport — plain httpx is a different class
+
+    def _on_request(request: "httpx2.Request") -> None:
+        request.extensions["_diag_t0"] = time.perf_counter()
+
+    def _on_response(response: "httpx2.Response") -> None:
+        t0 = response.request.extensions.get("_diag_t0")
+        elapsed_ms = (time.perf_counter() - t0) * 1000 if t0 is not None else None
+        diag.info(
+            "http path=%s status=%s elapsed_ms=%s request_id=%s "
+            "ratelimit_req_remaining=%s ratelimit_tok_remaining=%s retry_after=%s",
+            response.request.url.path, response.status_code,
+            f"{elapsed_ms:.1f}" if elapsed_ms is not None else None,
+            response.headers.get("request-id"),
+            response.headers.get("anthropic-ratelimit-requests-remaining"),
+            response.headers.get("anthropic-ratelimit-tokens-remaining"),
+            response.headers.get("retry-after"),
+        )
+
+    return httpx2.Client(event_hooks={"request": [_on_request], "response": [_on_response]})
 
 DEFAULT_MODEL = "claude-sonnet-5"
 FALLBACK_BETA = "server-side-fallback-2026-07-01"
@@ -176,7 +211,7 @@ class Claude:
             raise LLMError(
                 "ANTHROPIC_API_KEY is not set. Copy .env.example to .env and add your key."
             )
-        self.client = anthropic.Anthropic(api_key=key)
+        self.client = anthropic.Anthropic(api_key=key, http_client=_diagnostic_http_client())
         self.model = model
         self.judge_model = judge_model
         self.use_fallbacks = use_fallbacks
@@ -186,12 +221,17 @@ class Claude:
     # Guardrail judge
     # -----------------------------------------------------------------
     def judge(self, system: str, user: str, schema: dict[str, Any], *,
-              max_tokens: int = 2048) -> dict[str, Any]:
+              max_tokens: int = 2048, label: str = "") -> dict[str, Any]:
         """One structured-output classification. Raises on anything unexpected.
 
         The engine catches those exceptions and applies the configured fail
         mode — a rail that errors must not silently pass.
+
+        `label` is diagnostic only — it tags the timing/usage line below so a
+        specific rail's calls (e.g. `label="grounding"`) can be picked out of
+        the log. It never reaches the model or affects the request.
         """
+        t0 = time.perf_counter()
         try:
             msg = self.client.messages.create(
                 model=self.judge_model,
@@ -202,9 +242,25 @@ class Claude:
                           {"type": "json_schema", "schema": schema}),
             )
         except anthropic.APIStatusError as exc:
+            diag.info("judge label=%s FAILED kind=status elapsed_ms=%.1f status=%s message=%s",
+                      label, (time.perf_counter() - t0) * 1000, exc.status_code, exc.message)
             raise LLMError(f"judge call failed ({exc.status_code}): {exc.message}") from exc
         except anthropic.APIConnectionError as exc:
+            diag.info("judge label=%s FAILED kind=connection elapsed_ms=%.1f error=%s",
+                      label, (time.perf_counter() - t0) * 1000, _why(exc))
             raise LLMError(f"judge call failed: cannot reach the API — {_why(exc)}") from exc
+
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        usage = getattr(msg, "usage", None)
+        blocks = [(getattr(b, "type", "?"), len(getattr(b, "text", "") or "")) for b in msg.content]
+        diag.info(
+            "judge label=%s model=%s elapsed_ms=%.1f stop_reason=%s thinking=adaptive/low "
+            "input_tok=%s output_tok=%s cache_read_tok=%s cache_write_tok=%s blocks=%s",
+            label, self.judge_model, elapsed_ms, msg.stop_reason,
+            getattr(usage, "input_tokens", None), getattr(usage, "output_tokens", None),
+            getattr(usage, "cache_read_input_tokens", None),
+            getattr(usage, "cache_creation_input_tokens", None), blocks,
+        )
 
         _check_refusal(msg)
         raw = _text_of(msg)

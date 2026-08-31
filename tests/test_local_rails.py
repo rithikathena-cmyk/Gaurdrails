@@ -39,7 +39,7 @@ class CountingJudge:
         self.calls = 0
         self.scores = scores
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         self.calls += 1
         props = set(schema.get("properties", {}))
         if "injection" in props:
@@ -372,7 +372,7 @@ class _ContentSensitiveJudge:
     def __init__(self, marker: str):
         self.marker = marker
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "consistency" in props:
             found = self.marker in user

@@ -41,7 +41,7 @@ class StubClaude:
         self.generations = 0
         self.retry_prompts: list[str] = []
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "verdict" in props and "confidence" in props:
             # The adjudicator. Upholding is the honest default for a stub: it

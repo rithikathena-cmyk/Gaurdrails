@@ -70,7 +70,7 @@ class StubAgentLLM:
         self.authz_verdict = authz_verdict
         self.calls: list[str] = []
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "agents" in props:
             self.calls.append("supervisor_plan")
@@ -392,7 +392,7 @@ class StubGuardrailLLM:
         self.decide_action = decide_action
         self.calls: list[str] = []
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "checks" in props:
             self.calls.append("plan")

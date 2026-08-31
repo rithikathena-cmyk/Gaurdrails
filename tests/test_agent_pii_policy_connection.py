@@ -58,7 +58,7 @@ class ScriptedPIILLM:
         self.plan_script = list(plans or [])
         self.decision_script = list(decisions or [])
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "needs_analysis" in props:
             if self.plan_script:
@@ -215,7 +215,7 @@ def test_agent_recommend_allow_but_policy_floor_produces_block(engine):
     from backend.guardrails.agents.injection_agent import PromptInjectionAgent
 
     class ScriptedInjLLM:
-        def judge(self, system, user, schema, *, max_tokens=2048):
+        def judge(self, system, user, schema, *, max_tokens=2048, label=""):
             props = set(schema.get("properties", {}))
             if "possible_injection" in props:
                 return {"possible_injection": True, "tools": ["detect_injection_patterns"],

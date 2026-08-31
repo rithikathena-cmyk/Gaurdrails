@@ -178,7 +178,7 @@ def test_the_judge_still_covers_what_ner_misses(engine_ready):
     class Judge:
         model = "stub"
 
-        def judge(self, system, user, schema, *, max_tokens=2048):
+        def judge(self, system, user, schema, *, max_tokens=2048, label=""):
             return {"entities": [
                 {"text": "14 Anna Salai", "kind": "ADDRESS", "confidence": 0.9}]}
 

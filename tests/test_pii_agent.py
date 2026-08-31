@@ -70,7 +70,7 @@ class ScriptedAgentLLM:
         self.decision_calls = 0
         self.seen_users: list[str] = []
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         self.seen_users.append(user)
         props = set(schema.get("properties", {}))
         if "needs_analysis" in props:

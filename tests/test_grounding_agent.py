@@ -35,7 +35,7 @@ class ScriptedGroundingLLM:
         self.plan_calls = 0
         self.decision_calls = 0
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "needs_grounding_review" in props:
             self.plan_calls += 1

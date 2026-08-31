@@ -98,7 +98,7 @@ class SupervisorLLM:
         self.authz_decision_script = list(authorization_decisions or [])
         self.calls: list[str] = []
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "agents" in props:
             self.calls.append("supervisor_plan")

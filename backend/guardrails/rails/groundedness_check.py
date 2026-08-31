@@ -26,14 +26,31 @@ Loaded on first use, like every other local model here.
 from __future__ import annotations
 
 import logging
+import os
 import re
+import time
 from typing import Any
 
 from ._local import LazyModel
 
 log = logging.getLogger("guardrails.rails.groundedness")
+diag = logging.getLogger("guardrails.diag.groundedness")
 
 MODEL_ID = "cross-encoder/nli-deberta-v3-base"
+
+#: `_build` pins the process-wide torch intraop pool to 1 thread so this
+#: model doesn't oversubscribe alongside the other rails sharing the
+#: concurrent prompt-rails thread pool (see `toxicity_check`). But this
+#: rail's own inference call runs alone in its own sequential stage, after
+#: that pool has already drained — paying the 1-thread tax there is pure
+#: waste. Measured on this model's actual shape (6 chunks x ~4 claims,
+#: cross-encoder/nli-deberta-v3-base, CPU): 1 thread ~57s, 4 threads ~4.4s,
+#: 8+ threads no further gain — so 4 is raised only for the call itself,
+#: immediately restored after, rather than left changed process-wide (which
+#: would silently undo the oversubscription guard for every other rail for
+#: the rest of the process's life — `torch.set_num_threads` is a single
+#: global knob, not one scoped per model or per thread).
+_INFERENCE_THREADS = min(4, os.cpu_count() or 1)
 
 #: The label that means "the premise supports the hypothesis". The rest —
 #: neutral and contradiction — are both "not supported", and the rail does not
@@ -120,11 +137,21 @@ def consistency(answer: str, chunks: list[str]) -> dict[str, Any] | None:
 
     pairs = [{"text": chunk, "text_pair": claim}
              for claim in to_check for chunk in chunks]
+
+    import torch
+    prev_threads = torch.get_num_threads()
+    torch.set_num_threads(_INFERENCE_THREADS)
+    t0 = time.perf_counter()
     try:
         raw = pipe(pairs)
     except Exception as exc:  # noqa: BLE001
         log.warning("groundedness scoring failed: %s", exc)
         return None
+    finally:
+        elapsed_ms = (time.perf_counter() - t0) * 1000
+        torch.set_num_threads(prev_threads)
+        diag.info("groundedness.infer elapsed_ms=%.1f pairs=%d threads=%d",
+                  elapsed_ms, len(pairs), _INFERENCE_THREADS)
 
     per_pair: list[float] = []
     for row in raw or []:

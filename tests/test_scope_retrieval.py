@@ -49,7 +49,7 @@ class ScriptedClaude:
         self.relevance = relevance
         self.generations = 0
 
-    def judge(self, system, user, schema, *, max_tokens=2048):
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
         if "verdict" in props and "confidence" in props:
             m = re.search(r"RESOLVED VERDICT[^:]*: (\w+)", user)

@@ -902,6 +902,7 @@ class Engine:
                         lambda r: self.grounding_rail.evaluate(
                             question_n, reply, chunks,
                             "flag" if on_fail == "flag" else "block", r,
+                            attempt=attempt,
                         ),
                     )
                 grounding_failed = gr.verdict is Verdict.BLOCK
