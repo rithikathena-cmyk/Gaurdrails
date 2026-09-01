@@ -180,12 +180,13 @@ footer code { font-family: var(--mono); }
   <section class="figure">
     <div class="figure-head">
       <h2>A request through the pipeline</h2>
-      <p>From sign-in to the audit trail — the same input and output rails, verdict actions,
-         specialist agents, and tools defined in this codebase, laid out as one path a
-         request actually walks through <code>Engine.converse()</code>.</p>
+      <p>From sign-in to the audit trail — the two supervisor passes that run ahead of the
+         conversation, then the input and output rails, verdict actions, specialist agents, and
+         tools defined in this codebase, laid out as one path a request actually walks through
+         <code>routes/pipeline.py</code> into <code>Engine.converse()</code>.</p>
     </div>
     <div class="sheet">
-<svg viewBox="0 0 960 1642" class="flow" role="img" aria-label="A request through the GuardRails pipeline, from sign-in to trace">
+<svg viewBox="0 0 960 1870" class="flow" role="img" aria-label="A request through the GuardRails pipeline, from sign-in to trace">
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
     <path class="arrowhead" d="M0 0 L10 5 L0 10 Z"/>
@@ -203,199 +204,222 @@ footer code { font-family: var(--mono); }
 <text class="edge-label" x="473" y="114">asks a question</text>
 <g class="node gate">
 <rect x="150" y="128" width="620" height="78" rx="10"/>
-<text class="gate-label" x="168" y="150">GATE 1 — INPUT GUARDRAILS</text>
-<text class="title left" x="168" y="172">Is the question allowed through?</text>
-<text class="mono left" x="168" y="191">words · pii · entities · policy · injection · scope · content</text>
+<text class="gate-label" x="168" y="150">PRE-FILTER — GUARDRAIL SUPERVISOR</text>
+<text class="title left" x="168" y="172">Does this need the full pipeline at all?</text>
+<text class="mono left" x="168" y="191">PRECHECK · PLAN · 6 tools · DECIDE · ENFORCE — cheap, mostly deterministic</text>
 </g>
-<path class="edge" d="M460 206 L460 238" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="230">seven checks, one strictest verdict</text>
+<path class="deny" d="M770 167 L925 167"/>
+<text class="deny-label" x="784" y="159">HARD_BLOCK, or BLOCK · REDACT · ESCALATE — nothing below this runs</text>
+<path class="edge" d="M460 206 L460 234" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="228">clear, or inside the risk band — the deeper pass still runs</text>
 <g class="node gate">
-<rect x="150" y="246" width="620" height="78" rx="10"/>
-<text class="gate-label" x="168" y="268">GATE 2 — DECISION</text>
-<text class="title left" x="168" y="290">What does the verdict say?</text>
-<text class="mono left" x="168" y="309">ALLOW · MASK · REDACT · FLAG · BLOCK · ESCALATE — one of six, always</text>
+<rect x="150" y="242" width="620" height="90" rx="10"/>
+<text class="gate-label" x="168" y="264">SUPERVISOR — SIX SPECIALIST AGENTS</text>
+<text class="title left" x="168" y="286">Does a deeper reasoning pass agree?</text>
+<text class="mono left" x="168" y="305">ANALYZE+PLAN → SELECT+EXECUTE → OBSERVE → EVALUATE+DECIDE, judge-driven</text>
+<text class="mono left" x="168" y="322">only if a model is configured — skipped otherwise (agents/supervisor.py)</text>
 </g>
-<path class="deny" d="M770 285 L925 285"/>
-<text class="deny-label" x="784" y="277">BLOCK · REDACT · ESCALATE</text>
-<path class="edge" d="M460 324 L460 356" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="348">ALLOW or MASK — the agent takes over</text>
+<path class="deny" d="M770 287 L925 287"/>
+<text class="deny-label" x="784" y="279">its own floor combined with the pre-filter’s — stricter wins</text>
+<path class="edge" d="M460 332 L460 348" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="344">still not stopped — Gate 1 runs regardless</text>
+<g class="node gate">
+<rect x="150" y="356" width="620" height="78" rx="10"/>
+<text class="gate-label" x="168" y="378">GATE 1 — INPUT GUARDRAILS</text>
+<text class="title left" x="168" y="400">Is the question allowed through?</text>
+<text class="mono left" x="168" y="419">words · pii · entities · policy · injection · scope · content</text>
+</g>
+<path class="edge" d="M460 434 L460 466" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="458">seven checks, one strictest verdict</text>
+<g class="node gate">
+<rect x="150" y="474" width="620" height="78" rx="10"/>
+<text class="gate-label" x="168" y="496">GATE 2 — DECISION</text>
+<text class="title left" x="168" y="518">What does the verdict say?</text>
+<text class="mono left" x="168" y="537">ALLOW · MASK · REDACT · FLAG · BLOCK · ESCALATE — one of six, always</text>
+</g>
+<path class="deny" d="M770 513 L925 513"/>
+<text class="deny-label" x="784" y="505">BLOCK · REDACT · ESCALATE</text>
+<path class="edge" d="M460 552 L460 584" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="576">ALLOW or MASK — the agent takes over</text>
 <g class="node model">
-<rect x="210" y="364" width="500" height="62" rx="10"/>
-<text class="agent-tag" x="698" y="380">AGENT</text>
-<text class="title" x="460" y="391">The agent decides what it needs</text>
-<text class="mono" x="460" y="410">a specialist agent, a tool, or an answer</text>
+<rect x="210" y="592" width="500" height="62" rx="10"/>
+<text class="agent-tag" x="698" y="608">AGENT</text>
+<text class="title" x="460" y="619">The agent decides what it needs</text>
+<text class="mono" x="460" y="638">a specialist agent, a tool, or an answer</text>
 </g>
-<path class="edge" d="M460 426 L460 452" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="447">it can call any of six specialist agents</text>
-<path class="edge" d="M460 460 L460 476"/>
-<path class="edge" d="M85 476 L835 476"/>
-<path class="edge" d="M85 476 L85 488" marker-end="url(#arrow)"/>
+<path class="edge" d="M460 654 L460 680" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="675">it can call any of six specialist agents</text>
+<path class="edge" d="M460 688 L460 704"/>
+<path class="edge" d="M85 704 L835 704"/>
+<path class="edge" d="M85 704 L85 716" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="15" y="496" width="140" height="62" rx="9"/>
-<text class="agent-tag small" x="145" y="509">AGENT</text>
-<text class="title small" x="85" y="529">pii</text>
-<text class="mono small" x="85" y="546">personal data</text>
+<rect x="15" y="724" width="140" height="62" rx="9"/>
+<text class="agent-tag small" x="145" y="737">AGENT</text>
+<text class="title small" x="85" y="757">pii</text>
+<text class="mono small" x="85" y="774">personal data</text>
 </g>
-<path class="edge" d="M235 476 L235 488" marker-end="url(#arrow)"/>
+<path class="edge" d="M235 704 L235 716" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="165" y="496" width="140" height="62" rx="9"/>
-<text class="agent-tag small" x="295" y="509">AGENT</text>
-<text class="title small" x="235" y="529">injection</text>
-<text class="mono small" x="235" y="546">override attempts</text>
+<rect x="165" y="724" width="140" height="62" rx="9"/>
+<text class="agent-tag small" x="295" y="737">AGENT</text>
+<text class="title small" x="235" y="757">injection</text>
+<text class="mono small" x="235" y="774">override attempts</text>
 </g>
-<path class="edge" d="M385 476 L385 488" marker-end="url(#arrow)"/>
+<path class="edge" d="M385 704 L385 716" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="315" y="496" width="140" height="62" rx="9"/>
-<text class="agent-tag small" x="445" y="509">AGENT</text>
-<text class="title small" x="385" y="529">content</text>
-<text class="mono small" x="385" y="546">hate · violence · more</text>
+<rect x="315" y="724" width="140" height="62" rx="9"/>
+<text class="agent-tag small" x="445" y="737">AGENT</text>
+<text class="title small" x="385" y="757">content</text>
+<text class="mono small" x="385" y="774">hate · violence · more</text>
 </g>
-<path class="edge" d="M535 476 L535 488" marker-end="url(#arrow)"/>
+<path class="edge" d="M535 704 L535 716" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="465" y="496" width="140" height="62" rx="9"/>
-<text class="agent-tag small" x="595" y="509">AGENT</text>
-<text class="title small" x="535" y="529">scope</text>
-<text class="mono small" x="535" y="546">off-topic</text>
+<rect x="465" y="724" width="140" height="62" rx="9"/>
+<text class="agent-tag small" x="595" y="737">AGENT</text>
+<text class="title small" x="535" y="757">scope</text>
+<text class="mono small" x="535" y="774">off-topic</text>
 </g>
-<path class="edge" d="M685 476 L685 488" marker-end="url(#arrow)"/>
+<path class="edge" d="M685 704 L685 716" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="615" y="496" width="140" height="62" rx="9"/>
-<text class="agent-tag small" x="745" y="509">AGENT</text>
-<text class="title small" x="685" y="529">authorization</text>
-<text class="mono small" x="685" y="546">someone else's data</text>
+<rect x="615" y="724" width="140" height="62" rx="9"/>
+<text class="agent-tag small" x="745" y="737">AGENT</text>
+<text class="title small" x="685" y="757">authorization</text>
+<text class="mono small" x="685" y="774">someone else's data</text>
 </g>
-<path class="edge" d="M835 476 L835 488" marker-end="url(#arrow)"/>
+<path class="edge" d="M835 704 L835 716" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="765" y="496" width="140" height="62" rx="9"/>
-<text class="agent-tag small" x="895" y="509">AGENT</text>
-<text class="title small" x="835" y="529">grounding</text>
-<text class="mono small" x="835" y="546">unsupported claims</text>
+<rect x="765" y="724" width="140" height="62" rx="9"/>
+<text class="agent-tag small" x="895" y="737">AGENT</text>
+<text class="title small" x="835" y="757">grounding</text>
+<text class="mono small" x="835" y="774">unsupported claims</text>
 </g>
-<path class="edge" d="M85 558 L85 578"/>
-<path class="edge" d="M835 558 L835 578"/>
-<path class="edge" d="M235 558 L235 578"/>
-<path class="edge" d="M385 558 L385 578"/>
-<path class="edge" d="M535 558 L535 578"/>
-<path class="edge" d="M685 558 L685 578"/>
-<path class="edge" d="M85 578 L835 578"/>
-<path class="edge" d="M460 578 L460 608" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="601">and any of its own tools, in the same turn</text>
-<path class="edge" d="M460 616 L460 632"/>
-<path class="edge" d="M157 632 L763 632"/>
-<path class="edge" d="M157 632 L157 644" marker-end="url(#arrow)"/>
+<path class="edge" d="M85 786 L85 806"/>
+<path class="edge" d="M835 786 L835 806"/>
+<path class="edge" d="M235 786 L235 806"/>
+<path class="edge" d="M385 786 L385 806"/>
+<path class="edge" d="M535 786 L535 806"/>
+<path class="edge" d="M685 786 L685 806"/>
+<path class="edge" d="M85 806 L835 806"/>
+<path class="edge" d="M460 806 L460 836" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="829">and any of its own tools, in the same turn</text>
+<path class="edge" d="M460 844 L460 860"/>
+<path class="edge" d="M157 860 L763 860"/>
+<path class="edge" d="M157 860 L157 872" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="62" y="652" width="190" height="66" rx="9"/>
-<text class="agent-tag small" x="242" y="665">AGENT</text>
-<text class="determ-tag small" x="72" y="665">DETERMINISTIC</text>
-<text class="title small" x="157" y="685">search_documents</text>
-<text class="mono small" x="157" y="702">the knowledge base</text>
+<rect x="62" y="880" width="190" height="66" rx="9"/>
+<text class="agent-tag small" x="242" y="893">AGENT</text>
+<text class="determ-tag small" x="72" y="893">DETERMINISTIC</text>
+<text class="title small" x="157" y="913">search_documents</text>
+<text class="mono small" x="157" y="930">the knowledge base</text>
 </g>
-<path class="edge" d="M359 632 L359 644" marker-end="url(#arrow)"/>
+<path class="edge" d="M359 860 L359 872" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="264" y="652" width="190" height="66" rx="9"/>
-<text class="agent-tag small" x="444" y="665">AGENT</text>
-<text class="determ-tag small" x="274" y="665">DETERMINISTIC</text>
-<text class="title small" x="359" y="685">lookup_fee</text>
-<text class="mono small" x="359" y="702">a fee schedule</text>
+<rect x="264" y="880" width="190" height="66" rx="9"/>
+<text class="agent-tag small" x="444" y="893">AGENT</text>
+<text class="determ-tag small" x="274" y="893">DETERMINISTIC</text>
+<text class="title small" x="359" y="913">lookup_fee</text>
+<text class="mono small" x="359" y="930">a fee schedule</text>
 </g>
-<path class="edge" d="M561 632 L561 644" marker-end="url(#arrow)"/>
+<path class="edge" d="M561 860 L561 872" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="466" y="652" width="190" height="66" rx="9"/>
-<text class="agent-tag small" x="646" y="665">AGENT</text>
-<text class="determ-tag small" x="476" y="665">DETERMINISTIC</text>
-<text class="title small" x="561" y="685">check_claim_status</text>
-<text class="mono small" x="561" y="702">a case record</text>
+<rect x="466" y="880" width="190" height="66" rx="9"/>
+<text class="agent-tag small" x="646" y="893">AGENT</text>
+<text class="determ-tag small" x="476" y="893">DETERMINISTIC</text>
+<text class="title small" x="561" y="913">check_claim_status</text>
+<text class="mono small" x="561" y="930">a case record</text>
 </g>
-<path class="edge" d="M763 632 L763 644" marker-end="url(#arrow)"/>
+<path class="edge" d="M763 860 L763 872" marker-end="url(#arrow)"/>
 <g class="node solid">
-<rect x="668" y="652" width="190" height="66" rx="9"/>
-<text class="agent-tag small" x="848" y="665">AGENT</text>
-<text class="determ-tag small" x="678" y="665">DETERMINISTIC</text>
-<text class="title small" x="763" y="685">file_grievance</text>
-<text class="mono small" x="763" y="702">writes — a person confirms first</text>
+<rect x="668" y="880" width="190" height="66" rx="9"/>
+<text class="agent-tag small" x="848" y="893">AGENT</text>
+<text class="determ-tag small" x="678" y="893">DETERMINISTIC</text>
+<text class="title small" x="763" y="913">file_grievance</text>
+<text class="mono small" x="763" y="930">writes — a person confirms first</text>
 </g>
-<path class="edge" d="M157 718 L157 738"/>
-<path class="edge" d="M763 718 L763 738"/>
-<path class="edge" d="M359 718 L359 738"/>
-<path class="edge" d="M561 718 L561 738"/>
-<path class="edge" d="M157 738 L763 738"/>
-<path class="edge" d="M460 738 L460 768" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="761">before either runs, or a write is even proposed</text>
+<path class="edge" d="M157 946 L157 966"/>
+<path class="edge" d="M763 946 L763 966"/>
+<path class="edge" d="M359 946 L359 966"/>
+<path class="edge" d="M561 946 L561 966"/>
+<path class="edge" d="M157 966 L763 966"/>
+<path class="edge" d="M460 966 L460 996" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="989">before either runs, or a write is even proposed</text>
 <g class="node gate">
-<rect x="150" y="776" width="620" height="66" rx="10"/>
-<text class="gate-label" x="168" y="798">AUTHORIZATION — RESOURCE OWNER</text>
-<text class="title left" x="168" y="820">Does the caller own this record?</text>
-<text class="mono left" x="168" y="839">check_claim_status · file_grievance only — a no-op for the other two</text>
+<rect x="150" y="1004" width="620" height="66" rx="10"/>
+<text class="gate-label" x="168" y="1026">AUTHORIZATION — RESOURCE OWNER</text>
+<text class="title left" x="168" y="1048">Does the caller own this record?</text>
+<text class="mono left" x="168" y="1067">check_claim_status · file_grievance only — a no-op for the other two</text>
 </g>
-<path class="deny" d="M770 809 L925 809"/>
-<text class="deny-label" x="784" y="801">not this caller's record</text>
-<path class="edge" d="M460 842 L460 872" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="865">owner confirmed, or nothing to check</text>
+<path class="deny" d="M770 1037 L925 1037"/>
+<text class="deny-label" x="784" y="1029">not this caller's record</text>
+<path class="edge" d="M460 1070 L460 1100" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="1093">owner confirmed, or nothing to check</text>
 <g class="node gate">
-<rect x="150" y="880" width="620" height="66" rx="10"/>
-<text class="gate-label" x="168" y="902">GATE — AGENT.DATA</text>
-<text class="title left" x="168" y="924">Is that result safe to read?</text>
-<text class="mono left" x="168" y="943">a record is text somebody else wrote — it crosses a rail first</text>
+<rect x="150" y="1108" width="620" height="66" rx="10"/>
+<text class="gate-label" x="168" y="1130">GATE — AGENT.DATA</text>
+<text class="title left" x="168" y="1152">Is that result safe to read?</text>
+<text class="mono left" x="168" y="1171">a record is text somebody else wrote — it crosses a rail first</text>
 </g>
-<path class="edge" d="M460 946 L460 976" marker-end="url(#arrow)"/>
-<text class="edge-label" x="473" y="969">back to the agent, or on to an answer</text>
+<path class="edge" d="M460 1174 L460 1204" marker-end="url(#arrow)"/>
+<text class="edge-label" x="473" y="1197">back to the agent, or on to an answer</text>
 <g class="node solid">
-<rect x="230" y="984" width="460" height="58" rx="10"/>
-<text class="title small" x="460" y="1008">Retrieve</text>
-<text class="mono small" x="460" y="1027">a pass over the indexed corpus</text>
+<rect x="230" y="1212" width="460" height="58" rx="10"/>
+<text class="title small" x="460" y="1236">Retrieve</text>
+<text class="mono small" x="460" y="1255">a pass over the indexed corpus</text>
 </g>
-<path class="edge" d="M460 1042 L460 1064" marker-end="url(#arrow)"/>
+<path class="edge" d="M460 1270 L460 1292" marker-end="url(#arrow)"/>
 <g class="node model">
-<rect x="230" y="1072" width="460" height="58" rx="10"/>
-<text class="agent-tag" x="678" y="1088">AGENT</text>
-<text class="title small" x="460" y="1096">The model writes an answer</text>
-<text class="mono small" x="460" y="1115">only from what retrieval and the tools returned</text>
+<rect x="230" y="1300" width="460" height="58" rx="10"/>
+<text class="agent-tag" x="678" y="1316">AGENT</text>
+<text class="title small" x="460" y="1324">The model writes an answer</text>
+<text class="mono small" x="460" y="1343">only from what retrieval and the tools returned</text>
 </g>
-<path class="edge" d="M460 1130 L460 1152" marker-end="url(#arrow)"/>
+<path class="edge" d="M460 1358 L460 1380" marker-end="url(#arrow)"/>
 <g class="node data">
-<rect x="230" y="1160" width="460" height="58" rx="10"/>
-<text class="title small" x="460" y="1184">Generated answer</text>
-<text class="mono small" x="460" y="1203">a draft — nobody has seen it yet, two more gates first</text>
+<rect x="230" y="1388" width="460" height="58" rx="10"/>
+<text class="title small" x="460" y="1412">Generated answer</text>
+<text class="mono small" x="460" y="1431">a draft — nobody has seen it yet, two more gates first</text>
 </g>
-<path class="edge" d="M460 1218 L460 1246" marker-end="url(#arrow)"/>
+<path class="edge" d="M460 1446 L460 1474" marker-end="url(#arrow)"/>
 <g class="node gate">
-<rect x="150" y="1254" width="620" height="66" rx="10"/>
-<text class="gate-label" x="168" y="1276">GATE 3 — OUTPUT CHECK</text>
-<text class="title left" x="168" y="1298">Is the answer allowed out?</text>
-<text class="mono left" x="168" y="1317">pii · content · policy — the same checks, on the way back</text>
+<rect x="150" y="1482" width="620" height="66" rx="10"/>
+<text class="gate-label" x="168" y="1504">GATE 3 — OUTPUT CHECK</text>
+<text class="title left" x="168" y="1526">Is the answer allowed out?</text>
+<text class="mono left" x="168" y="1545">pii · content · policy — the same checks, on the way back</text>
 </g>
-<path class="deny" d="M770 1287 L925 1287"/>
-<text class="deny-label" x="784" y="1279">regenerate ≤ 2× — then a person</text>
-<path class="edge" d="M460 1320 L460 1348" marker-end="url(#arrow)"/>
+<path class="deny" d="M770 1515 L925 1515"/>
+<text class="deny-label" x="784" y="1507">regenerate ≤ 2× — then a person</text>
+<path class="edge" d="M460 1548 L460 1576" marker-end="url(#arrow)"/>
 <g class="node gate">
-<rect x="150" y="1356" width="620" height="66" rx="10"/>
-<text class="gate-label" x="168" y="1378">GATE 4 — GROUNDING</text>
-<text class="title left" x="168" y="1400">Does it match the sources?</text>
-<text class="mono left" x="168" y="1419">every claim checked against what was actually retrieved</text>
+<rect x="150" y="1584" width="620" height="66" rx="10"/>
+<text class="gate-label" x="168" y="1606">GATE 4 — GROUNDING</text>
+<text class="title left" x="168" y="1628">Does it match the sources?</text>
+<text class="mono left" x="168" y="1647">every claim checked against what was actually retrieved</text>
 </g>
-<path class="deny" d="M770 1389 L925 1389"/>
-<text class="deny-label" x="784" y="1381">sent to a person</text>
-<path class="edge" d="M460 1422 L460 1452" marker-end="url(#arrow)"/>
+<path class="deny" d="M770 1617 L925 1617"/>
+<text class="deny-label" x="784" y="1609">sent to a person</text>
+<path class="edge" d="M460 1650 L460 1680" marker-end="url(#arrow)"/>
 <g class="node terminal">
-<rect x="230" y="1460" width="460" height="62" rx="10"/>
-<text class="title" x="460" y="1487">The answer reaches the user</text>
-<text class="mono" x="460" y="1506">only what every gate above let through</text>
+<rect x="230" y="1688" width="460" height="62" rx="10"/>
+<text class="title" x="460" y="1715">The answer reaches the user</text>
+<text class="mono" x="460" y="1734">only what every gate above let through</text>
 </g>
-<path class="edge" d="M460 1522 L460 1548" marker-end="url(#arrow)"/>
+<path class="edge" d="M460 1750 L460 1776" marker-end="url(#arrow)"/>
 <g class="node data">
-<rect x="150" y="1556" width="620" height="62" rx="10"/>
-<text class="title" x="460" y="1583">TRACE</text>
-<text class="mono" x="460" y="1602">every check, decision, latency and action — hash-chained</text>
+<rect x="150" y="1784" width="620" height="62" rx="10"/>
+<text class="title" x="460" y="1811">TRACE</text>
+<text class="mono" x="460" y="1830">every check, decision, latency and action — hash-chained</text>
 </g>
-<path class="deny" d="M925 285 L925 1587 L780 1587" marker-end="url(#arrow-deny)"/>
+<path class="deny" d="M925 167 L925 1815 L780 1815" marker-end="url(#arrow-deny)"/>
 </svg>
     </div>
-    <figcaption>Gate 1 and Gate 2 run on every prompt at the <code>user.prompt</code> surface;
-      Gate 3 and Gate 4 run again on the reply at <code>llm.response</code>; the two agent
-      gates run once per tool call, at <code>agent.tool</code> and <code>agent.data</code>.
-      The authorization gate runs before either of those, on the raw resource
-      identifier — a mandatory check per tool declaration, not a step the agent
-      can choose to skip.</figcaption>
+    <figcaption>The pre-filter runs first and can stop a request with zero judge calls; the
+      Supervisor's own six-specialist-agent pass runs next, and only if a model is even
+      configured — either one can stop a request before Gate 1 ever sees it. Gate 1 and Gate 2
+      run on every prompt that reaches them, at the <code>user.prompt</code> surface; Gate 3
+      and Gate 4 run again on the reply at <code>llm.response</code>; the two agent gates run
+      once per tool call, at <code>agent.tool</code> and <code>agent.data</code>. The
+      authorization gate runs before either of those, on the raw resource identifier — a
+      mandatory check per tool declaration, not a step the agent can choose to skip.</figcaption>
     <div class="legend">
       <span><i class="solid"></i> solid — deterministic code</span>
       <span><i class="dashed"></i> dashed — a one-shot model call</span>
