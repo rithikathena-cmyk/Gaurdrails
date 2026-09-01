@@ -2,18 +2,15 @@
 
 | | |
 |---|---|
-| **`project-demo-review.html` / `.pdf`** | Demo-review focused: the end-to-end flow (ingestion, chat, agent), the concrete technique behind every checkpoint, and both agent layers side by side — `AgentRunner`'s tool loop and the `GuardrailSupervisor` → `Supervisor` (six specialists) → `PolicyEngine` reasoning pipeline, with a traced, measured example and a demo script. |
-| **`guardrails-explained.html` / `.pdf`** | How the stack works and how to demo it: the pipeline stage by stage, how a rail decides, what every parameter does and how to change it, how the agent's boundaries work, and a step-by-step script for walking someone through it. Twelve pages. |
-| `architecture.html` / `.pdf` | Earlier architecture write-up. |
-| **`local-testing-briefing.html` / `.pdf`** | Findings from a local test pass against the real seeded corpus: rail logic scores perfectly (39/39, zero false positives/negatives), but a retrieval-side PII latency budget silently drops real answers under sustained load — root cause, evidence, and a prioritized fix list. |
-| `guardrails-test-charter.html` / `.pdf` | A 51-case end-to-end question set for manual or scripted testing — grounded Q&A, PII masking (every entity type plus checksum-based false-positive controls), prompt injection, secrets, destructive intent, content safety, and known gaps, each with a copy-ready input and expected verdict. |
+| **`guardrails-demo-script.html` / `.pdf`** | A presenter's runbook for giving a live demo — the flow diagram explained first (ingestion, chat turn, agent turn, each mapped to the beats that exercise it), a plain numbered technical walkthrough of the same pipeline, then nine beats with a line to say, a copy-ready input, and what should happen. Three timing plans (5/15/30+ min), a closing line, and a Q&A backup section. |
+| **`guardrails-manual-test-questions.html` / `.pdf`** | No narration — just the questions to paste into the console (or click as a chip), who to sign in as, and the exact result each one produced when run live against this instance on 2026-09-01. Use this to check the stack still behaves, or as a quick reference while demoing. |
 
 The PDF is rendered from the HTML, which is the source. Regenerate after editing:
 
 ```bash
 chrome --headless --no-pdf-header-footer \
-  --print-to-pdf=docs/guardrails-explained.pdf \
-  file:///ABSOLUTE/PATH/docs/guardrails-explained.html
+  --print-to-pdf=docs/guardrails-demo-script.pdf \
+  file:///ABSOLUTE/PATH/docs/guardrails-demo-script.html
 ```
 
 Every figure in it is measured on a running deployment rather than estimated, so
