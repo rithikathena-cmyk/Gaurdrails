@@ -727,7 +727,7 @@
         <p class="say">"Let's ask it something real. Watch the trace panel on the right as this runs."</p>
         <div class="do-row"><span class="do-tag">DO</span> Chat tab — type or paste this (not a one-click chip)</div>
         <div class="case-text-row"><div class="case-text">How many Central Cooperative Banks operate in Tamil Nadu, and when did the State Apex Cooperative Bank start functioning?</div><button class="copy-btn" data-copy="How many Central Cooperative Banks operate in Tamil Nadu, and when did the State Apex Cooperative Bank start functioning?">copy</button></div>
-        <div class="case-note"><b>Expect:</b> a grounded reply citing 23 Central Cooperative Banks and 1905 as the year the State Apex Cooperative Bank started. <b>Point at:</b> open Request trace for this turn — every stage passed, and note the chunk count retrieved before Generation ran.</div>
+        <div class="case-note"><b>Expect:</b> usually a grounded reply citing 23 Central Cooperative Banks and 1905 (3 of 4 live runs got this cleanly). <b>On the odd run</b> it retrieves a narrower set of chunks and reports only the 1905 date and 933 branches, honestly saying the document "doesn't give an explicit count of Central Cooperative Banks" — still correct, ungrounded-invention-free behavior, just less complete. If that happens live, say so out loud rather than re-rolling: it's retrieval variance, not a wrong answer. <b>Point at:</b> open Request trace for this turn — every stage passed, and note the chunk count retrieved before Generation ran.</div>
       </div></div>
     </div>
   </section>
