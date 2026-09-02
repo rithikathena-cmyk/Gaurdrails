@@ -142,6 +142,71 @@ def test_scope_only_runs_on_what_the_user_asked(tmp_path):
     assert not any(r.rail == "scope.domain" for r in retrieval.results)
 
 
+# ── judge-only mode windows a large document too ────────────────────
+# Regression: `engine_mode="judge"` (no Presidio) used to take a completely
+# different branch from `presidio+judge` — one raw `self.llm.judge(...)`
+# call over the *whole* text, no windowing, and no explicit `max_tokens`
+# (silently the SDK default, 2048). Fine for a prompt or a reply; a real
+# ~150,000-character document sent that way is guaranteed to come back
+# truncated. This is not a hypothetical corner: `Engine.reseed_builtin_
+# rails()` forces exactly this mode, specifically for the one real document
+# this whole codebase always has — a live ingest run quarantined it on
+# `judge returned non-JSON`, repeatedly, every time it took this path,
+# while the identical content windowed through `presidio+judge` never
+# failed once in the same testing. `TrackingJudge` below records each
+# call's own `user` length and `max_tokens`, which a bare call-count
+# assertion cannot tell apart from one giant call that happened to be
+# asked twice for an unrelated reason.
+class TrackingJudge:
+    model = "stub"
+
+    def __init__(self, entities_by_window):
+        """`entities_by_window(user_text) -> list[dict]` — let each call
+        answer for its own slice, so entities from every window are
+        distinguishable in the merged result."""
+        self._entities_by_window = entities_by_window
+        self.calls: list[tuple[int, int]] = []   # (len(user), max_tokens)
+
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
+        self.calls.append((len(user), max_tokens))
+        props = set(schema.get("properties", {}))
+        if "entities" in props:
+            return {"entities": self._entities_by_window(user)}
+        return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}
+
+
+def test_judge_only_mode_windows_a_document_larger_than_one_window():
+    from backend.guardrails.rails.entities import _JUDGE_MAX_TOKENS, _JUDGE_WINDOW_CHARS
+
+    # Three windows' worth, each holding its own distinctive capitalised
+    # name so a dropped window is visible as a missing entity, not just a
+    # missing call.
+    names = ["Meera Balan", "Ramesh Kumar", "Anitha Selvam"]
+    paragraph = "This paragraph exists only to take up space. " * 200  # > one window
+    text = f"\n\n{paragraph}\n\n".join(f"A note about {n}." for n in names)
+    assert len(text) > _JUDGE_WINDOW_CHARS * 2, "the fixture must span multiple windows"
+
+    def entities_by_window(user_text: str) -> list[dict]:
+        return [{"text": n, "kind": "PERSON", "confidence": 0.9}
+                for n in names if n in user_text]
+
+    judge = TrackingJudge(entities_by_window)
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="judge")
+    result = rail.evaluate(text, "mask", blank("pii.entities"))
+
+    assert len(judge.calls) > 1, "a document this large must be windowed, not sent whole"
+    for length, max_tokens in judge.calls:
+        assert length <= _JUDGE_WINDOW_CHARS + 1, (
+            f"a {length}-char call was not bounded to one window"
+        )
+        assert max_tokens == _JUDGE_MAX_TOKENS, (
+            f"got max_tokens={max_tokens}, not the rail's own {_JUDGE_MAX_TOKENS} budget "
+            "— the SDK default (2048) is what let a real document truncate silently"
+        )
+    for name in names:
+        assert name not in result.text_out, f"{name} from a non-first window was dropped"
+
+
 # ── named entities ─────────────────────────────────────────────────
 def test_text_with_no_capitalised_candidate_never_reaches_the_model():
     judge = CountingJudge()
@@ -192,6 +257,82 @@ def test_public_bodies_are_not_treated_as_entities_by_configuration():
     """LOCATION is off by default: a city on its own does not identify anyone."""
     policy = load(REPO / "config" / "policy.yaml")
     assert "LOCATION" not in policy.get("pii.entity_kinds")
+
+
+# ── retrieval-surface candidate gating ─────────────────────────────
+# Retrieved text is the corpus's own document, not user input, and a real
+# document is thick with capitalised words the cheap `_CANDIDATE` gate above
+# cannot tell apart from an actual name — so on retrieval specifically,
+# `presidio+judge` only pays for the judge when Presidio itself proposed
+# something. `user.prompt` is deliberately unaffected: see
+# `test_a_name_and_an_address_are_masked_into_the_vault` and friends above,
+# none of which pass `surface=`, so they exercise the always-ask-the-judge
+# default this gate must not touch.
+RCS_RETRIEVAL_TEXT = "The Tamil Nadu State Apex Cooperative Bank runs this scheme."
+
+
+def test_retrieval_text_with_no_presidio_candidate_skips_the_judge():
+    """The regression this closes: every retrieval-surface question against a
+    real document paid for a full judge scan even when Presidio — the cheap
+    layer specifically meant to gate it — found nothing at all. `no_local_ner`
+    (autouse) already makes Presidio unavailable, i.e. `proposed == []`,
+    which is the exact condition this gate is keyed on."""
+    judge = CountingJudge({"entities": [
+        {"text": "Tamil Nadu State Apex Cooperative Bank", "kind": "ORGANISATION",
+         "confidence": 0.9},
+    ]})
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="presidio+judge")
+    result = rail.evaluate(RCS_RETRIEVAL_TEXT, "mask", blank("pii.entities"),
+                           surface="retrieval")
+    assert judge.calls == 0, "nothing for Presidio to propose — the judge must not run"
+    assert result.verdict is Verdict.PASS
+    assert result.meta["layer"] == "presidio"
+    assert result.meta["retrieval_judge_skipped"] == "no presidio candidate"
+
+
+def test_user_prompt_text_with_no_presidio_candidate_still_asks_the_judge():
+    """The asymmetry, proven directly: the identical text and identical
+    "Presidio found nothing" condition, but on `user.prompt` — where a missed
+    name matters most and the text is never six retrieved chunks long — the
+    judge still runs, unaffected by the retrieval-only gate above."""
+    judge = CountingJudge({"entities": [
+        {"text": "Tamil Nadu State Apex Cooperative Bank", "kind": "ORGANISATION",
+         "confidence": 0.9},
+    ]})
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="presidio+judge")
+    result = rail.evaluate(RCS_RETRIEVAL_TEXT, "mask", blank("pii.entities"),
+                           surface="user.prompt")
+    assert judge.calls == 1
+    assert result.meta["layer"] == "judge"
+    assert "retrieval_judge_skipped" not in result.meta
+
+
+# ── Test 4 ──────────────────────────────────────────────────────────
+def test_retrieval_text_with_a_presidio_candidate_still_asks_the_judge(monkeypatch):
+    """The other half of the gate: Presidio proposing *something* — a real
+    PII candidate, not an institution name — still hands the question to the
+    judge for corroboration, exactly as `user.prompt` always does. The cost
+    saving is specific to "nothing to even ask about", not retrieval as a
+    whole."""
+    from backend.guardrails.rails import presidio_ner
+
+    text = "A note from Meera Balan about the claim."
+    start = text.index("Meera Balan")
+
+    def fake_find(text, kinds, min_confidence, taken=None):
+        return [{"text": "Meera Balan", "kind": "PERSON", "confidence": 0.95,
+                 "start": start, "end": start + len("Meera Balan")}]
+
+    monkeypatch.setattr(presidio_ner, "find", fake_find)
+    judge = CountingJudge({"entities": [
+        {"text": "Meera Balan", "kind": "PERSON", "confidence": 0.95},
+    ]})
+    rail = EntityRail(judge, Vault(), 0.6, "vault-token", engine_mode="presidio+judge")
+    result = rail.evaluate(text, "mask", blank("pii.entities"), surface="retrieval")
+    assert judge.calls == 1, "a real Presidio candidate must still reach the judge"
+    assert result.verdict is Verdict.MASK
+    assert "Meera Balan" not in result.text_out
+    assert result.meta["layer"] == "presidio+judge"
 
 
 def test_partial_masking_of_a_name_reveals_nothing_regardless_of_config():

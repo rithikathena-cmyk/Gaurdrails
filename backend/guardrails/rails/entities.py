@@ -30,7 +30,8 @@ import re
 from ..llm import LLMError
 from ..prompts import judge_prompt
 from . import presidio_ner
-from ..types import Detection, RailResult, Verdict, action_verdict
+from ..types import Detection, RailResult, Verdict, action_verdict, precedence
+from .kind_actions import resolve as resolve_kind_action
 
 ENTITY_SCHEMA = {
     "type": "object",
@@ -48,7 +49,7 @@ ENTITY_SCHEMA = {
                     },
                     "kind": {
                         "type": "string",
-                        "description": "PERSON | ADDRESS | ORGANISATION | LOCATION",
+                        "description": "PERSON | ADDRESS | ORGANISATION | GOVERNMENT | LOCATION",
                     },
                     "confidence": {"type": "number", "description": "0.0–1.0"},
                 },
@@ -69,18 +70,27 @@ Return every occurrence of:
 - PERSON: a person's name, including a partial name used as an identifier
 - ADDRESS: a street address, house number and street, or postal address
 - ORGANISATION: a named private employer or company that identifies a person
+- GOVERNMENT: a public office, department, ministry, court, municipal body, or a \
+cooperative society, union, federation, institute, academy, board, or corporation \
+operating under a Registrar of Cooperative Societies, a government department, or \
+similar statutory oversight — these are public-sector bodies, not private employers, \
+whatever legal form their name takes ("... Union", "... Federation", "Institute of \
+...", "... Cooperative Management", "... Apex Bank", "District ... Cooperative Bank", \
+and so on). Classify it as GOVERNMENT, do not omit it and do not call it ORGANISATION \
+or PERSON.
 - LOCATION: a specific place that would identify a household, such as a village \
 together with a house number
 
 Do not return:
-- names of public offices, departments, ministries, courts, or municipal bodies
-- a cooperative society, union, federation, institute, academy, board, or corporation \
-operating under a Registrar of Cooperative Societies, a government department, or \
-similar statutory oversight — these are public-sector bodies, not private employers, \
-whatever legal form their name takes ("... Union", "... Federation", "Institute of \
-...", "... Cooperative Management", and so on)
 - job titles with no name attached
-- cities, districts, or states on their own
+- cities, districts, states, or nations on their own — "Tamil Nadu", "Kerala", \
+"Chennai", "India" name a place, never a person, even standing alone at the start of \
+a sentence or immediately before an organisation's name ("Tamil Nadu State Apex \
+Cooperative Bank" is one GOVERNMENT body; "Tamil Nadu" inside it is not a separate \
+PERSON). If a phrase names a state, union territory, or nation, it is excluded by \
+this rule regardless of capitalisation or position — it is never PERSON, and it is \
+LOCATION only when it also identifies a specific household address (see LOCATION \
+above), which a bare state or country name never does on its own.
 - scheme, form, statute, or programme names
 - anything already written as a masked token
 
@@ -95,7 +105,7 @@ expand an initial, or normalise a form. Return an empty list rather than guessin
 _CANDIDATE = re.compile(r"(?<![.!?]\s)(?<!^)\b[A-Z][a-z]{2,}\b", re.M)
 _ALREADY_MASKED = re.compile(r"<[A-Z_0-9]+:[0-9a-f]{12}(?:\s…[^>]*)?>")
 
-KINDS = {"PERSON", "ADDRESS", "ORGANISATION", "LOCATION"}
+KINDS = {"PERSON", "ADDRESS", "ORGANISATION", "GOVERNMENT", "LOCATION"}
 
 #: (trailing, leading) characters safe to reveal under partial masking, per
 #: kind — the same ceiling concept as `Recognizer.reveal`/`reveal_prefix` in
@@ -113,6 +123,15 @@ _REVEAL_CAP: dict[str, tuple[int, int]] = {}
 # exceed `max_tokens` and come back truncated — an `LLMError` on a document
 # that had done nothing wrong except be long. Below this size nothing changes
 # — one window is the whole text, exactly as before.
+#
+# Kept at 6,000, deliberately, even though GOVERNMENT joining the returned
+# kinds means more entities per window than before this session: a *smaller*
+# window was tried first and made the actual, measured failure worse, not
+# better — see `_JUDGE_MAX_TOKENS`'s note. More windows means more sequential
+# batches through `_JUDGE_MAX_WORKERS`' 8 concurrent slots, and it was the
+# *whole-document* wall time against `ingest.latency_budget_ms` that was
+# failing, live, not entity density against `_JUDGE_MAX_TOKENS` — fewer,
+# larger windows is the right direction for that, not the wrong one.
 _JUDGE_WINDOW_CHARS = 6000
 #: So an entity sitting across a window boundary still appears whole in at
 #: least one window rather than being split in both and found in neither.
@@ -125,9 +144,31 @@ _JUDGE_WINDOW_OVERLAP = 200
 #: and so on) can spend enough of a tight budget on that reasoning to leave
 #: the entities array truncated — invalid JSON, not oversized JSON. Observed
 #: in production on a single 6,000-char window with a dense name list, at
-#: 4096; raised with headroom for both, not just for a longer entity array.
-_JUDGE_MAX_TOKENS = 8192
+#: 4096; raised to 8192 with headroom for both. Raised again here, to give
+#: GOVERNMENT-kind entities — now returned instead of silently dropped —
+#: headroom too, without needing a smaller (and, measured, slower overall)
+#: window to compensate.
+_JUDGE_MAX_TOKENS = 12288
 _JUDGE_MAX_WORKERS = 8
+#: Same-size attempts `_judge_one` makes before it gives up and splits.
+#: Deliberately small: a real ingest run against the RCS Citizen Charter
+#: showed two *independent* failure shapes on the same document —
+#: occasional truncated JSON from one window (which a retry or two clears),
+#: and the *whole scan* running past `ingest.latency_budget_ms` when the
+#: rare window needs more than one attempt. Retrying aggressively fixes the
+#: first at the direct expense of the second: five attempts per failing
+#: window, measured, pushed total wall time past the 60s ingest budget more
+#: often than it saved documents from a bad response. Two attempts is the
+#: cheaper, still-real improvement over one; `ingest.latency_budget_ms`
+#: itself (see registry.py) carries the rest of the headroom.
+_JUDGE_ONE_RETRIES = 2
+#: `_judge_one`'s split-on-persistent-failure floor: three halvings of a
+#: 6,000-char window bottoms out around 750 — small enough that no realistic
+#: entity density overflows `_JUDGE_MAX_TOKENS` for it, without splitting a
+#: pathological window down to single sentences for no further benefit. This
+#: path is the rare last resort, not the common case — see `_JUDGE_ONE_RETRIES`.
+_JUDGE_MAX_SPLIT_DEPTH = 3
+_JUDGE_MIN_SPLIT_CHARS = 750
 
 
 def _windows(text: str, size: int, overlap: int) -> list[str]:
@@ -176,12 +217,20 @@ class EntityRail:
     def __init__(self, llm, vault, confidence_threshold: float, mask_strategy: str,
                  kinds: list[str] | None = None, engine_mode: str = "presidio+judge",
                  allowlist: list[str] | None = None,
-                 partial_reveal: int = 0, partial_reveal_prefix: int = 0) -> None:
+                 partial_reveal: int = 0, partial_reveal_prefix: int = 0,
+                 kind_actions: dict[str, str] | None = None,
+                 kind_mask_strategy: dict[str, str] | None = None) -> None:
         self.llm = llm
         self.vault = vault
         self.min_conf = confidence_threshold
         self.strategy = mask_strategy
         self.kinds = {k.upper() for k in (kinds or KINDS)} & KINDS
+        #: `pii.kind_actions` — see `kind_actions.py`. A kind with no entry
+        #: here gets whatever action the surface was already going to apply.
+        self.kind_actions = dict(kind_actions or {})
+        #: `pii.kind_mask_strategy` — a kind with no entry here renders with
+        #: the global `pii.mask_strategy`.
+        self.kind_strategy = dict(kind_mask_strategy or {})
         # Same knobs `pii.py` reads, same reason: a caller may configure a
         # generous reveal count meant for a phone number's last four digits,
         # but a name or an address has no per-kind ceiling raising it above
@@ -245,32 +294,69 @@ class EntityRail:
                 entities.extend((found.get("entities") or [])[:80])
         return entities
 
-    def _judge_one(self, window: str) -> dict:
-        """One window's judge call, with a single retry.
+    def _judge_one(self, window: str, *, depth: int = 0) -> dict:
+        """One window's judge call, retried same-size up to
+        `_JUDGE_ONE_RETRIES` times, and — only once every same-size attempt
+        has failed — split in half and judged as two smaller calls instead.
 
-        Observed in production: a window well inside `_JUDGE_MAX_TOKENS` still
-        occasionally comes back as truncated, invalid JSON — a one-off glitch
-        in that generation, not a property of the text, since a repeat call
-        with the identical window succeeds. Retrying costs one extra call only
-        on that rare path; the common path is unaffected.
+        Both failure shapes below come back identically from `self.llm.judge`
+        — `LLMError("judge returned non-JSON: ...")`, truncated mid-entity —
+        which is why both get the same two-stage answer rather than being
+        told apart up front:
+
+        A single window judged alone, even at this same size, succeeds
+        reliably in isolation and under this rail's own internal 8-way
+        concurrency (`_JUDGE_MAX_WORKERS`) — measured directly, repeatedly,
+        against the real RCS Citizen Charter's own opening section. It only
+        started failing — close to half the time, on a real ingest run —
+        once it ran concurrently with `content.safety` and `prompt_attack`'s
+        *own* judge calls, which `evaluate()` submits to the same pool for
+        `Surface.INGEST`. Several same-size retries is the honest fix for
+        that: whatever the contention actually is, most individual attempts
+        still succeed, so a handful of independent ones essentially never all
+        fail together.
+
+        The split is the fallback for the other, rarer shape: a window
+        genuinely too dense for any single reply to fit in budget — observed
+        once, live, on a doubled `_JUDGE_MAX_TOKENS`. Splitting at a
+        whitespace boundary near the midpoint keeps every entity intact in
+        at least one half, the same reason `_JUDGE_WINDOW_OVERLAP` exists for
+        the outer windowing pass. Bounded to `_JUDGE_MAX_SPLIT_DEPTH`
+        halvings and a `_JUDGE_MIN_SPLIT_CHARS` floor so a window that is
+        dense at *every* scale still fails outright eventually — loudly, as
+        an `LLMError` the caller's own fail-closed handling already knows
+        what to do with, not a silent partial scan.
         """
-        try:
+        for _ in range(_JUDGE_ONE_RETRIES):
+            try:
+                return self.llm.judge(ENTITY_SYSTEM, window, ENTITY_SCHEMA,
+                                      max_tokens=_JUDGE_MAX_TOKENS)
+            except LLMError:
+                continue
+        if depth >= _JUDGE_MAX_SPLIT_DEPTH or len(window) < _JUDGE_MIN_SPLIT_CHARS:
             return self.llm.judge(ENTITY_SYSTEM, window, ENTITY_SCHEMA,
-                                   max_tokens=_JUDGE_MAX_TOKENS)
-        except LLMError:
-            return self.llm.judge(ENTITY_SYSTEM, window, ENTITY_SCHEMA,
-                                   max_tokens=_JUDGE_MAX_TOKENS)
+                                  max_tokens=_JUDGE_MAX_TOKENS)  # let the final LLMError raise
+        mid = len(window) // 2
+        space = window.find(" ", mid)
+        if space < 0:
+            space = mid
+        left, right = self._judge_one(window[:space], depth=depth + 1), \
+            self._judge_one(window[space:], depth=depth + 1)
+        return {"entities": [*(left.get("entities") or []), *(right.get("entities") or [])]}
 
     def _replacement(self, kind: str, raw: str, owner: str) -> str:
-        if self.strategy == "redact":
+        # `pii.kind_mask_strategy` — a kind not listed renders with the
+        # global `pii.mask_strategy`, unchanged from before this existed.
+        strategy = resolve_kind_action(kind, self.kind_strategy, self.strategy)
+        if strategy == "redact":
             return "[REDACTED]"
-        if self.strategy == "replace":
+        if strategy == "replace":
             return f"<{kind}>"
-        if self.strategy == "hash":
+        if strategy == "hash":
             import hashlib
 
             return f"<{kind}:{hashlib.sha256(raw.encode()).hexdigest()[:8]}>"
-        if self.strategy == "partial":
+        if strategy == "partial":
             # No kind here has a non-zero ceiling today (`_REVEAL_CAP`), so this
             # currently always fully masks — same "other entity kinds ignore
             # it" rule `pii.partial_reveal_prefix` documents for pii.py's own
@@ -288,9 +374,14 @@ class EntityRail:
         return f"<{kind}:{self.vault.store(kind, raw, owner)}>"
 
     def evaluate(self, text: str, action: str, result: RailResult,
-                 prior: list[Detection] | None = None, owner: str = "") -> RailResult:
+                 prior: list[Detection] | None = None, owner: str = "",
+                 surface: str = "") -> RailResult:
         """`prior` is what the deterministic rail already claimed, so NER cannot
-        return a worse guess over the same characters."""
+        return a worse guess over the same characters.
+
+        `surface` only changes one thing — see the `retrieval` branch below,
+        where a `presidio+judge` scan with nothing for Presidio to propose is
+        skipped rather than run anyway."""
         prior = prior or []
         result.unit = "count"
         result.threshold = 1.0
@@ -324,7 +415,23 @@ class EntityRail:
         layer = ""
         corroborated = rejected = 0
 
-        if use_judge and self.engine_mode == "presidio+judge":
+        # Retrieved text is not user input: it is the corpus's own document,
+        # already screened once at ingest, run back through the same rail on
+        # every question that retrieves it. Asking the judge to re-adjudicate
+        # a passage Presidio didn't even flag is where the cost piles up — a
+        # citizen charter is thick with real capitalised names, so the gate
+        # above almost never skips it, and every one of those calls used to
+        # pay for a full multi-window judge scan of all six retrieved chunks
+        # regardless (measured live: 36s, well past the 20s rail budget).
+        # `user.prompt` keeps the aggressive, always-ask-the-judge behaviour
+        # below — a citizen's own message is exactly where a missed name
+        # matters most, and it is never six chunks long.
+        skip_retrieval_judge = (surface == "retrieval" and not proposed
+                                and self.engine_mode == "presidio+judge")
+        if use_judge and skip_retrieval_judge:
+            layer = "presidio"
+            result.meta["retrieval_judge_skipped"] = "no presidio candidate"
+        elif use_judge and self.engine_mode == "presidio+judge":
             # Presidio proposes; the judge decides. It used to be asked *only*
             # when Presidio found nothing, which meant a Presidio hit was never
             # reviewed — and Presidio hits things that are not people. On this
@@ -357,8 +464,21 @@ class EntityRail:
         elif proposed:
             items, layer = proposed, "presidio"
         elif use_judge:
-            found = self.llm.judge(ENTITY_SYSTEM, text, ENTITY_SCHEMA)
-            items = list((found.get("entities") or [])[:40])
+            # Pre-existing bug, found while chasing an unrelated ingest
+            # failure: this used to be one raw `self.llm.judge(...)` call
+            # over the *whole* `text` with no window and the default
+            # `max_tokens` (2048) — fine for a prompt or a reply, silently
+            # guaranteed to truncate on a real document, since nothing here
+            # ever sized the call to the input. `judge`-only mode is not a
+            # rare corner: `reseed_builtin_rails()` forces it for exactly a
+            # real ~150,000-character document, specifically to avoid a slow
+            # Presidio cold-load blocking startup — the single largest text
+            # this rail is ever asked to classify was the one case taking
+            # the path with no size protection at all. `_judge_entities`
+            # already windows, retries, and splits for `presidio+judge`;
+            # reusing it here costs nothing when `text` is short (one window
+            # is the whole text, unchanged) and fixes it when it is not.
+            items = self._judge_entities(text)
             layer = "judge"
 
         spans: list[tuple[int, int, str, str, float]] = []
@@ -415,10 +535,24 @@ class EntityRail:
             result.verdict = Verdict.PASS
             return result
 
-        result.verdict = action_verdict(action, Verdict.MASK)
-        if result.verdict is Verdict.MASK:
-            out = text
-            for start, end, kind, raw, _ in sorted(kept, reverse=True):
+        # Each kind resolves its own action first — GOVERNMENT can stay ALLOW
+        # while PERSON in the same sentence still gets redacted. Precedence
+        # still applies across the mix: any kind resolving to `block` blocks
+        # the whole result, same rule `pii.py` and the engine both already
+        # enforce across a set of findings.
+        resolved = [
+            (start, end, kind, raw, conf,
+             action_verdict(resolve_kind_action(kind, self.kind_actions, action), Verdict.MASK))
+            for start, end, kind, raw, conf in kept
+        ]
+        result.verdict = precedence([v for *_, v in resolved])
+        if result.verdict is Verdict.BLOCK:
+            return result
+
+        out = text
+        for start, end, kind, raw, _, verdict in sorted(resolved, reverse=True):
+            if verdict is Verdict.MASK:
                 out = out[:start] + self._replacement(kind, raw, owner) + out[end:]
+        if out != text:
             result.text_out = out
         return result

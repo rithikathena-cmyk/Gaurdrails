@@ -197,3 +197,32 @@ def test_e_prompt_injection_still_blocks_before_retrieval(engine):
     assert res.chunks == []
     attack = [r for r in res.trace.rails if r.rail == "prompt_attack"]
     assert attack and attack[0].verdict is Verdict.BLOCK
+
+
+# ── Test 5: the full path survives, end to end ──────────────────────
+def test_a_normal_in_corpus_question_survives_retrieval_and_grounds():
+    """The property the whole timeout/detach + retrieval-gating fix exists
+    for: an ordinary, in-corpus question keeps its retrieved context all the
+    way through `pii.entities` on the retrieval surface, reaches the
+    grounding rail, and comes back with a real answer — not the "that check
+    did not complete" refusal a budget-exceeded retrieval stage used to
+    produce for every single question against a real document."""
+    engine, llm = build(0.9, corpus=_rcs_corpus())
+    res = engine.converse(
+        "What is the address for TamilNadu Consumer Cooperative Federation?"
+    )
+
+    assert res.blocked is False
+    assert res.chunks, "the retrieved context must have survived pii.entities"
+    assert any("Anna Salai" in c for c in res.chunks)
+    assert res.reply, "a real answer must have been generated"
+    assert "123 Anna Salai" in res.reply
+
+    grounding = [r for r in res.trace.rails if r.rail == "grounding.consistency"]
+    assert grounding, "the turn must have reached the grounding rail at all"
+    assert grounding[0].verdict is Verdict.PASS
+
+    entities = [r for r in res.trace.rails if r.rail == "pii.entities"]
+    assert entities and entities[0].verdict is not Verdict.BLOCK, (
+        "pii.entities must not have failed the retrieval surface closed"
+    )

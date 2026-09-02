@@ -67,16 +67,35 @@ def active() -> Any:
     return _ACTIVE
 
 
-def retrieve(query: str, k: int = 4, min_score: float = 0.15) -> list[str]:
+def retrieve(query: str, k: int = 4, min_score: float = 0.15, policy: Any = None,
+            return_hits: bool = False) -> list[str]:
     """Return at most `k` context chunks, best first.
 
     A weak match is worse than no match — it gives the grounding rail
     irrelevant context to score against — so `min_score` is a floor on term
     coverage, not a ranking tweak.
+
+    `policy` governs `retrieval.engine` — see `ingest.search_with_rerank()`.
+    `None` (the unbound-corpus fallback below, and any caller that hasn't been
+    updated) means plain BM25, today's exact behaviour.
+
+    `return_hits=True` returns the underlying `Hit` objects instead of
+    flattened text — the one extra thing a caller needs to look up a chunk's
+    parent document (`Hit.doc_id`), which flattening to `hit.as_context()`
+    throws away. The unbound-corpus fallback below has no documents, only
+    seed dicts with no id, so it never has hits to return this way — callers
+    that need `return_hits` are all callers with a bound `Corpus`.
     """
     if _ACTIVE is not None:
-        return [hit.as_context() for hit in _ACTIVE.search(query, k, min_score)]
+        if policy is not None:
+            from .ingest import search_with_rerank
+            hits = search_with_rerank(_ACTIVE, query, k, min_score, policy)
+        else:
+            hits = _ACTIVE.search(query, k, min_score)
+        return hits if return_hits else [hit.as_context() for hit in hits]
 
+    if return_hits:
+        return []
     q = _tokens(query)
     if not q:
         return []

@@ -175,6 +175,46 @@ def test_agent_evaluates_conflicting_tool_results(engine):
     assert result.decision.action == "MASK"
 
 
+# ── detect_pii_entities: the unknown-pattern case ──────────────────────
+def test_detect_pii_entities_finds_what_regex_and_presidio_miss(engine, monkeypatch):
+    """'EMP-XJ7291' matches no regex (no checksum, no known shape) and is not
+    a name or address Presidio was trained to find — the exact case neither
+    of the other two tools can help with. The free-form judge tier
+    (EntityRail._judge_entities, wired in this session) is the one tool that
+    can still name it, because it is not gated on any pattern matching
+    first."""
+    monkeypatch.setattr(
+        engine.entity_rail, "_judge_entities",
+        lambda text: [{"text": "EMP-XJ7291", "kind": "ORGANISATION", "confidence": 0.91}])
+    llm = ScriptedAgentLLM(
+        plans=[full_plan(["detect_pii_regex", "detect_pii_presidio", "detect_pii_entities"])],
+        decisions=[decision("MASK", rationale="an internal employee identifier, no known "
+                                              "format but clearly identifying",
+                            findings=[finding("employee_identifier")])])
+    result = PIIAgent(llm, engine).run(
+        "Please route this to EMP-XJ7291 for review.", owner="citizen")
+
+    regex_call = next(c for c in result.tool_calls if c.tool == "detect_pii_regex")
+    presidio_call = next(c for c in result.tool_calls if c.tool == "detect_pii_presidio")
+    entities_call = next(c for c in result.tool_calls if c.tool == "detect_pii_entities")
+    assert regex_call.result["findings"] == [], "no regex should match an unfamiliar shape"
+    assert presidio_call.result["findings"] == [], "not a name or address Presidio knows"
+    assert entities_call.result["findings"], "the free-form judge tier should still surface it"
+    assert entities_call.result["findings"][0]["kind"] == "ORGANISATION"
+    assert entities_call.result["findings"][0]["start"] != -1, \
+        "the raw matched text must not be echoed back — only where it is"
+    assert result.decision.action == "MASK"
+
+
+def test_detect_pii_entities_is_in_the_tool_allowlist(engine, monkeypatch):
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities", lambda text: [])
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
+                           decisions=[decision("ALLOW")])
+    result = PIIAgent(llm, engine).run("some text", owner="citizen")
+    assert {c.tool for c in result.tool_calls} == {"detect_pii_entities"}
+    assert result.tool_calls[0].status == "ok"
+
+
 # ── 7-10: each action is reachable, chosen by the model ───────────────
 @pytest.mark.parametrize("action", ["MASK", "BLOCK", "ALLOW", "ESCALATE"])
 def test_agent_chooses_each_action(engine, action):
@@ -209,9 +249,10 @@ def test_a_hallucinated_tool_in_a_plan_is_never_silently_run(engine):
 
 def test_the_tool_registry_has_no_dynamic_dispatch(engine):
     """There is no getattr/eval path from a name to a function — only the
-    four names below resolve to anything, and nothing widens that set."""
+    five names below resolve to anything, and nothing widens that set."""
     assert set(PII_AGENT_TOOLS) == set(PII_TOOL_NAMES) == {
-        "detect_pii_regex", "detect_pii_presidio", "classify_pii_type", "get_pii_policy",
+        "detect_pii_regex", "detect_pii_presidio", "detect_pii_entities",
+        "classify_pii_type", "get_pii_policy",
     }
     for hostile in ("__import__", "exec", "eval", "os.system", "subprocess.run"):
         with pytest.raises(ToolNotAllowed):

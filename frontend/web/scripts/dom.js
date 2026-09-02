@@ -29,6 +29,15 @@ export function fmt(v) {
   return String(v);
 }
 
+/** A duration for a human to read. Judge calls run 1-100+s; showing that in
+ *  milliseconds (`"126872ms"`) is unreadable. Sub-second rails (most
+ *  deterministic ones) stay in ms, where a decimal second would be the
+ *  awkward choice instead. */
+export function fmtMs(ms) {
+  const n = Number(ms) || 0;
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`;
+}
+
 export function debounce(fn, ms = 350) {
   let t;
   return (...args) => {

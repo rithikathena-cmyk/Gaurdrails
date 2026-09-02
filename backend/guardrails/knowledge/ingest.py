@@ -442,6 +442,19 @@ class Document:
     #: flips this, and that is the honest answer for it: nothing rail-checked
     #: this content, so nothing should claim to have.
     rails_applied: bool = False
+    #: `kind_actions.classification_fingerprint()` at the moment this document
+    #: was ingested. A match at retrieval time means the chunks below were
+    #: already classified exactly as today's `pii.entity_kinds`/`pii.entities`/
+    #: etc. would classify them — the expensive judge scan can be skipped, not
+    #: re-run to confirm what ingestion already confirmed. Empty for anything
+    #: ingested before this field existed, or seeded with no `Engine` at all
+    #: (`rails_applied=False`) — both read as "unknown", never as "fresh".
+    pii_policy_version: str = ""
+    #: How many of each kind `pii.entities`/`pii.detect` found in the whole
+    #: document at ingest — counts only, never the values themselves, for the
+    #: same reason `findings` already redacts its own values. Audit and
+    #: freshness bookkeeping, not something retrieval reads to decide anything.
+    pii_kind_counts: dict[str, int] = field(default_factory=dict)
 
     @property
     def indexed(self) -> bool:
@@ -465,6 +478,8 @@ class Document:
             "method": self.method,
             "built_in": self.source == "built-in",
             "rails_applied": self.rails_applied,
+            "pii_policy_version": self.pii_policy_version,
+            "pii_kind_counts": self.pii_kind_counts,
         }
         if with_chunks:
             d["chunks"] = self.chunks
@@ -481,6 +496,8 @@ class Document:
             reason=d.get("reason", ""), request_id=d.get("request_id", ""),
             method=d.get("method", "text"),
             rails_applied=bool(d.get("rails_applied", False)),
+            pii_policy_version=str(d.get("pii_policy_version", "")),
+            pii_kind_counts=dict(d.get("pii_kind_counts") or {}),
         )
 
 
@@ -723,6 +740,31 @@ class Corpus:
                 hits.append(Hit(doc_id, doc.title, idx, doc.chunks[idx], score, coverage))
         hits.sort(key=lambda h: (-h.score, -h.coverage))
         return hits[:k]
+
+
+def search_with_rerank(corpus: "Corpus", query: str, k: int, min_coverage: float,
+                       policy: Any) -> list[Hit]:
+    """`corpus.search()`, optionally reranked by a local embedding model.
+
+    The one place both retrieval call sites (`Engine.converse()`'s `retrieve()`
+    and the `search_documents` agent tool) should reach through, rather than
+    calling `Corpus.search()` directly — so `retrieval.engine` governs both the
+    same way. `Corpus`/its BM25 index are never modified: this only decides how
+    many candidates to ask BM25 for, and whether to reorder what comes back.
+
+    `policy` is a plain object exposing `.get(key)`, the same `Policy` every
+    other call site in this codebase already threads through explicitly rather
+    than reading from a module-level global.
+    """
+    if str(policy.get("retrieval.engine")) != "bm25+embedding":
+        return corpus.search(query, k, min_coverage)
+
+    from ..rails import embedding_rerank
+
+    pool = max(k, int(policy.get("retrieval.embedding_candidates")))
+    hits = corpus.search(query, pool, min_coverage)
+    reranked = embedding_rerank.rerank(query, hits, top_k=k)
+    return reranked if reranked is not None else hits[:k]
 
 
 def new_document_id(title: str) -> str:

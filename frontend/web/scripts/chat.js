@@ -1,7 +1,7 @@
 /** Chat view. */
 
 import { api } from "./api.js";
-import { $, $$, esc } from "./dom.js";
+import { $, $$, esc, fmtMs } from "./dom.js";
 import { renderMarkdown } from "./markdown.js";
 import { addTrace, showTrace } from "./trace.js";
 import { refreshSidebarChats } from "./history.js";
@@ -190,7 +190,7 @@ function addAssistant(data) {
   if (t.regenerations) {
     chips.push(`<span class="chip flag">${t.regenerations} regeneration${t.regenerations > 1 ? "s" : ""}</span>`);
   }
-  chips.push(`<span class="chip mute">${Math.round(t.total_ms)}ms · ${Math.round(t.guardrail_ms)}ms rails</span>`);
+  chips.push(`<span class="chip mute">${fmtMs(t.total_ms)} · ${fmtMs(t.guardrail_ms)} rails</span>`);
 
   const node = document.createElement("div");
   node.className = "turn assistant";

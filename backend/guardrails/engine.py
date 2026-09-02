@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import concurrent.futures as futures
 import logging
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -27,6 +28,11 @@ from .rails.adjudicator import Adjudicator
 from .rails import toxicity_check
 from .rails.content import CATEGORIES, ContentRail, PromptAttackRail
 from .rails.entities import EntityRail
+from .rails.kind_actions import (
+    classification_fingerprint,
+    parse as parse_kind_actions,
+    parse_strategy as parse_kind_strategy,
+)
 from .rails.scope import ScopeRail, requires_retrieval
 from .rails.grounding import GroundingRail
 from .rails.normalize import normalize
@@ -38,6 +44,7 @@ from .types import (
     Detection,
     EvaluationResult,
     RailResult,
+    StageTrace,
     Surface,
     Trace,
     Verdict,
@@ -160,10 +167,20 @@ class Engine:
         self.reseed_builtin_rails()
 
     # -----------------------------------------------------------------
-    def reseed_builtin_rails(self) -> None:
+    def reseed_builtin_rails(self, *, force: bool = False) -> None:
         """Replace every built-in document that has never actually been
         rail-checked with the output of running it through `ingest()` for
         real — the exact path an uploaded document already takes.
+
+        `force=True` bypasses the disk-path gate below — for `run.py
+        --eval`'s deliberately ephemeral, in-memory corpus (see its own
+        comment: scoring must not depend on whatever happens to be uploaded
+        today). Without it, that corpus's seed document never gets a
+        `pii_policy_version` stamped, and every one of `--eval --answers`'s
+        retrieval-surface questions would silently exercise the slow,
+        always-rescan fallback path instead of the one a real deployment
+        (`server/state.py`, which always passes a real path) actually takes —
+        making the eval measure the wrong thing.
 
         Public, and called from two places: here, at construction, and again
         by `POST /api/documents/reset` after `Corpus.reset()` — `reset()` is
@@ -206,7 +223,7 @@ class Engine:
         judge alone still masks everything Presidio would have; it costs
         more model calls, not less protection.
         """
-        if self.corpus.path is None:
+        if self.corpus.path is None and not force:
             return
 
         from .knowledge.seed import CORPUS as SEED_CORPUS
@@ -238,6 +255,8 @@ class Engine:
             case_sensitive=bool(p.get("words.case_sensitive")),
             match_mode=str(p.get("words.match_mode")),
         )
+        kind_actions = parse_kind_actions(list(p.get("pii.kind_actions") or []))
+        kind_mask_strategy = parse_kind_strategy(list(p.get("pii.kind_mask_strategy") or []))
         self.pii_rail = PIIRail(
             entities=list(p.get("pii.entities") or []),
             confidence_threshold=float(p.get("pii.confidence_threshold")),
@@ -247,6 +266,8 @@ class Engine:
             custom_regex=list(p.get("pii.custom_regex") or []),
             vault=self.vault,
             allowlist=list(p.get("pii.allowlist") or []),
+            kind_actions=kind_actions,
+            kind_mask_strategy=kind_mask_strategy,
         )
         self.policy_rail = PolicyRail({
             "security_rules": list(p.get("policy.security_rules") or []),
@@ -286,6 +307,8 @@ class Engine:
             allowlist=list(p.get("pii.allowlist") or []),
             partial_reveal=int(p.get("pii.partial_reveal")),
             partial_reveal_prefix=int(p.get("pii.partial_reveal_prefix")),
+            kind_actions=kind_actions,
+            kind_mask_strategy=kind_mask_strategy,
         )
         # The adjudicator is not a rail: it reviews what the rails decided,
         # and only when one of them landed within a margin of its threshold.
@@ -364,6 +387,48 @@ class Engine:
             return res
 
     # -----------------------------------------------------------------
+    def _run_gated(self, st: StageTrace, abandoned: threading.Event,
+                   name: str, engine_label: str, fn) -> RailResult:
+        """Like `_run`, but for a rail submitted to a budget-bounded pool.
+
+        `evaluate()` stops waiting on this job once the budget expires — see
+        the `TimeoutError` handling there — but the thread itself is not
+        killed: Python cannot forcibly stop one, and a half-finished judge
+        call is worse than a slow one. `fn` is left to run to completion for
+        its own sake (the API call is already in flight and billed either
+        way), but by the time it finishes, the request that asked for it may
+        already have been answered, traced, and returned. `abandoned` is
+        checked *after* `fn` completes and *before* touching `st` — the one
+        piece of shared, already-published state this job could otherwise
+        corrupt — so a late finisher is silently dropped instead of mutating
+        a trace the caller already has a copy of, or (worse, since `st` may
+        by then belong to a *different*, later stage of the same request)
+        landing itself under the wrong stage entirely.
+        """
+        fail_open = str(self.policy.get("policy.fail_mode")) == "fail_open"
+        res = RailResult(rail=name, engine=engine_label, verdict=Verdict.PASS)
+        began = time.perf_counter()
+        try:
+            fn(res)
+        except Exception as exc:  # noqa: BLE001 — same broad catch as `_run`
+            res = RailResult(
+                rail=name, engine=engine_label,
+                verdict=Verdict.PASS if fail_open else Verdict.BLOCK,
+                error=str(exc),
+                meta={"fail_mode": "open" if fail_open else "closed"},
+            )
+            log.warning("rail %s failed (%s mode): %s", name, res.meta["fail_mode"], exc)
+        res.duration_ms = (time.perf_counter() - began) * 1000
+        if abandoned.is_set():
+            log.info(
+                "rail %s finished %.0fms after its request's latency budget "
+                "expired — result discarded, not published", name, res.duration_ms,
+            )
+            return res
+        st.rails.append(res)
+        return res
+
+    # -----------------------------------------------------------------
     def _pii_spans(self, text: str):
         """Where the deterministic rail would find identifiers in this text.
 
@@ -377,21 +442,49 @@ class Engine:
         except Exception:  # noqa: BLE001 — an overlap hint is never worth a failure
             return []
 
+    def _doc_pii_is_fresh(self, doc_id: str) -> bool:
+        """Was this document's PII already classified exactly as today's
+        config would classify it — so retrieval can trust its chunks instead
+        of paying for another judge scan of the same text?
+
+        `None` (never happens for a real hit, but a corpus edited concurrently
+        with a search is not impossible), no `pii_policy_version` at all
+        (ingested before this field existed, or seeded with no `Engine` —
+        `rails_applied=False`), or a fingerprint that no longer matches
+        (`pii.entity_kinds`/etc. changed since) — every one of these reads as
+        "unknown", never as "fresh", which is the fail-closed direction: a
+        wrong skip would mean PII already in the index that the current
+        policy would have caught. A wrong rescan only costs latency.
+        """
+        doc = self.corpus.get(doc_id)
+        return bool(doc and doc.pii_policy_version
+                   and doc.pii_policy_version == classification_fingerprint(self.policy))
+
     def evaluate(self, text: str, surface: Surface, tracer: Tracer,
                  stage_name: str, subtitle: str = "",
-                 owner: str = "") -> EvaluationResult:
+                 owner: str = "", skip_entity_rail: bool = False) -> EvaluationResult:
         """Run every rail configured for one surface, concurrently.
 
         `owner` is the authenticated principal any vault token minted on this
         surface belongs to. It is threaded in rather than read from the tracer
         because masking authorization must not depend on an observability
         object — a trace can be swapped or omitted; the owner cannot.
+
+        `skip_entity_rail` is set only by `converse()`'s retrieval call, and
+        only when every retrieved chunk's own document was already classified
+        *and masked* under today's exact PII policy at ingest — see
+        `_doc_pii_is_fresh` and `classification_fingerprint`, which folds in
+        `pii.kind_actions` for exactly this reason: an already-baked chunk is
+        only safe to trust unscanned if nothing that decided its masking has
+        changed since. `pii.detect` (deterministic, no model) always runs
+        regardless — a classification decision is skippable once trusted, a
+        checksum-backed regex scan is cheap enough that there is no reason to.
         """
         p = self.policy
         s = surface.value
         began = time.perf_counter()
 
-        with tracer.stage(stage_name, subtitle or f"{s} · concurrent"):
+        with tracer.stage(stage_name, subtitle or f"{s} · concurrent") as st:
             jobs: list[tuple[str, str, Any]] = []
 
             if p.enabled("words", s):
@@ -415,12 +508,12 @@ class Engine:
                     lambda r, t, a=action: self.scope_rail.evaluate(t, a, r),
                 ))
 
-            if p.enabled("pii", s) and self.entity_rail:
+            if p.enabled("pii", s) and self.entity_rail and not skip_entity_rail:
                 action = str(p.get(PII_ACTION_KEY[surface]))
                 jobs.append((
                     self.entity_rail.name, self.entity_rail.engine,
                     lambda r, t, a=action: self.entity_rail.evaluate(
-                        t, a, r, prior=self._pii_spans(t), owner=owner),
+                        t, a, r, prior=self._pii_spans(t), owner=owner, surface=s),
                 ))
 
             if p.enabled("policy", s) and self.policy_rail:
@@ -461,18 +554,33 @@ class Engine:
             results: list[RailResult] = []
 
             if jobs:
-                with futures.ThreadPoolExecutor(max_workers=len(jobs)) as pool:
-                    pending = {
-                        pool.submit(self._run, tracer, name, eng,
-                                    lambda r, f=fn: f(r, text)): name
-                        for name, eng, fn in jobs
-                    }
+                # Not a `with` block: `ThreadPoolExecutor.__exit__` calls
+                # `shutdown(wait=True)` unconditionally, which would block this
+                # call — and therefore the whole request — until every submitted
+                # rail actually finishes, timed out or not. That turned the
+                # budget below into a label on the eventual outcome rather than
+                # a bound on how long a caller waits: a rail timed out at 20s
+                # still held the request open for however long it actually took
+                # (measured live: 36s). `abandoned` is what lets a rail's own
+                # worker keep running past that point — killing a Python thread
+                # mid-call is not possible, and the API call is already billed
+                # either way — while stopping it from publishing into a trace
+                # this call has already returned; see `_run_gated`.
+                pool = futures.ThreadPoolExecutor(max_workers=len(jobs))
+                abandoned = threading.Event()
+                pending = {
+                    pool.submit(self._run_gated, st, abandoned, name, eng,
+                                lambda r, f=fn: f(r, text)): name
+                    for name, eng, fn in jobs
+                }
+                try:
                     try:
                         for fut in futures.as_completed(pending, timeout=budget):
                             results.append(fut.result())
                     except futures.TimeoutError:
                         # Locked: policy.timeout_behavior — fail closed regardless
                         # of fail_mode. An unevaluated request is not a safe one.
+                        abandoned.set()
                         unfinished = [n for f, n in pending.items() if not f.done()]
                         for name in unfinished:
                             res = RailResult(
@@ -481,13 +589,17 @@ class Engine:
                                 meta={"timeout": True},
                             )
                             results.append(res)
-                            if tracer._stage is not None:  # noqa: SLF001
-                                tracer._stage.rails.append(res)  # noqa: SLF001
+                            st.rails.append(res)
                         tracer.note(
                             f"latency budget exceeded — {len(unfinished)} rail(s) unevaluated, "
                             "failed closed"
                         )
                         tracer.trace.fail_mode_triggered = True
+                finally:
+                    # wait=False: return to the caller now. Workers still
+                    # in-flight run to completion on their own and exit the
+                    # pool naturally — never killed, never awaited here.
+                    pool.shutdown(wait=False)
 
         verdict = precedence([r.verdict for r in results])
 
@@ -583,6 +695,15 @@ class Engine:
         masked_count = sum(
             len(r.detections) for r in scan.results if r.verdict is Verdict.MASK
         )
+        # Counts only — never the values — for the same "still detected,
+        # still audited, only not stored raw" reason `findings` above already
+        # redacts. This is what lets retrieval trust the chunks below without
+        # re-running Presidio or the judge: see `classification_fingerprint`.
+        pii_kind_counts: dict[str, int] = {}
+        for r in scan.results:
+            if r.rail in ("pii.entities", "pii.detect"):
+                for d in r.detections:
+                    pii_kind_counts[d.kind] = pii_kind_counts.get(d.kind, 0) + 1
 
         # Chunk the *masked* text. Nothing else is ever written.
         with tracer.stage("Chunk", "paragraph packing with overlap", kind="rail"):
@@ -615,6 +736,8 @@ class Engine:
             verdict=scan.verdict.value, masked=masked_count,
             findings=detections, reason=reason, request_id=tracer.trace.request_id,
             method=method, rails_applied=True,
+            pii_policy_version=classification_fingerprint(p),
+            pii_kind_counts=pii_kind_counts,
         )
 
         with tracer.stage("Index", "bm25 over chunks", kind="rail"):
@@ -758,17 +881,28 @@ class Engine:
 
         # --- retrieval -------------------------------------------------
         chunks: list[str] = []
+        chunks_pii_fresh = False
         with tracer.stage("Retrieval", "bm25 over the index, gated on term coverage", kind="retrieval"):
             with tracer.rail("corpus.search", "bm25 + coverage gate") as r:
-                chunks = retrieve(
+                hits = retrieve(
                     question_n,
                     k=int(p.get("grounding.context_window")),
                     min_score=float(p.get("ingest.min_chunk_score")),
+                    policy=p,
+                    return_hits=True,
+                )
+                chunks = [h.as_context() for h in hits]
+                # Every contributing chunk's document must already have been
+                # classified under today's exact PII config — one stale or
+                # unprocessed chunk in the mix and the whole batch falls back
+                # to a full rescan, same as it always has.
+                chunks_pii_fresh = bool(hits) and all(
+                    self._doc_pii_is_fresh(h.doc_id) for h in hits
                 )
                 r.verdict = Verdict.PASS
                 r.score = float(len(chunks))
                 r.unit = "count"
-                r.meta = {"chunks": len(chunks)}
+                r.meta = {"chunks": len(chunks), "pii_already_classified": chunks_pii_fresh}
 
         # Hoisted so the violations built at the end can say a masked value came
         # out of a retrieved document rather than out of the reader's own
@@ -793,7 +927,8 @@ class Engine:
             # question, so a token minted here must not unmask for them just
             # because they are the one who triggered the scan.
             rag = self.evaluate(joined, Surface.RETRIEVAL, tracer, "Retrieval rails",
-                                "scanning retrieved context", owner=CORPUS_OWNER)
+                                "scanning retrieved context", owner=CORPUS_OWNER,
+                                skip_entity_rail=chunks_pii_fresh)
             rag_results = rag.results
             if rag.blocked:
                 chunks = []

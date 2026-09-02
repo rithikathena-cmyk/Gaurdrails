@@ -33,14 +33,17 @@ SSN = "796-33-9021"
 EMAIL = "meera.balan@example.com"
 
 
-def _install_scripted_llm(script):
+def _install_scripted_llm(script, **agentic_kwargs):
     """`state.reload()` — triggered by every PATCH — rebuilds `state.agent`
     from `state.engine.llm`, which is `None` without a live API key. The
     scripted model has to be reinstalled after every reload, the same way a
-    real deployment re-points at its real model after a config change."""
+    real deployment re-points at its real model after a config change.
+
+    `agentic_kwargs` (`agentic_pii=`/`agentic_injection=`/`agentic_content=`)
+    forward to `ScriptedClaude`, for `agent.data_check_mode="agentic"` tests."""
     from backend.server.state import state as app_state
 
-    llm = ScriptedClaude(script)
+    llm = ScriptedClaude(script, **agentic_kwargs)
     app_state.engine.llm = llm
     app_state.agent = AgentRunner(app_state.engine, llm)
     app_state.model_rails = True
@@ -164,6 +167,39 @@ def test_agent_data_action_changes_real_tool_result_behaviour(client, action):
             "a masked tool result must not still show the raw value in the trace"
     else:  # flag, pass — neither rewrites the result
         assert EMAIL in call["result_preview"]
+
+
+# ── agent.data_check_mode: PATCH -> reload -> the agentic specialists ───
+def test_agent_data_check_mode_agentic_through_the_real_api(client):
+    """Same shape as `test_agent_data_action_changes_real_tool_result_behaviour`,
+    but flips the *mode* rather than the fixed rail's own action: with
+    `agent.data_check_mode=agentic`, pii_agent — not `engine.evaluate()` —
+    decides what happens to the email in `file_grievance`'s echoed result."""
+    _patch(client, {"pii.action.agent_tool": "pass", "agent.data_check_mode": "agentic"})
+    _install_scripted_llm(
+        [("tool", "file_grievance",
+          {"subject": f"Billing dispute — contact {EMAIL}",
+           "details": "Please investigate the duplicate charge."}),
+         ("answer", "Noted, thank you.")],
+        agentic_pii="MASK",
+    )
+
+    resp = client.post("/api/agent/chat",
+                       json={"message": "file a grievance about a billing error"})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert body["approval"] is not None, "file_grievance always stops for approval"
+
+    approve_resp = client.post("/api/agent/approve",
+                               json={"token": body["approval"]["token"], "approved": True})
+    assert approve_resp.status_code == 200, approve_resp.text
+    call = approve_resp.json()["calls"][0]
+    assert call["name"] == "file_grievance"
+    assert call["result_verdict"] == "mask"
+    assert EMAIL not in call["result_preview"]
+
+    # leave the mode back at its default for tests below
+    _patch(client, {"agent.data_check_mode": "rail"})
 
 
 # ── the two surfaces are independently adjustable ────────────────────────

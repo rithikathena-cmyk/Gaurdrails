@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import pytest
 
-from backend.guardrails import AuditLog, Corpus, Engine, load
+from backend.guardrails import AuditLog, Corpus, Document, Engine, load
 from backend.guardrails.evaluation.suite import (
     AnswerCase,
     EvalError,
@@ -28,9 +28,11 @@ from backend.guardrails.evaluation.suite import (
     _figures,
     load_suite,
     run,
+    run_answers,
     run_rails,
     run_retrieval,
 )
+from backend.guardrails.llm import Generation
 from tests.conftest import REPO
 
 SUITE = REPO / "eval" / "suite.yaml"
@@ -157,3 +159,56 @@ def test_the_report_serialises_for_ci(engine):
     body = report.to_dict()
     assert body["cases"] and "sections" in body
     assert {s["name"] for s in body["sections"]} == {"retrieval", "rails", "answers"}
+
+
+# ── a grounding result with no relevance score ──────────────────────
+class _AnsweringJudge:
+    """Answers every judge schema generically and every `generate()` call
+    with a fixed reply — the same shape-dispatch idiom `test_scope_
+    entities.py`'s `CountingJudge` and friends already use."""
+
+    model = "stub"
+
+    def __init__(self, reply: str) -> None:
+        self.reply = reply
+
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
+        props = set(schema.get("properties", {}))
+        return {c: 0.0 for c in props if c != "rationale"} | {"rationale": "stub"}
+
+    def generate(self, system, messages, *, max_tokens=4096, model=None):
+        return Generation(text=self.reply, model=self.model)
+
+
+def test_run_answers_does_not_crash_on_a_relevance_score_of_none(monkeypatch):
+    """Regression: `grounding.consistency`'s own meta legitimately carries
+    `relevance: None` — key present, not absent — whenever the local NLI
+    layer alone settled a claim (`relevance_scored: False`, see
+    `grounding.py`): a natural-language-inference model has no opinion on
+    "does this answer the question", only on "is this claim entailed", so
+    nothing scored it. `run_answers` used to read it with
+    `meta.get("relevance", 0.0)`, which only substitutes a default for a
+    *missing* key — a present `None` sailed straight into
+    `statistics.mean()` and crashed the whole eval run. Caught live: the
+    very first time a real ingested document's retrieval context survived
+    long enough to reach grounding at all, one of five real answers took
+    this exact local-only path."""
+    from backend.guardrails.rails import groundedness_check
+
+    monkeypatch.setattr(groundedness_check, "consistency",
+                        lambda answer, chunks: {"consistency": 1.0, "claims": 0,
+                                                "supported": 0, "unsupported": []})
+
+    policy = load(REPO / "config" / "policy.yaml")
+    policy.values.update({"grounding.engine": "local+judge"})
+    corpus = Corpus(seed=False)
+    corpus.add(Document(id="d1", title="Doc", chunks=["Some grounded context."],
+                        status="indexed", verdict="pass"))
+    llm = _AnsweringJudge("A short answer.")
+    engine = Engine(policy, llm, AuditLog("audit.log"), corpus)
+
+    suite = Suite(source="test", retrieval=[], rails=[], answers=[
+        AnswerCase(id="c1", question="Some grounded context please?"),
+    ])
+    section = run_answers(suite, engine)   # must not raise
+    assert section.metrics["questions"] == 1

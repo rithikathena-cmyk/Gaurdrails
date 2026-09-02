@@ -11,6 +11,7 @@ transcript, and never anything it could edit and hand back.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -18,9 +19,11 @@ from pydantic import BaseModel, Field
 
 from backend.guardrails import AgentRunner, LLMError
 from backend.guardrails.agent import TOOLS
+from backend.guardrails.types import Surface
 
 from ..auth import User, cost_micros, current_user, directory
 from ..history import history
+from ._guardrail_prefilter import run_prefilter_stages
 from .chat import check_budget, usage_in
 from ..state import state
 
@@ -98,6 +101,63 @@ def _payload(result: Any) -> dict[str, Any]:
     return body
 
 
+#: `pre.final_action` is a `GuardrailAction` (ALLOW/MASK/REDACT/BLOCK/FLAG/
+#: ESCALATE) — the frontend's chip/trace CSS and JS only know the four
+#: `Verdict` values (pass/flag/mask/block), the same mismatch
+#: `agent/runner.py`'s `_AGENTIC_TO_VERDICT` maps for `ToolCall.verdict`.
+#: Same resolution here: REDACT -> mask, ESCALATE -> block.
+_ACTION_TO_VERDICT = {
+    "ALLOW": "pass", "FLAG": "flag", "MASK": "mask",
+    "REDACT": "mask", "BLOCK": "block", "ESCALATE": "block",
+}
+
+
+def _prefilter_payload(pre) -> dict[str, Any]:
+    """The same response shape `_payload()` builds from an `AgentRunner`
+    result, built instead from a `PrefilterOutcome` that stopped the request
+    before `AgentRunner.run()` ever started.
+
+    `trace` is a minimal but complete stand-in, not the empty `{}` this
+    function shipped with initially — `trace.js`/`chat.js` read
+    `request_id`/`verdict`/`total_ms`/`guardrail_ms`/`guardrail_pct`/
+    `rail_count`/`rails_evaluated`/`stages` unconditionally on every response
+    (`t.request_id.replace(...)` with no null-check), so an empty object
+    crashed the UI the first time a real user's browser actually rendered a
+    prefilter-stopped turn — found live, not caught by any test, because
+    every automated check so far asserted on the JSON body, never rendered
+    it. The pre-filter's own richer detail (GuardrailSupervisor's and
+    Supervisor's TraceEvent lists) still rides alongside under `prefilter`,
+    unmerged — this is only enough for the trace UI to not crash and to show
+    real numbers, not a full stage waterfall."""
+    verdict = _ACTION_TO_VERDICT.get(pre.final_action, "block")
+    return {
+        "reply": pre.refusal_text,
+        "blocked": True,
+        "refusal_reason": pre.refusal_text,
+        "verdict": verdict,
+        "violations": [],
+        "human_review": pre.final_action == "ESCALATE",
+        "chunks": [],
+        "detections": [],
+        "calls": [],
+        "steps": 0,
+        "filed": [],
+        "trace": {
+            "request_id": pre.request_id,
+            "verdict": verdict,
+            "total_ms": pre.wall_clock_ms,
+            "guardrail_ms": pre.wall_clock_ms,
+            "guardrail_pct": 100,
+            "rails_evaluated": 1 if pre.stopped_at == "guardrail_supervisor" else 2,
+            "rail_count": {"pass": 0, "flag": 0, "mask": 0, "block": 0, verdict: 1},
+            "regenerations": 0,
+            "stages": [],
+        },
+        "approval": None,
+        "prefilter": pre.to_dict(),
+    }
+
+
 @router.get("/agent/tools")
 def tools() -> dict[str, Any]:
     enabled = set(state.policy.get("agent.tools_enabled") or []) if state.policy else set()
@@ -141,6 +201,17 @@ def _remember(user: User, session_id: str, question: str,
 def agent_chat(req: AgentRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     runner = _runner()
     check_budget(user)
+
+    if (str(state.policy.get("agent.prefilter_mode")) == "agentic"
+            and state.engine is not None and state.engine.llm is not None):
+        pre = run_prefilter_stages(
+            req.message, Surface.USER_PROMPT, resource_kind="", resource_owner="",
+            user=user, engine=state.engine, request_id=f"agentchat_{uuid.uuid4().hex[:10]}")
+        if pre.stopped:
+            body = _prefilter_payload(pre)
+            _remember(user, req.session_id, req.message, body, [])
+            return body
+
     try:
         result = runner.run(
             req.message, history=state.history(req.session_id, user.name),

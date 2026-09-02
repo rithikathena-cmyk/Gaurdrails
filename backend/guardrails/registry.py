@@ -188,6 +188,10 @@ FAMILIES: dict[str, dict[str, str]] = {
         "name": "Document Ingestion",
         "engine": "extract · chunk · ingest rails · bm25 index",
     },
+    "retrieval": {
+        "name": "Retrieval",
+        "engine": "bm25 · optional local embedding rerank",
+    },
     "agent": {
         "name": "Agent & Tools",
         "engine": "claude tool use · per-call rails · approval gate",
@@ -379,6 +383,25 @@ PARAMS: list[Param] = [
        "audited — only the rewrite is skipped.",
        "regex[]", []),
 
+    _a("pii.kind_actions", "pii",
+       "Per-kind overrides on top of pii.action.<surface> — 'KIND => action', one per "
+       "line, action one of block/mask/flag/pass. A kind not listed here still gets "
+       "whatever the surface's own action says; this only carves out exceptions, such "
+       "as masking PERSON while leaving GOVERNMENT alone even though both were found "
+       "on the same surface. Detection is unaffected either way — a kind resolved to "
+       "pass is still found, counted, and audited, only never rewritten.",
+       "ruleset", ["GOVERNMENT => pass"]),
+
+    _a("pii.kind_mask_strategy", "pii",
+       "Per-kind overrides on top of pii.mask_strategy — 'KIND => strategy', one per "
+       "line, strategy one of redact/replace/hash/partial/vault-token. A kind not "
+       "listed here still renders with the one global pii.mask_strategy; this only "
+       "carves out exceptions, such as keeping an email reversible via vault-token "
+       "while a phone number is redacted outright, even though both were found on the "
+       "same surface. Only changes what a value masked to 'mask' looks like — it has "
+       "no say in whether a kind gets masked at all (see pii.kind_actions for that).",
+       "ruleset", []),
+
     _l("pii.allowlist_ordering", "pii",
        "Detection runs first; the allowlist only exempts what was already found.",
        "const", Lock.SAFETY, "detect → exempt → mask",
@@ -397,12 +420,18 @@ PARAMS: list[Param] = [
        options=["block", "mask", "flag", "pass"]),
     _a("pii.entity_kinds", "pii",
        "Named entities a model looks for, on top of the regex recognizers. These "
-       "are the identifiers a pattern cannot find — a person, a street address.",
-       "set", ["PERSON", "ADDRESS", "ORGANISATION"]),
+       "are the identifiers a pattern cannot find — a person, a street address. "
+       "GOVERNMENT (public offices, statutory and cooperative bodies) is its own kind, "
+       "separate from ORGANISATION (a private employer) — see pii.kind_actions for why "
+       "that split exists.",
+       "set", ["PERSON", "ADDRESS", "ORGANISATION", "GOVERNMENT"]),
     _a("pii.entity_engine", "pii",
        "What finds names and addresses. Presidio is local NER — about a second of CPU "
-       "and no API call; the judge is slower but reads context. Together, the judge is "
-       "asked only when Presidio finds nothing.",
+       "and no API call; the judge is slower but reads context. On retrieval only, "
+       "presidio+judge asks the judge solely when Presidio proposes a candidate — a "
+       "real document is thick with capitalised words the judge would otherwise "
+       "re-adjudicate on every question that retrieves it. user.prompt keeps asking "
+       "the judge every time, Presidio finding something or not.",
        "enum", "presidio+judge",
        options=["presidio+judge", "presidio", "judge", "off"]),
 
@@ -682,8 +711,14 @@ PARAMS: list[Param] = [
        "Budget for the rails that scan a whole document. Separate from "
        "policy.latency_budget_ms because a document is not a prompt: the same judge "
        "reads a hundred times more text, and one budget for both quarantines "
-       "perfectly good uploads.",
-       "int", 60_000, minimum=1000, maximum=300_000, step=1000),
+       "perfectly good uploads. Raised from 60s: a real ~150,000-character document "
+       "(the RCS Citizen Charter) needs several dozen entity-judge windows even at "
+       "6,000 chars each, batched 8 at a time — a real ingest run quarantined the "
+       "document on this budget alone, live, with every individual judge call "
+       "actually succeeding. Ingest is a background, admin-triggered operation, not a "
+       "citizen waiting on a reply — worth the extra headroom over a tighter budget "
+       "a user would feel.",
+       "int", 120_000, minimum=1000, maximum=300_000, step=1000),
     _a("ingest.min_chunk_score", "ingest",
        "Retrieval floor. A chunk scoring below this is not returned — a weak match "
        "gives the grounding rail irrelevant context to score against.",
@@ -713,6 +748,20 @@ PARAMS: list[Param] = [
        "document is attacker-supplied text that the model will later be asked to "
        "follow instructions near."),
 
+    # ---------------- retrieval ----------------
+    _a("retrieval.engine", "retrieval",
+       "How retrieved chunks are ranked before the model sees them. 'bm25' is "
+       "today's exact behaviour — lexical, term-matching only. 'bm25+embedding' "
+       "keeps BM25 for candidate generation, then reorders the top candidates by "
+       "a local embedding model — catches a paraphrase BM25's term-matching "
+       "misses, at the cost of one local model call per query.",
+       "enum", "bm25", options=["bm25", "bm25+embedding"]),
+    _a("retrieval.embedding_candidates", "retrieval",
+       "How many BM25 candidates the embedding reranker gets to reorder, before "
+       "truncating to the final chunk count. Only read when retrieval.engine is "
+       "bm25+embedding.",
+       "int", 12, minimum=4, maximum=40, step=1),
+
     # ---------------- agent ----------------
     _a("agent.max_steps", "agent",
        "Tool-use rounds before the agent must answer with what it has.",
@@ -736,6 +785,23 @@ PARAMS: list[Param] = [
        "never grounded in a tool result fails closed. Each one costs a full "
        "model call.",
        "int", 1, minimum=0, maximum=3, step=1),
+    _a("agent.data_check_mode", "agent",
+       "How a tool's result is screened before the agent reads it: the fixed "
+       "rail pipeline, or pii_agent/injection_agent/content_safety_agent run "
+       "in sequence — the same specialists Supervisor uses, each re-scanning "
+       "the text as the previous one left it. Costs roughly two extra judge "
+       "calls per specialist, per tool call.",
+       "enum", "rail", options=["rail", "agentic"]),
+    _a("agent.prefilter_mode", "agent",
+       "Whether GuardrailSupervisor + Supervisor run as a pre-filter on the "
+       "user's message before the agent loop starts — the same chain "
+       "routes/pipeline.py already runs, now reachable from /api/agent/chat "
+       "too. 'off' is today's exact behaviour: nothing under agents/ sees "
+       "the message before AgentRunner does. Costs one GuardrailSupervisor "
+       "pass always, and a Supervisor pass (up to six specialists, run "
+       "sequentially) when GuardrailSupervisor doesn't already decide the "
+       "request — several extra seconds per turn.",
+       "enum", "off", options=["off", "agentic"]),
 
     _l("agent.retrieval_required_for_domain_questions", "agent",
        "Whether an in-domain factual question must be backed by a tool call "
@@ -756,7 +822,8 @@ PARAMS: list[Param] = [
        "version of this is a setting somebody turns off on a busy Friday."),
     _l("agent.tool_result_trust", "agent",
        "How a tool result is treated on the way back.",
-       "const", Lock.SAFETY, "untrusted — crosses agent.data rails first",
+       "const", Lock.SAFETY, "untrusted — crosses agent.data rails or "
+       "agent.data_check_mode's specialists first, never neither",
        "A tool result is attacker-reachable text. Trusting it because it came from "
        "your own tool is how indirect injection lands."),
     _l("agent.vault_unmask_scope", "agent",

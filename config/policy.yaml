@@ -333,6 +333,25 @@ pii:
     - '[a-z0-9._%+-]+@(?:[a-z0-9-]+\.)*nic\.in(?![a-z0-9-])(?!\.[a-z0-9-])'
 
     - '\b1800[\s-]?\d{3}[\s-]?\d{4}\b'   # published toll-free helplines
+
+    # The judge occasionally misreads "Tamil Nadu" as a PERSON — confirmed live,
+    # both standing alone in a question and opening a bolded reply heading
+    # ("Tamil Nadu State Apex Cooperative Bank"). The prompt in entities.py now
+    # tells it not to, which measurably cuts how often this happens, but a judge
+    # call is still probabilistic — this is the deterministic backstop. A state
+    # name is never personal data, so exempting it from the rewrite (not from
+    # detection — see pii.allowlist_ordering) costs nothing.
+    #
+    # The allowlist check requires full containment — the allowed region must
+    # cover the *entire* detected span, not just overlap it (entities.py's
+    # `_allowed_spans`). A live run mistagged "Tamil Nadu State" (not just
+    # "Tamil Nadu") as PERSON, one word wider than the first version of this
+    # pattern covered, so it slipped through uncaught. The optional `State`
+    # closes that specific gap; a still-wider mistagged span remains possible
+    # since the judge's own boundary is not fixed — see the entities.py note
+    # this session left on why a prompt fix narrows the odds without zeroing
+    # them.
+    - '\bTamil\s+Nadu(?:\s+State)?\b'
   action:
 
     user_prompt:  mask
@@ -445,9 +464,15 @@ ingest:
 
   # needs far more than policy.latency_budget_ms — that budget timing out is how
 
-  # a long, perfectly ordinary circular gets quarantined.
+  # a long, perfectly ordinary circular gets quarantined. Raised from 60s: a real
 
-  latency_budget_ms: 60000
+  # ~150,000-character document needs several dozen entity-judge windows batched
+
+  # 8 at a time, and 60s quarantined it live with every individual call actually
+
+  # succeeding — see registry.py's own note on this key.
+
+  latency_budget_ms: 120000
 
   min_chunk_score: 0.15
 

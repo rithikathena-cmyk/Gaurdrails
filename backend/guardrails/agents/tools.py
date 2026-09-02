@@ -81,6 +81,43 @@ def _detect_pii_presidio(args: dict, engine: Engine) -> dict:
     }
 
 
+def _detect_pii_entities(args: dict, engine: Engine) -> dict:
+    """The free-form judge layer — `EntityRail._judge_entities`, unchanged.
+
+    Unlike `detect_pii_regex`/`detect_pii_presidio`, this one is not gated on
+    a shape or a trained label matching — it is asked to name every personal
+    identifier in the text, whether or not any pattern here would recognise
+    it. This is the tool worth reaching for when the other two found nothing
+    but the text still reads like it could be identifying someone: a name,
+    an address, an internal ID with no known format.
+
+    `EntityRail.evaluate()`'s own cheap capitalized-word gate does not run
+    here — reaching this tool at all is the PII agent's own PLAN-time
+    judgement that a free-form pass is worth a real judge call, not a free
+    pre-filter's. Costs one judge call (more for long text, windowed).
+
+    Offsets, not the matched substring, go in the response — this module's
+    contract everywhere else: never the raw value, only where it is.
+    """
+    text = str(args.get("text", ""))
+    found = engine.entity_rail._judge_entities(text)  # noqa: SLF001 — the existing extractor, reused whole
+    findings = []
+    search_from = 0
+    for e in found[:80]:
+        raw = str(e.get("text", ""))
+        start = text.find(raw, search_from) if raw else -1
+        if start == -1:
+            start = text.find(raw) if raw else -1
+        end = start + len(raw) if start != -1 else -1
+        if start != -1:
+            search_from = end
+        findings.append({
+            "kind": str(e.get("kind", "")), "start": start, "end": end,
+            "confidence": round(float(e.get("confidence", 0.0)), 3),
+        })
+    return {"findings": findings}
+
+
 def _classify_pii_type(args: dict, engine: Engine) -> dict:
     """What kind of thing a prior detection was — not a new detection pass.
 
@@ -127,6 +164,7 @@ def _get_pii_policy(args: dict, engine: Engine) -> dict:
 PII_AGENT_TOOLS: dict[str, GuardrailTool] = {
     "detect_pii_regex": GuardrailTool("detect_pii_regex", _detect_pii_regex),
     "detect_pii_presidio": GuardrailTool("detect_pii_presidio", _detect_pii_presidio),
+    "detect_pii_entities": GuardrailTool("detect_pii_entities", _detect_pii_entities),
     "classify_pii_type": GuardrailTool("classify_pii_type", _classify_pii_type),
     "get_pii_policy": GuardrailTool("get_pii_policy", _get_pii_policy),
 }

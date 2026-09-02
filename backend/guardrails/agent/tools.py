@@ -171,10 +171,12 @@ def _claim_owner(args: dict[str, Any]) -> str | None:
 
 
 def _search_documents(args: dict[str, Any], ctx: ToolContext) -> str:
+    from ..knowledge.ingest import search_with_rerank
+
     query = str(args.get("query", "")).strip()
     if not query:
         return "No query given."
-    hits = ctx.engine.corpus.search(query, k=ctx.k, min_coverage=ctx.min_score)
+    hits = search_with_rerank(ctx.engine.corpus, query, ctx.k, ctx.min_score, ctx.engine.policy)
     if not hits:
         return ("Nothing in the knowledge base matches that. Do not fill the gap from "
                 "general knowledge — say what is missing.")

@@ -2,8 +2,12 @@
 rails, never a replacement for them.
 
 Named `agents` (plural) to stay distinct from `guardrails.agent` (singular),
-the conversational tool-use loop that drives chat and RAG. Nothing in one
-package imports from the other.
+the conversational tool-use loop that drives chat and RAG. One deliberate
+exception: `agent.runner.AgentRunner._agentic_data_scan` imports PIIAgent,
+PromptInjectionAgent and ContentSafetyAgent directly, when
+`agent.data_check_mode` is `"agentic"`, to re-run the same specialists
+`Supervisor` uses against a tool's result. Nothing in this package imports
+back from `guardrails.agent` — the dependency runs one way.
 """
 
 from __future__ import annotations

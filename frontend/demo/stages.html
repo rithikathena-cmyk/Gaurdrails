@@ -968,6 +968,12 @@ const $  = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
 const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
   ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+// Judge calls run 1-100+s; showing that in milliseconds is unreadable.
+// Sub-second rails (most deterministic ones) stay in ms.
+const fmtMs = (ms) => {
+  const n = Number(ms) || 0;
+  return n >= 1000 ? `${(n / 1000).toFixed(1)}s` : `${Math.round(n)}ms`;
+};
 
 /* ── theme, shared with the console ── */
 const saved = localStorage.getItem("gc-theme");
@@ -1083,7 +1089,7 @@ function paint(data) {
     const metrics = $(".node-metrics", node);
     if (metrics && info) {
       const chips = [`<span class="chip ${info.verdict}">${info.verdict}</span>`,
-                     `<span class="chip mute">${info.ms.toFixed(1)}ms</span>`];
+                     `<span class="chip mute">${fmtMs(info.ms)}</span>`];
       if (info.attempts > 1) chips.push(`<span class="chip flag">${info.attempts} attempts</span>`);
       metrics.innerHTML = chips.join("");
     }
@@ -1095,7 +1101,7 @@ function paint(data) {
         <div class="rail${r.error ? " err" : ""}">
           <b>${esc(r.rail)}</b>
           <span class="eng">${esc(r.engine)}</span>
-          <span class="measure">${esc(measure(r))} · ${r.duration_ms.toFixed(1)}ms</span>
+          <span class="measure">${esc(measure(r))} · ${fmtMs(r.duration_ms)}</span>
           <span class="v"><span class="chip ${r.verdict}">${r.verdict}</span></span>
           ${r.error ? `<span class="note">${esc(r.error)}</span>` : ""}
         </div>`).join("");
@@ -1122,7 +1128,7 @@ function paint(data) {
   /* the reply itself */
   const head = [`<span class="chip ${data.verdict}">${data.verdict}</span>`,
                 `<span class="chip rid">${esc(trace.request_id)}</span>`,
-                `<span class="chip mute">${Math.round(trace.total_ms)}ms total · ${Math.round(trace.guardrail_ms)}ms in rails (${trace.guardrail_pct}%)</span>`,
+                `<span class="chip mute">${fmtMs(trace.total_ms)} total · ${fmtMs(trace.guardrail_ms)} in rails (${trace.guardrail_pct}%)</span>`,
                 `<span class="chip mute">${trace.rails_evaluated} rails</span>`];
   if (trace.regenerations) head.push(`<span class="chip flag">${trace.regenerations} regeneration${trace.regenerations > 1 ? "s" : ""}</span>`);
   if (data.human_review)   head.push(`<span class="chip flag">human review</span>`);

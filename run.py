@@ -121,6 +121,12 @@ def cmd_eval(path: str, suite_path: str, answers: bool, json_out: str) -> int:
     # A scratch corpus: the suite is labelled against the built-in documents, so
     # scoring must not depend on whatever happens to be uploaded today.
     engine = Engine(policy, llm, AuditLog("audit.log"), Corpus(seed=True))
+    # `force=True`: an in-memory corpus has no disk path, so `Engine.__init__`'s
+    # own call already skipped this — leaving the seed document permanently
+    # "unprocessed" from retrieval's PII-freshness check, which would silently
+    # score the slow always-rescan fallback path on every question instead of
+    # what a real deployment (a disk-backed corpus) actually does.
+    engine.reseed_builtin_rails(force=True)
     report = run(suite, engine, answers=answers)
 
     rails_state = "model rails live" if report.model_rails else "deterministic rails only"

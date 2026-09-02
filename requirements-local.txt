@@ -16,6 +16,7 @@
 
 torch>=2.4.0
 transformers>=4.44.0
+sentence-transformers>=3.0.0
 
 # ── the models ─────────────────────────────────────────────────────
 # Downloaded from the Hub on first use, into HF_HOME. Sizes are the fp32
@@ -24,6 +25,7 @@ transformers>=4.44.0
 #   unitary/toxic-bert                                    ~420MB  content.engine
 #   protectai/deberta-v3-base-prompt-injection-v2         ~740MB  prompt_attack.engine
 #   cross-encoder/nli-deberta-v3-base                     ~440MB  grounding.engine
+#   sentence-transformers/all-MiniLM-L6-v2                 ~80MB  retrieval.engine
 #
 # `content.engine` covers four of the six configured categories. `misconduct`
 # has no counterpart in the Jigsaw taxonomy toxic-bert is trained on, and its

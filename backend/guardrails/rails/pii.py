@@ -23,7 +23,8 @@ from collections import deque
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from ..types import Detection, RailResult, Verdict, action_verdict
+from ..types import Detection, RailResult, Verdict, action_verdict, precedence
+from .kind_actions import resolve as resolve_kind_action
 
 
 # ---------------------------------------------------------------------------
@@ -316,13 +317,24 @@ class PIIRail:
     def __init__(self, entities: list[str], confidence_threshold: float,
                  mask_strategy: str, partial_reveal: int, custom_regex: list[str],
                  vault: Vault, allowlist: list[str] | None = None,
-                 partial_reveal_prefix: int = 0) -> None:
+                 partial_reveal_prefix: int = 0,
+                 kind_actions: dict[str, str] | None = None,
+                 kind_mask_strategy: dict[str, str] | None = None) -> None:
         self.entities = set(entities)
         self.min_conf = confidence_threshold
         self.strategy = mask_strategy
         self.partial_reveal = partial_reveal
         self.partial_reveal_prefix = partial_reveal_prefix
         self.vault = vault
+        #: `pii.kind_actions` — e.g. `{"PHONE_NUMBER": "mask", "EMAIL_ADDRESS":
+        #: "flag"}`. A kind not listed here gets whatever action the surface
+        #: was already going to apply to everything — see `kind_actions.resolve`.
+        self.kind_actions = dict(kind_actions or {})
+        #: `pii.kind_mask_strategy` — e.g. `{"EMAIL_ADDRESS": "vault-token",
+        #: "PHONE_NUMBER": "redact"}`. A kind not listed here renders with the
+        #: global `pii.mask_strategy`, exactly as every kind did before this
+        #: existed.
+        self.kind_strategy = dict(kind_mask_strategy or {})
         self.custom: list[Recognizer] = []
         for i, pat in enumerate(custom_regex or []):
             try:
@@ -432,15 +444,18 @@ class PIIRail:
 
     def _replacement(self, det: Detection, rec: Recognizer, owner: str) -> str:
         raw = det.value
-        if self.strategy == "redact":
+        # `pii.kind_mask_strategy` — a kind not listed renders with the
+        # global `pii.mask_strategy`, unchanged from before this existed.
+        strategy = resolve_kind_action(det.kind, self.kind_strategy, self.strategy)
+        if strategy == "redact":
             return "[REDACTED]"
-        if self.strategy == "replace":
+        if strategy == "replace":
             return f"<{det.kind}>"
-        if self.strategy == "hash":
+        if strategy == "hash":
             import hashlib
 
             return f"<{det.kind}:{hashlib.sha256(raw.encode()).hexdigest()[:8]}>"
-        if self.strategy == "partial":
+        if strategy == "partial":
             return self._partial_mask(det.kind, raw, rec)
         # vault-token (default)
         token = self.vault.store(det.kind, raw, owner)
@@ -473,13 +488,25 @@ class PIIRail:
             result.verdict = Verdict.PASS
             return result
 
-        result.verdict = action_verdict(action, Verdict.MASK)
-        if result.verdict is not Verdict.MASK:
-            # block / flag / pass: report the detections, rewrite nothing.
+        # Each kind resolves its own action before anything is decided — a
+        # PHONE_NUMBER next to an EMAIL_ADDRESS can be masked while the
+        # address is only flagged, if `pii.kind_actions` says so. Precedence
+        # still applies across the mix: one kind resolving to `block` blocks
+        # the whole result, the same "most restrictive wins" rule the engine
+        # already enforces across rails.
+        resolved = [
+            (det, rec, action_verdict(resolve_kind_action(det.kind, self.kind_actions, action),
+                                      Verdict.MASK))
+            for det, rec in pairs
+        ]
+        result.verdict = precedence([v for _, _, v in resolved])
+        if result.verdict is Verdict.BLOCK:
             return result
 
         out = text
-        for det, rec in sorted(pairs, key=lambda p: p[0].start, reverse=True):
-            out = out[: det.start] + self._replacement(det, rec, owner) + out[det.end:]
-        result.text_out = out
+        for det, rec, verdict in sorted(resolved, key=lambda p: p[0].start, reverse=True):
+            if verdict is Verdict.MASK:
+                out = out[: det.start] + self._replacement(det, rec, owner) + out[det.end:]
+        if out != text:
+            result.text_out = out
         return result

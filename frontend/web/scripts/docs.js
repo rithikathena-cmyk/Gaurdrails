@@ -6,7 +6,7 @@
     the document was indexed or quarantined. */
 
 import { api } from "./api.js";
-import { $, $$, esc } from "./dom.js";
+import { $, $$, esc, fmtMs } from "./dom.js";
 import { addTrace, showTrace } from "./trace.js";
 
 let loaded = false;
@@ -163,7 +163,7 @@ function report(body) {
     <div class="d-stage">
       <span class="chip ${s.verdict}">${s.verdict}</span>
       <b>${esc(s.name)}</b>
-      <span class="ms num">${Math.round(s.duration_ms)}ms</span>
+      <span class="ms num">${fmtMs(s.duration_ms)}</span>
     </div>`).join("");
 
   $("#d-report").innerHTML = `

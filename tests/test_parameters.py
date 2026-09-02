@@ -403,6 +403,32 @@ def test_context_window_limits_chunks_considered():
     assert gr.meta["chunks_considered"] == 1
 
 
+def test_retrieval_engine_default_never_calls_the_reranker():
+    from backend.guardrails.rails import embedding_rerank
+
+    called = []
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(embedding_rerank, "rerank", lambda *a, **k: called.append(1) or None)
+        e = engine_with(StubClaude(), corpus=_corpus())
+        e.converse(Q)
+    assert not called, "default retrieval.engine ('bm25') must never touch the reranker"
+
+
+def test_retrieval_engine_agentic_reaches_the_reranker():
+    from backend.guardrails.rails import embedding_rerank
+
+    called = []
+    with pytest.MonkeyPatch.context() as m:
+        m.setattr(embedding_rerank, "rerank",
+                 lambda query, hits, top_k: called.append((query, top_k)) or hits[:top_k])
+        e = engine_with(StubClaude(), corpus=_corpus(),
+                        **{"retrieval.engine": "bm25+embedding",
+                           "retrieval.embedding_candidates": 8})
+        e.converse(Q)
+    assert called, "retrieval.engine='bm25+embedding' must reach the reranker"
+    assert called[0][0] == Q
+
+
 def test_require_citations_rejects_an_uncited_answer():
     """Regression: this was stored on the rail and never read."""
     off = engine_with(StubClaude(reply="You need four documents."), corpus=_corpus(),

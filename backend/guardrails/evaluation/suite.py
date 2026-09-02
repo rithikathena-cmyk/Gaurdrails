@@ -362,7 +362,17 @@ def run_answers(suite: Suite, engine: Engine) -> Section:
         )
         if grounding:
             consistency.append(grounding["meta"].get("consistency", grounding["score"]))
-            relevance.append(grounding["meta"].get("relevance", 0.0))
+            # `relevance` is legitimately `None` — key present, not just
+            # missing — when grounding short-circuited on the local NLI
+            # layer alone (`relevance_scored: False`): a natural-language-
+            # inference model has no opinion on "does this answer the
+            # question", only on "is this claim entailed", so nothing scored
+            # it. `.get(..., 0.0)` only substitutes a default for a *missing*
+            # key, not a key whose value is `None`, so it let a real `None`
+            # through to `statistics.mean()` and crashed the whole eval run.
+            case_relevance = grounding["meta"].get("relevance")
+            if case_relevance is not None:
+                relevance.append(case_relevance)
 
         problems: list[str] = []
         if case.must_include:

@@ -10,7 +10,7 @@ outside `PII_AGENT_TOOLS`, or reach a capability outside `PIICapabilities` —
 those are hard boundaries, enforced in Python, not asked of the model.
 
     ANALYZE + PLAN   one judge call: is there anything here worth looking at,
-                     and if so, which of the four tools should run
+                     and if so, which of the five tools should run
     SELECT + EXECUTE the plan's tool names, fanned out over whatever kinds
                      the detectors actually found — deterministic Python,
                      no model involved
@@ -114,7 +114,14 @@ text and a fixed list of tools you may ask to run — you do not run them yourse
 you only choose which ones are worth running.
 
 - detect_pii_regex     structured identifiers with a checksum: SSN, card, IBAN, ...
-- detect_pii_presidio  named entities a pattern cannot find: people, addresses
+- detect_pii_presidio  named entities a trained model recognises: people, addresses
+- detect_pii_entities  free-form: reads the whole text and names anything that \
+looks like a personal identifier, whether or not it matches a known shape or a \
+trained label. Reach for this one when the other two found nothing but the text \
+still reads like it could be identifying someone — an internal ID with no \
+familiar format, a name a trained NER model was never built to catch, anything \
+you cannot rule out just because no detector recognised it. Costs a real judge \
+call every time; do not plan it as a first move on ordinary text.
 - classify_pii_type    what a kind of identifier actually is, once one is found
 - get_pii_policy       what the configured action is for a kind, once one is found
 
@@ -122,7 +129,9 @@ Most requests need detect_pii_regex and detect_pii_presidio together — you do 
 not know in advance whether the text holds a structured identifier, a name, \
 both, or neither. classify_pii_type and get_pii_policy are only useful once \
 something has been found, so plan them when you expect a detector to return \
-something, not as a first move.
+something, not as a first move. detect_pii_entities is worth a second round \
+when the first round found nothing but you are not confident that means \
+nothing is there.
 
 Say plainly when nothing here needs a tool at all — a request about opening \
 hours or a fee schedule does not.""")
@@ -297,7 +306,7 @@ class PIIAgent:
             if name not in PII_TOOL_NAMES:
                 raise ToolNotAllowed(name)
 
-            if name in ("detect_pii_regex", "detect_pii_presidio"):
+            if name in ("detect_pii_regex", "detect_pii_presidio", "detect_pii_entities"):
                 res = call_tool(name, {"text": text}, self.engine, _call_id())
                 results.append(res)
                 calls_made += 1

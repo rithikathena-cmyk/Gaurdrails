@@ -1,6 +1,6 @@
 /** Request trace view — stage waterfall and per-rail detail. */
 
-import { $, $$, esc } from "./dom.js";
+import { $, $$, esc, fmtMs } from "./dom.js";
 
 const state = { traces: [], active: null };
 
@@ -26,7 +26,7 @@ export function renderRecent() {
     <button class="recent-item" data-trace="${esc(t.request_id)}">
       <span class="chip ${t.verdict}" style="padding:1px 5px">${t.verdict}</span>
       <span class="rid">${esc(t.request_id.replace("req_", ""))}</span>
-      <span class="ms">${Math.round(t.total_ms)}ms</span>
+      <span class="ms">${fmtMs(t.total_ms)}</span>
     </button>`).join("");
   $$(".recent-item", box).forEach((b) =>
     b.addEventListener("click", () => showTrace(b.dataset.trace)));
@@ -55,9 +55,9 @@ export function renderTrace() {
     </div>
 
     <div class="stat-row">
-      ${stat("Wall clock", Math.round(t.total_ms).toLocaleString(), "ms",
+      ${stat("Wall clock", fmtMs(t.total_ms), "",
              "send → response delivered")}
-      ${stat("Guardrail overhead", Math.round(t.guardrail_ms).toLocaleString(), "ms",
+      ${stat("Guardrail overhead", fmtMs(t.guardrail_ms), "",
              `${t.guardrail_pct}% of wall clock`, "var(--accent)")}
       ${stat("Rails evaluated", t.rails_evaluated, "",
              `${c.pass} pass · ${c.mask} mask · ${c.flag} flag · ${c.block} block`)}
@@ -113,7 +113,7 @@ function stage(s, i, total) {
         <span class="wf-name">${esc(s.name)}<small>${esc(s.subtitle)}</small></span>
         <span class="wf-track"><i class="${s.kind}"
               style="left:${left.toFixed(2)}%;width:${width.toFixed(2)}%"></i></span>
-        <span class="wf-ms">${s.duration_ms.toFixed(1)}ms</span>
+        <span class="wf-ms">${fmtMs(s.duration_ms)}</span>
         <span class="wf-vd"><span class="chip ${s.verdict}">${s.verdict}</span></span>
       </button>
       <div class="wf-detail">
@@ -139,7 +139,7 @@ function rail(r) {
       </span>
       <span class="rail-score">${value}<small>${threshold}</small></span>
       <span class="rail-why">${why(r)}</span>
-      <span class="rail-ms">${r.duration_ms.toFixed(1)}ms</span>
+      <span class="rail-ms">${fmtMs(r.duration_ms)}</span>
       <span class="rail-vd"><span class="chip ${r.verdict}">${r.verdict}</span></span>
     </div>`;
 }

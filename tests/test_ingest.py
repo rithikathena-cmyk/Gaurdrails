@@ -392,6 +392,82 @@ def test_bm25_prefers_the_document_that_is_actually_about_the_query(corpus):
 
 
 
+def test_embedding_rerank_fixes_a_paraphrase_bm25_gets_wrong(corpus, monkeypatch):
+    """BM25 is lexical: a query sharing more literal words with an irrelevant
+    chunk outranks a genuinely relevant paraphrase with fewer shared terms.
+    Stubs `embedding_rerank.rerank` rather than loading a real model — this
+    tests the wiring (does `search_with_rerank` call the reranker and use its
+    order?), not embedding quality, the same way this suite stubs Presidio/
+    toxicity elsewhere rather than testing a real model's accuracy."""
+    from backend.guardrails import load
+    from backend.guardrails.knowledge.ingest import search_with_rerank
+    from backend.guardrails.rails import embedding_rerank
+
+    corpus.add(Document(id="wrong-doc", title="Wrong", source="test", kind="txt", chars=50,
+                        chunks=["Renewal renewal renewal: every renewal form mentions "
+                               "renewal fees and renewal deadlines for renewal."],
+                        status="indexed", verdict="pass"))
+    corpus.add(Document(id="right-doc", title="Right", source="test", kind="txt", chars=50,
+                        chunks=["Obtaining a fresh trade permit requires submitting proof "
+                               "of premises to the municipal office."],
+                        status="indexed", verdict="pass"))
+
+    query = "how do I renew my trade licence"
+    plain = corpus.search(query, k=2)
+    assert plain[0].title == "Wrong", \
+        "test setup assumption broken: BM25 should prefer the keyword-stuffed chunk here"
+
+    policy = load(REPO / "config" / "policy.yaml")
+    policy.values["retrieval.engine"] = "bm25+embedding"
+    policy.values["retrieval.embedding_candidates"] = 4
+
+    monkeypatch.setattr(
+        embedding_rerank, "rerank",
+        lambda q, hits, top_k: sorted(hits, key=lambda h: h.title != "Right")[:top_k])
+
+    reranked = search_with_rerank(corpus, query, 2, 0.15, policy)
+    assert reranked[0].title == "Right"
+
+
+def test_search_with_rerank_falls_back_to_bm25_order_while_model_loads(corpus, monkeypatch):
+    """`embedding_rerank.rerank` returning None (model not loaded yet) must not
+    lose results — the same 'never worse than plain BM25' contract every
+    other local model in this codebase already has."""
+    from backend.guardrails import load
+    from backend.guardrails.knowledge.ingest import search_with_rerank
+    from backend.guardrails.rails import embedding_rerank
+
+    corpus.add(Document(id="only-doc", title="Only", source="test", kind="txt", chars=50,
+                        chunks=["Trade licence renewal needs Form 4B."],
+                        status="indexed", verdict="pass"))
+    policy = load(REPO / "config" / "policy.yaml")
+    policy.values["retrieval.engine"] = "bm25+embedding"
+    monkeypatch.setattr(embedding_rerank, "rerank", lambda q, hits, top_k: None)
+
+    hits = search_with_rerank(corpus, "trade licence renewal", 4, 0.15, policy)
+    assert hits and hits[0].title == "Only"
+
+
+def test_retrieval_engine_off_by_default_never_touches_the_reranker(corpus, monkeypatch):
+    """Default config ('bm25') must not even import/call the reranker —
+    proves the feature costs nothing when nobody has opted in."""
+    from backend.guardrails import load
+    from backend.guardrails.knowledge.ingest import search_with_rerank
+
+    corpus.add(Document(id="d", title="D", source="test", kind="txt", chars=50,
+                        chunks=["Trade licence renewal needs Form 4B."],
+                        status="indexed", verdict="pass"))
+    policy = load(REPO / "config" / "policy.yaml")
+    assert str(policy.get("retrieval.engine")) == "bm25"
+
+    called = []
+    import backend.guardrails.rails.embedding_rerank as er
+    monkeypatch.setattr(er, "rerank", lambda *a, **k: called.append(1) or None)
+
+    hits = search_with_rerank(corpus, "trade licence renewal", 4, 0.15, policy)
+    assert hits and not called
+
+
 def test_coverage_gate_drops_a_weak_match(corpus):
 
     """A weak match is worse than no match — it gives grounding something

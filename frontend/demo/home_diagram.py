@@ -5,10 +5,19 @@ block in web/home.html. Kept as a script rather than hand-authored markup:
 
 coordinates are computed rather than hand-placed, so every node declares its
 height, the cursor walks down, and edges are drawn between what the cursor
-recorded. Hand-authoring 25 absolutely-positioned SVG boxes is how diagrams
+recorded. Hand-authoring absolutely-positioned SVG boxes is how diagrams
 drift out of alignment the first time one label grows.
 
 Colours are class names, never literals, so the same SVG serves both themes.
+
+The simplified, slide-ready version: five stages plus the two things fanned
+out underneath the agent. Deliberately drops what a slide doesn't need —
+Gate 1-4 numbering, the seven-rail enumeration, the adjudicator, the
+regenerate loop, document ingestion — in favour of one box per real
+decision point. `GuardrailSupervisor` and the six-specialist `Supervisor`
+(see agents/supervisor.py, guardrail_supervisor.py) are collapsed into one
+"Guardrail Supervisor" box here on purpose; the full split lives in the
+code and in git history, not on this diagram.
 """
 
 from pathlib import Path
@@ -16,7 +25,7 @@ from pathlib import Path
 W = 1400          # viewBox width
 CX = 640          # spine centre
 DENY_X = 1268     # the red refusal rail runs down here
-GAP = 46          # vertical gap between nodes
+GAP = 46           # vertical gap between nodes
 
 out: list[str] = []
 y = 54
@@ -27,20 +36,23 @@ def esc(s: str) -> str:
     return (s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;"))
 
 
-def node(nid, kind, title, lines, w, h, cx=CX, gate_label=None, agent=False):
+def node(nid, kind, title, lines, w, h, cx=CX, gate_label=None, agent=False, tag=None):
     """One box. `kind` picks the class; gates are left-aligned like the reference.
 
-    `agent=True` marks a box as part of the tool-use agent itself — PLAN,
-    the tool run, or the final generation — as distinct from the gates
-    around it (which already self-identify via `GATE — AGENT.TOOL` /
-    `GATE — AGENT.DATA`) and from every other dashed/solid box on this page
-    that is not the agent (entities, content, the adjudicator)."""
+    `tag`, e.g. ("AGENTIC", "agentic"), marks whether a gate's own checklist is
+    planned per request by a judge, or is the same fixed job list every time —
+    the distinction is in engine.py's job list (fixed) versus
+    guardrail_supervisor.py's _plan() (a judge decides what even runs).
+    """
     global y
     x = cx - w / 2
     out.append(f'<g class="node {kind}" data-node="{nid}">')
     out.append(f'  <rect x="{x:.0f}" y="{y:.0f}" width="{w:.0f}" height="{h:.0f}" rx="11"/>')
     if agent:
         out.append(f'  <text class="agent-tag" x="{x + w - 16:.0f}" y="{y + 18:.0f}">AGENT</text>')
+    if tag:
+        tag_text, tag_kind = tag
+        out.append(f'  <text class="gate-tag {tag_kind}" x="{x + w - 16:.0f}" y="{y + 18:.0f}">{esc(tag_text)}</text>')
     if gate_label:
         tx = x + 20
         out.append(f'  <text class="gate-label" x="{tx:.0f}" y="{y + 26:.0f}">{esc(gate_label)}</text>')
@@ -106,155 +118,82 @@ def deny(from_node, label):
 
 
 # ══════════════════════════════════════════════════════════════════
-# the pipeline
-#
-# Nine steps, one line of explanation each. An earlier draft had twenty boxes
-# and two lines apiece: more accurate, and harder to walk somebody through.
-# What was cut is still in the trace and in /demo/stages — this is the version
-# you can say out loud.
+# the simplified pipeline — five stages, the way you'd say it out loud
+# on a slide: Guardrail Supervisor, Input Guardrails, Agent (with its own
+# tool-call rails and tools fanned out beneath it), Authorization,
+# Output & Grounding. Everything that survives here is a real decision
+# point; everything cut is still in the detailed diagram's git history.
 # ══════════════════════════════════════════════════════════════════
-node("user-in", "terminal", "Someone asks a question", [
-    "signed in — a citizen sees less than an operator",
+node("user-in", "terminal", "Citizen or operator", [
+    "asks a question",
 ], 440, 74)
-arrow("the question, and who is asking", 48)
-
-gate1 = node("gate1", "gate", "Is the question allowed through?", [
-    "clean up the text first, then seven checks at once",
-], 600, 88, gate_label="GATE 1 — THE QUESTION")
-deny_y1 = deny("gate1", "REFUSED — the model is never called")
-
-# Seven now, not five. Dashed means the check is a model with nothing
-# deterministic underneath it; `injection` and `scope` are solid because each
-# has a free layer that settles most traffic before any model is asked.
-fanout("rails", [
-    ("Banned words", "words", "solid"),
-    ("Personal details", "pii", "solid"),
-    ("Names, addresses", "entities", "model"),
-    ("House rules", "policy", "solid"),
-    ("Attacks", "injection", "solid"),
-    ("Off-topic", "scope", "solid"),
-    ("Harmful content", "content", "model"),
-], 140, 56, gap=30)
-
-arrow("seven opinions, one decision", 44)
-
-node("gate2", "gate", "The strictest answer wins", [
-    "block beats mask beats flag beats pass",
-], 600, 84, gate_label="GATE 2 — THE DECISION")
-deny_y2 = deny("gate2", "REFUSED — written down, then explained")
-arrow("unless it was a close call", 44)
-
-# The only box on this page that usually does not run. It is drawn on the spine
-# rather than off to one side because when it does run, it decides.
-node("adjudicate", "model", "Was it too close to call?", [
-    "only when a score sits near its line — otherwise skipped",
-], 600, 80)
-arrow("personal details are now tokens", 46)
-
-# The agent loop. Two gates per tool call, one in each direction, because a
-# tool's arguments leave the system and a tool's answer comes back into it.
-node("plan", "model", "Decide what to do next", [
-    "pick a tool, or answer — up to six rounds",
-], 600, 80, agent=True)
-arrow("the arguments it wants to send", 44)
-
-node("gate-tool", "gate", "Are these arguments allowed out?", [
-    "checked before the call runs; a write stops for a person",
-], 600, 84, gate_label="GATE — AGENT.TOOL")
-deny("gate-tool", "REFUSED, or held for approval")
-arrow(None, 40)
-
-retrieval = node("retrieval", "solid", "Run the tool", [
-    "search_documents, lookup_fee, check_claim_status, file_grievance",
-    "the office's own address stays readable; yours does not",
-], 600, 96, agent=True)
-arrow("whatever the tool returned", 44)
-
-node("gate-data", "gate", "Is the result safe to read?", [
-    "a record is text somebody else wrote — it crosses a rail first",
-], 600, 84, gate_label="GATE — AGENT.DATA")
-deny("gate-data", "WITHHELD — the agent never reads it")
-arrow("back around, or on to the answer", 44)
-
-node("generate", "model", "Write the answer", [
-    "it only ever saw tokens, and only what the tools returned",
-], 600, 80, agent=True)
-deny_y3 = deny("generate", "MODEL DECLINED")
-arrow("a draft nobody has seen yet", 44)
-
-node("gate3", "gate", "Is the answer allowed out?", [
-    "the same checks again, on the way back",
-], 600, 84, gate_label="GATE 3 — THE ANSWER")
-deny("gate3", "REFUSED — the draft is never shown")
-arrow(None, 40)
-
-gate4 = node("gate4", "gate", "Does it match the sources?", [
-    "every claim checked against what was found",
-], 600, 84, gate_label="GATE 4 — IS IT TRUE")
-deny_y4 = deny("gate4", "SENT TO A PERSON")
 arrow(None, 44)
 
-audit = node("audit", "data", "Put the real values back, and write it all down", [
-    "the reader gets their own data; the log cannot be edited",
-], 700, 84)
+gs = node("guardrail-supervisor", "gate", "Quick risk pre-check", [
+    "a judge plans which checks even run — guardrail_supervisor.py",
+    "then up to six specialists: pii · injection · content · scope · authorization · grounding",
+], 600, 98, gate_label="1. GUARDRAIL SUPERVISOR", tag=("AGENTIC", "agentic"))
+deny_y1 = deny("guardrail-supervisor", "BLOCK / ESCALATE — sent to a person")
+arrow("risk & policy", 44)
+
+ig = node("input-guardrails", "gate", "Is the question allowed through?", [
+    "PII · Injection · Scope · Content · Policy — the same fixed job list, every time",
+], 600, 80, gate_label="2. INPUT GUARDRAILS", tag=("FIXED", "fixed"))
+deny_y2 = deny("input-guardrails", "BLOCK / REDACT")
+arrow("allowed", 44)
+
+node("agent", "model", "The agent plans", [
+    "uses tools; the same fixed rails check the call and its result",
+], 600, 80, agent=True)
+arrow("the same fixed rails, run again on tool traffic", 40)
+
+# Not the Supervisor's six specialist agents — agent/runner.py never imports
+# agents/supervisor.py. This is engine.evaluate() again, just on the
+# AGENT_TOOL / AGENT_DATA surfaces, so the active families differ from Gate 2:
+# scope and grounding are `off` on both (severity matrix), content and
+# injection are result-only (content.action_key + INJECTION_ALWAYS in
+# engine.py), and authorization isn't a rail at all here — it's its own
+# dedicated stage below, a resource_owner lookup with no rail and no model.
+fanout("tool-rails", [
+    ("pii", "args & result", "solid"),
+    ("policy", "args & result", "solid"),
+    ("content", "result only", "solid"),
+    ("injection", "result only — locked on", "solid"),
+], 170, 60, gap=16)
+arrow("then the tool runs", 40)
+
+fanout("tools", [
+    ("search_documents", "the knowledge base", "solid"),
+    ("lookup_fee", "a fee schedule", "solid"),
+    ("case / grievance", "status, or file one", "solid"),
+], 260, 60, gap=20)
 arrow(None, 44)
 
-node("user-out", "terminal", "The answer, and the trace behind it", [
-    "every check, its verdict, and how long it took",
+auth = node("authorization", "gate", "Can this user access this resource or action?", [
+    "a resource_owner lookup, not a rail or a model call — agent/runner.py",
+], 600, 80, gate_label="4. AUTHORIZATION", tag=("FIXED", "fixed"))
+deny_y3 = deny("authorization", "DENIED — not this caller's record")
+arrow("resource + action", 44)
+
+og = node("output-grounding", "gate", "Is the answer safe, and true to its sources?", [
+    "the same fixed checks again, then every claim against what was retrieved",
+], 600, 80, gate_label="5. OUTPUT & GROUNDING", tag=("FIXED", "fixed"))
+deny_y4 = deny("output-grounding", "BLOCK / HUMAN — sent to a person")
+arrow(None, 44)
+
+node("response", "terminal", "The response reaches the user", [
+    "only what every stage above let through",
 ], 470, 74)
+arrow(None, 44)
 
-# the refusal rail: down the right margin, into the audit log
-a = anchors["audit"]
-audit_mid = a["top"] + a["h"] / 2
+trace = node("trace", "data", "TRACE", [
+    "every check, decision and action — hash-chained",
+], 700, 80)
+
+# the refusal rail: down the right margin, into the trace log
+audit_mid = trace["top"] + trace["h"] / 2
 out.append(f'<path class="deny" d="M{DENY_X} {deny_y1:.0f} L{DENY_X} {audit_mid:.0f} '
-           f'L{a["right"] + 10:.0f} {audit_mid:.0f}" marker-end="url(#arrow-deny)"/>')
-
-# the regeneration loop, down the left margin back into generation
-g = anchors["generate"]
-LOOP_X = 208   # far enough left that its label clears the spine boxes
-out.append(f'<path class="loop" d="M{anchors["gate4"]["left"]:.0f} '
-           f'{anchors["gate4"]["top"] + anchors["gate4"]["h"] / 2:.0f} '
-           f'L{LOOP_X} {anchors["gate4"]["top"] + anchors["gate4"]["h"] / 2:.0f} '
-           f'L{LOOP_X} {g["top"] + g["h"] / 2:.0f} L{g["left"] - 10:.0f} {g["top"] + g["h"] / 2:.0f}" '
-           f'marker-end="url(#arrow-loop)"/>')
-out.append(f'<text class="loop-label" x="{LOOP_X + 12}" '
-           f'y="{(g["top"] + anchors["gate4"]["top"]) / 2:.0f}">regenerate ≤ 2×</text>')
-
-# ── the ingestion feed, left of retrieval ────────────────────────
-# Aligned on retrieval's centre line so the join is one straight arrow, and
-# far enough left that the quarantine stub has room. The first cut ran the
-# stub off the left edge of the viewBox, which clipped its label.
-r = anchors["retrieval"]
-r_mid = r["top"] + r["h"] / 2
-IX = 170
-GATE_W, GATE_H = 250, 62
-gate_y = r_mid - GATE_H / 2
-doc_y = gate_y - 58 - 30
-
-out.append('<g class="node solid">')
-out.append(f'  <rect x="{IX - 100}" y="{doc_y:.0f}" width="200" height="58" rx="10"/>')
-out.append(f'  <text class="title small" x="{IX}" y="{doc_y + 25:.0f}">A document arrives</text>')
-out.append(f'  <text class="mono" x="{IX}" y="{doc_y + 43:.0f}">uploaded, pasted, or scanned</text>')
-out.append("</g>")
-out.append(f'<path class="edge" d="M{IX} {doc_y + 58:.0f} L{IX} {gate_y - 9:.0f}" '
-           f'marker-end="url(#arrow)"/>')
-
-out.append('<g class="node gate">')
-out.append(f'  <rect x="{IX - GATE_W / 2:.0f}" y="{gate_y:.0f}" width="{GATE_W}" '
-           f'height="{GATE_H}" rx="10"/>')
-out.append(f'  <text class="gate-label" x="{IX - GATE_W / 2 + 18:.0f}" '
-           f'y="{gate_y + 23:.0f}">GATE — A DOCUMENT</text>')
-out.append(f'  <text class="mono left" x="{IX - GATE_W / 2 + 18:.0f}" '
-           f'y="{gate_y + 45:.0f}">checked before it is stored</text>')
-out.append("</g>")
-
-# quarantine leaves downward, so its label never reaches the canvas edge
-out.append(f'<path class="deny" d="M{IX} {gate_y + GATE_H:.0f} L{IX} {gate_y + GATE_H + 24:.0f}"/>')
-out.append(f'<text class="deny-label mid" x="{IX}" y="{gate_y + GATE_H + 40:.0f}">quarantined — no search finds it</text>')
-
-# one straight run into retrieval
-out.append(f'<path class="edge" d="M{IX + GATE_W / 2:.0f} {r_mid:.0f} '
-           f'L{r["left"] - 9:.0f} {r_mid:.0f}" marker-end="url(#arrow)"/>')
+           f'L{trace["right"] + 10:.0f} {audit_mid:.0f}" marker-end="url(#arrow-deny)"/>')
 
 
 # Relative to this file, so the script runs from any working directory
@@ -266,7 +205,7 @@ svg = "\n".join(out)
 
 OUT.write_text(
     f'<svg viewBox="0 0 {W} {HEIGHT:.0f}" class="flow" role="img" '
-    f'aria-label="The guardrail pipeline, gate by gate">\n{svg}\n</svg>',
+    f'aria-label="The guardrail pipeline, five stages">\n{svg}\n</svg>',
     encoding="utf-8",
 )
 print(f"diagram generated: {W} x {HEIGHT:.0f}, {len(anchors)} anchored nodes -> {OUT}")
