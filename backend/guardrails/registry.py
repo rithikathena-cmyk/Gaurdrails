@@ -67,8 +67,6 @@ LOCK_META: dict[str, dict[str, str]] = {
 SURFACES: list[dict[str, str]] = [
     {"key": "user.prompt", "label": "Prompt", "blurb": "Text on the way in from the user."},
     {"key": "user.feedback", "label": "Feedback", "blurb": "Corrections and follow-ups."},
-    {"key": "ingest.document", "label": "Ingest",
-     "blurb": "Documents entering the knowledge base. Scanned once, before indexing."},
     {"key": "retrieval", "label": "Retrieval", "blurb": "Chunks returned by the knowledge base."},
     {"key": "llm.response", "label": "Response", "blurb": "Generated text on the way out."},
     {"key": "llm.ask_user", "label": "Ask user", "blurb": "Clarifying questions the model asks."},
@@ -186,7 +184,7 @@ FAMILIES: dict[str, dict[str, str]] = {
     },
     "ingest": {
         "name": "Document Ingestion",
-        "engine": "extract · chunk · ingest rails · bm25 index",
+        "engine": "extract · chunk · bm25 index — no guardrail rail runs here",
     },
     "retrieval": {
         "name": "Retrieval",
@@ -438,9 +436,6 @@ PARAMS: list[Param] = [
     _a("pii.entity_confidence", "pii",
        "How sure the entity model must be before a span is masked.",
        "float", 0.60, minimum=0, maximum=1, step=0.01),
-    _a("pii.action.ingest", "pii",
-       "Applied to a document as it is ingested, before it reaches the index.",
-       "enum", "mask", options=["block", "mask", "flag"]),
     _a("pii.action.agent_tool", "pii",
        "Applied to the arguments the agent is about to hand a tool.",
        "enum", "mask", options=["block", "mask", "flag", "pass"]),
@@ -557,6 +552,16 @@ PARAMS: list[Param] = [
        "Deterministic risk score above which the guardrail_supervisor blocks "
        "a request without calling the judge.",
        "float", 0.80, minimum=0, maximum=1, step=0.05),
+    _a("supervisor.chat_prefilter_mode", "supervisor",
+       "Whether GuardrailSupervisor + Supervisor run as a pre-filter on every "
+       "ordinary /api/chat turn, before Engine.converse() ever runs — the "
+       "same chain routes/pipeline.py and agent.prefilter_mode already run "
+       "for /api/pipeline/run and /api/agent/chat. 'off' is today's exact "
+       "behaviour: /api/chat runs only the deterministic rail pipeline. "
+       "Costs one GuardrailSupervisor pass always, and a Supervisor pass (up "
+       "to six specialists, run sequentially) when GuardrailSupervisor "
+       "doesn't already decide the request — several extra seconds per turn.",
+       "enum", "off", options=["off", "agentic"]),
 
     _l("grounding.score_direction", "grounding",
        "Higher score means better grounded.",
@@ -707,46 +712,19 @@ PARAMS: list[Param] = [
        "Pages of one scanned document that will be transcribed. Beyond this the "
        "document is indexed with a note saying what was left out.",
        "int", 20, minimum=1, maximum=200, step=1),
-    _a("ingest.latency_budget_ms", "ingest",
-       "Budget for the rails that scan a whole document. Separate from "
-       "policy.latency_budget_ms because a document is not a prompt: the same judge "
-       "reads a hundred times more text, and one budget for both quarantines "
-       "perfectly good uploads. Raised from 60s: a real ~150,000-character document "
-       "(the RCS Citizen Charter) needs several dozen entity-judge windows even at "
-       "6,000 chars each, batched 8 at a time — a real ingest run quarantined the "
-       "document on this budget alone, live, with every individual judge call "
-       "actually succeeding. Ingest is a background, admin-triggered operation, not a "
-       "citizen waiting on a reply — worth the extra headroom over a tighter budget "
-       "a user would feel.",
-       "int", 120_000, minimum=1000, maximum=300_000, step=1000),
     _a("ingest.min_chunk_score", "ingest",
        "Retrieval floor. A chunk scoring below this is not returned — a weak match "
        "gives the grounding rail irrelevant context to score against.",
        "float", 0.15, minimum=0.0, maximum=1.0, step=0.01),
 
-    _l("ingest.mask_before_index", "ingest",
-       "When masking happens relative to indexing.",
-       "const", Lock.SAFETY, "before the chunk is written",
-       "An index that stores raw values is a second copy of the data you just "
-       "protected, in a store that answers search queries."),
-    _l("ingest.quarantine_on_block", "ingest",
-       "What happens to a document that fails an ingest rail.",
-       "const", Lock.ARCH, "quarantined, never indexed",
-       "Indexing it with a flag makes retrieval safety a matter of remembering to "
-       "check the flag. Quarantine is the same decision made once."),
     _l("ingest.ocr_isolation", "ingest",
        "What the transcribing model is allowed to do with the page it reads.",
        "const", Lock.SAFETY, "transcribe only, never obey",
-       "Transcription is the one point where a model sees a document before the "
-       "rails do. It is told the page is data being copied, not instructions — and "
-       "its output is then treated as an untrusted document like any other, so an "
-       "injection printed on a scan is quarantined exactly as a pasted one is."),
-    _l("ingest.injection_scan", "ingest",
-       "Prompt-injection scanning of ingested documents.",
-       "const", Lock.SAFETY, "always on",
-       "Indirect injection is the whole reason ingestion is a trust boundary. A "
-       "document is attacker-supplied text that the model will later be asked to "
-       "follow instructions near."),
+       "Transcription is the one point where a model sees a document before "
+       "anything downstream does. It is told the page is data being copied, not "
+       "instructions — its output is then treated as an untrusted document like "
+       "any other, scanned the same way any other document's text is once it is "
+       "actually retrieved."),
 
     # ---------------- retrieval ----------------
     _a("retrieval.engine", "retrieval",

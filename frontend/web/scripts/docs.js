@@ -1,9 +1,9 @@
-/** Documents view — ingestion, and what the ingest rails found.
+/** Documents view — ingestion.
 
     The report after an upload is the point of this screen. An ingest that just
     says "done" teaches the operator nothing about what their corpus now holds;
-    this one says what was found, what was masked before writing, and whether
-    the document was indexed or quarantined. */
+    this one says how many chunks were written, and whether the document was
+    indexed or refused (oversized or empty — nothing else is checked here). */
 
 import { api } from "./api.js";
 import { $, $$, esc, fmtMs } from "./dom.js";
@@ -142,7 +142,7 @@ async function uploadFile(event) {
 }
 
 async function run(call) {
-  note("running the ingest rails…");
+  note("indexing…");
   try {
     const body = await call();
     report(body);
@@ -180,13 +180,11 @@ function report(body) {
             : ""}</p>
         <p class="d-verdict">
           ${body.quarantined
-            ? `This document failed an ingest rail (<b>${esc(body.reason)}</b>). It is stored
+            ? `This document was refused (<b>${esc(body.reason)}</b>). It is stored
                for review and indexed nowhere — no query can return it.`
-            : `${d.n_chunks} chunk${d.n_chunks === 1 ? "" : "s"} written to the index.` +
-              (d.masked
-                ? ` <b>${d.masked} value${d.masked === 1 ? "" : "s"} masked before writing</b> —
-                    the index never held them.`
-                : " Nothing needed masking.")}
+            : `${d.n_chunks} chunk${d.n_chunks === 1 ? "" : "s"} written to the index, exactly
+               as uploaded — nothing is scanned or masked on the way in. PII or an injection
+               payload in it is caught the first time a question actually retrieves it.`}
         </p>
         ${kinds.length ? `<div class="d-kinds">${kinds.map((k) =>
           `<span class="chip mask">${esc(k)}</span>`).join("")}</div>` : ""}

@@ -112,7 +112,6 @@ class IngestResult:
 PII_ACTION_KEY = {
     Surface.USER_PROMPT: "pii.action.user_prompt",
     Surface.USER_FEEDBACK: "pii.action.user_prompt",
-    Surface.INGEST: "pii.action.ingest",
     Surface.RETRIEVAL: "pii.action.retrieval",
     Surface.LLM_RESPONSE: "pii.action.llm_response",
     Surface.LLM_ASK_USER: "pii.action.llm_response",
@@ -121,9 +120,10 @@ PII_ACTION_KEY = {
 }
 
 # Surfaces where prompt-injection scanning runs whatever the severity matrix
-# says. `ingest.injection_scan` and `agent.tool_result_trust` are both locked
-# on, and a matrix cell must not be able to switch off a lock.
-INJECTION_ALWAYS = (Surface.INGEST, Surface.AGENT_DATA)
+# says. `agent.tool_result_trust` is locked on, and a matrix cell must not be
+# able to switch off a lock. `Surface.INGEST` no longer reaches `evaluate()`
+# at all — `ingest()` runs no rail — so it has nothing to lock here anymore.
+INJECTION_ALWAYS = (Surface.AGENT_DATA,)
 INJECTION_BY_MATRIX = (Surface.USER_PROMPT, Surface.USER_FEEDBACK)
 
 # Scope is a question about what the *user* asked. Applying it to a retrieved
@@ -164,87 +164,6 @@ class Engine:
         self.corpus = corpus if corpus is not None else Corpus(seed=True)
         knowledge.use(self.corpus)
         self._build_rails()
-        self.reseed_builtin_rails()
-
-    # -----------------------------------------------------------------
-    def reseed_builtin_rails(self, *, force: bool = False) -> None:
-        """Replace every built-in document that has never actually been
-        rail-checked with the output of running it through `ingest()` for
-        real — the exact path an uploaded document already takes.
-
-        `force=True` bypasses the disk-path gate below — for `run.py
-        --eval`'s deliberately ephemeral, in-memory corpus (see its own
-        comment: scoring must not depend on whatever happens to be uploaded
-        today). Without it, that corpus's seed document never gets a
-        `pii_policy_version` stamped, and every one of `--eval --answers`'s
-        retrieval-surface questions would silently exercise the slow,
-        always-rescan fallback path instead of the one a real deployment
-        (`server/state.py`, which always passes a real path) actually takes —
-        making the eval measure the wrong thing.
-
-        Public, and called from two places: here, at construction, and again
-        by `POST /api/documents/reset` after `Corpus.reset()` — `reset()` is
-        a plain `Corpus` method with no `Engine` in reach, so it puts the
-        built-ins straight back the same unrailed way `seed_builtin()`
-        always has. A reset that silently undid this fix would be worse than
-        never having it.
-
-        `Corpus(seed=True)` loads its built-ins straight into the store,
-        synchronously, with no `Engine` involved, because plenty of callers
-        (tests, `--ask`, anything that just wants a searchable corpus) want
-        exactly that and have no rails to run anyway. An `Engine` has rails,
-        though, and this is the one place worth paying their cost for: a
-        built-in that was never actually scanned had `verdict="pass"` as a
-        hardcoded literal, not a finding, and its stored text was the raw
-        seed string, PII and all — `agent.data`/`retrieval` catch that on the
-        way *out* today, but a direct read of the document (the `documents`
-        permission, not `chat`) had no such rail in front of it at all.
-
-        Runs once per document, ever: `rails_applied` is persisted, so a
-        second boot against the same `data/corpus.json` finds nothing left
-        to do.
-
-        Gated on the corpus actually being disk-backed (`self.corpus.path`
-        is set) — an ephemeral, in-memory `Corpus(seed=True)` with no path,
-        which is what the overwhelming majority of tests construct, gets
-        nothing durable out of paying this cost, so it does not pay it. The
-        real deployment (`server/state.py` always passes a real path) is the
-        one place this matters, and the one place it runs.
-
-        Forces `entity_rail` to judge-only for the duration, restored after.
-        Presidio's NER "loads on first use, not at import" (`presidio_ner.py`)
-        — for an ordinary request that is a background cost paid once, well
-        after startup. Here it would be the *first* thing that ever triggers
-        it, synchronously, inside `Engine.__init__`, on a real PDF-sized seed
-        document — on a 512MB deployment that is exactly the combination
-        (a cold spaCy load plus a full NER pass over ~150,000 characters,
-        blocking the process before it can even answer a health check) that
-        pushed one real deploy over the limit before this guard existed. The
-        judge alone still masks everything Presidio would have; it costs
-        more model calls, not less protection.
-        """
-        if self.corpus.path is None and not force:
-            return
-
-        from .knowledge.seed import CORPUS as SEED_CORPUS
-
-        by_id = {f"seed:{d['id']}": d for d in SEED_CORPUS}
-        pending = [doc for doc in self.corpus.all()
-                  if doc.id in by_id and not doc.rails_applied]
-        if not pending:
-            return
-
-        original_engine_mode = self.entity_rail.engine_mode if self.entity_rail else None
-        if self.entity_rail:
-            self.entity_rail.engine_mode = "judge"
-        try:
-            for doc in pending:
-                seed = by_id[doc.id]
-                self.ingest(seed["title"], seed["text"], source="built-in", kind="txt",
-                           method="seed", doc_id=doc.id)
-        finally:
-            if self.entity_rail:
-                self.entity_rail.engine_mode = original_engine_mode
 
     # -----------------------------------------------------------------
     def _build_rails(self) -> None:
@@ -449,8 +368,8 @@ class Engine:
 
         `None` (never happens for a real hit, but a corpus edited concurrently
         with a search is not impossible), no `pii_policy_version` at all
-        (ingested before this field existed, or seeded with no `Engine` —
-        `rails_applied=False`), or a fingerprint that no longer matches
+        (every document `ingest()` produces today, plus anything seeded with
+        no `Engine`), or a fingerprint that no longer matches
         (`pii.entity_kinds`/etc. changed since) — every one of these reads as
         "unknown", never as "fresh", which is the fail-closed direction: a
         wrong skip would mean PII already in the index that the current
@@ -544,13 +463,7 @@ class Engine:
                     lambda r, t, a=action: content_rail.evaluate(t, a, r),
                 ))
 
-            # A whole document gets its own budget. The prompt budget is sized
-            # for a few hundred characters; applying it to a 30,000-character
-            # upload means the content judge times out and fails closed, and a
-            # legitimate document is quarantined for being long.
-            budget_key = ("ingest.latency_budget_ms" if surface is Surface.INGEST
-                          else "policy.latency_budget_ms")
-            budget = float(p.get(budget_key)) / 1000.0
+            budget = float(p.get("policy.latency_budget_ms")) / 1000.0
             results: list[RailResult] = []
 
             if jobs:
@@ -641,20 +554,23 @@ class Engine:
                method: str = "text", doc_id: str = "") -> IngestResult:
         """Take one document into the knowledge base.
 
-            extract → normalize → ingest rails → chunk → index
+            extract → normalize → chunk → index
 
-        The order is the contract. Rails run on the whole document *before* it
-        is chunked and written, so a masked value is masked in the index rather
-        than at read time (`ingest.mask_before_index`, locked). A document that
-        fails a rail is quarantined, not indexed with a flag
-        (`ingest.quarantine_on_block`, locked) — a flag makes retrieval safety
-        something a future caller has to remember.
+        No guardrail rail runs on a document at ingest time — it is chunked
+        and indexed exactly as uploaded, once normalized. This is deliberate,
+        not a gap: PII, injected content, or anything else a rail would have
+        caught here is still caught the first time a chunk is actually
+        retrieved (`Surface.RETRIEVAL`, in `converse()`, unchanged by this) —
+        later than before, not never. `pii_policy_version` is never stamped
+        here as a result, so `_doc_pii_is_fresh()` always reads a freshly
+        ingested document as unclassified and retrieval always scans it in
+        full, the same fail-closed default it already falls back to for any
+        document it cannot prove was classified.
 
         `doc_id`, when given, replaces whatever entry already holds that id
         instead of minting a fresh one — the one caller that needs this is
-        `Engine.__init__`'s own re-ingest of a seed document that was placed in
-        the store before rails existed to check it, and it has to land on the
-        exact same id the corpus already indexes it under.
+        anything re-ingesting a document that must land on an id the corpus
+        already indexes it under.
         """
         p = self.policy
         tracer = Tracer(session_id=session_id)
@@ -685,31 +601,10 @@ class Engine:
                 r.unit = "count"
                 r.meta = {"characters_changed": changed, "can_be_disabled": False}
 
-        scan = self.evaluate(normalized, Surface.INGEST, tracer, "Ingest rails",
-                             "the document is untrusted input",
-                             owner=CORPUS_OWNER)
-        detections = [
-            {"stage": "ingest", "rail": r.rail, **d.redacted()}
-            for r in scan.results for d in r.detections
-        ]
-        masked_count = sum(
-            len(r.detections) for r in scan.results if r.verdict is Verdict.MASK
-        )
-        # Counts only — never the values — for the same "still detected,
-        # still audited, only not stored raw" reason `findings` above already
-        # redacts. This is what lets retrieval trust the chunks below without
-        # re-running Presidio or the judge: see `classification_fingerprint`.
-        pii_kind_counts: dict[str, int] = {}
-        for r in scan.results:
-            if r.rail in ("pii.entities", "pii.detect"):
-                for d in r.detections:
-                    pii_kind_counts[d.kind] = pii_kind_counts.get(d.kind, 0) + 1
-
-        # Chunk the *masked* text. Nothing else is ever written.
         with tracer.stage("Chunk", "paragraph packing with overlap", kind="rail"):
             with tracer.rail("document.chunk", f"{p.get('ingest.chunk_size')} chars") as r:
                 chunks = chunk_text(
-                    scan.text,
+                    normalized,
                     size=int(p.get("ingest.chunk_size")),
                     overlap=int(p.get("ingest.chunk_overlap")),
                 )
@@ -720,12 +615,10 @@ class Engine:
                           "chunk_size": int(p.get("ingest.chunk_size")),
                           "overlap": int(p.get("ingest.chunk_overlap"))}
 
-        quarantined = scan.blocked or oversized or not chunks
+        quarantined = oversized or not chunks
         reason = ""
         if oversized:
             reason = "document exceeds ingest.max_document_chars"
-        elif scan.blocked:
-            reason = self._reason(scan.results) or "failed an ingest rail"
         elif not chunks:
             reason = "no text to index"
 
@@ -733,11 +626,8 @@ class Engine:
             id=doc_id or new_document_id(title), title=title, source=source, kind=kind,
             chars=len(text), chunks=chunks,
             status="quarantined" if quarantined else "indexed",
-            verdict=scan.verdict.value, masked=masked_count,
-            findings=detections, reason=reason, request_id=tracer.trace.request_id,
-            method=method, rails_applied=True,
-            pii_policy_version=classification_fingerprint(p),
-            pii_kind_counts=pii_kind_counts,
+            verdict=(Verdict.BLOCK if quarantined else Verdict.PASS).value,
+            reason=reason, request_id=tracer.trace.request_id, method=method,
         )
 
         with tracer.stage("Index", "bm25 over chunks", kind="rail"):
@@ -755,14 +645,11 @@ class Engine:
                     r.error = f"quarantined — {reason}"
                     tracer.note("quarantined: stored for review, never returned by search")
 
-        trace = tracer.finish(Verdict.BLOCK if quarantined else scan.verdict)
-        self.audit.write(trace, detections)
-        violations = self._explain([r for r in scan.results if r.verdict is not Verdict.PASS],
-                                   "document")
+        trace = tracer.finish(Verdict.BLOCK if quarantined else Verdict.PASS)
+        self.audit.write(trace, [])
         return IngestResult(
-            document=doc, trace=trace, detections=detections,
-            quarantined=quarantined, reason=reason,
-            violations=[v.to_dict() for v in violations],
+            document=doc, trace=trace, detections=[],
+            quarantined=quarantined, reason=reason, violations=[],
         )
 
     # -----------------------------------------------------------------

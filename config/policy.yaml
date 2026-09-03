@@ -54,8 +54,6 @@ severity_matrix:
 
     user.feedback:   medium
 
-    ingest.document: medium   # a document is attacker-supplied text
-
     retrieval:       off      # what we already ingested and cleared; we own the index
 
     llm.response:    high
@@ -77,8 +75,6 @@ severity_matrix:
 
     user.feedback:   medium
 
-    ingest.document: medium
-
     retrieval:       low
 
     llm.response:    high
@@ -94,8 +90,6 @@ severity_matrix:
     user.prompt:     high
 
     user.feedback:   high
-
-    ingest.document: high     # the index must never hold a raw identifier
 
     retrieval:       high
 
@@ -113,8 +107,6 @@ severity_matrix:
 
     user.feedback:   off
 
-    ingest.document: off
-
     retrieval:       off
 
     llm.response:    high
@@ -131,8 +123,6 @@ severity_matrix:
 
     user.feedback:   medium
 
-    ingest.document: off      # a document is not a question
-
     retrieval:       off
 
     llm.response:    off
@@ -148,8 +138,6 @@ severity_matrix:
     user.prompt:     high
 
     user.feedback:   medium
-
-    ingest.document: high
 
     retrieval:       medium
 
@@ -360,8 +348,6 @@ pii:
 
     llm_response: mask
 
-    ingest:       mask        # masked before the chunk is written, never after
-
     agent_tool:   mask        # a masked argument, minted under SYSTEM_OWNER, is unreversible to whoever is asking
 
     agent_data:   mask
@@ -432,11 +418,13 @@ scope:
 
 # ---------------------------------------------------------------------------
 
-# Document ingestion. Uploaded documents are a trust boundary of their own:
+# Document ingestion. No guardrail rail runs on a document at ingest time —
 
-# attacker-supplied text that the model will later be asked to answer from.
+# it is chunked and indexed exactly as uploaded, once normalized. PII or an
 
-# They are scanned once, on the way in, and masked before anything is indexed.
+# injection payload in an indexed document is still caught the first time a
+
+# question actually retrieves it (the retrieval surface, above).
 
 # ---------------------------------------------------------------------------
 
@@ -452,27 +440,15 @@ ingest:
 
   # no text layer, so they are transcribed by a model — which is why the
 
-  # transcriber is isolated and its output crosses the same rails.
+  # transcriber is isolated: told the page is data being copied, not
+
+  # instructions, regardless of what happens to its output afterward.
 
   allowed_types: [txt, md, csv, json, pdf, xlsx, xlsm, png, jpg, jpeg, webp]
 
   ocr_model: claude-sonnet-5
 
   ocr_max_pages: 20
-
-  # A document is not a prompt. The content judge reads the whole upload, so it
-
-  # needs far more than policy.latency_budget_ms — that budget timing out is how
-
-  # a long, perfectly ordinary circular gets quarantined. Raised from 60s: a real
-
-  # ~150,000-character document needs several dozen entity-judge windows batched
-
-  # 8 at a time, and 60s quarantined it live with every individual call actually
-
-  # succeeding — see registry.py's own note on this key.
-
-  latency_budget_ms: 120000
 
   min_chunk_score: 0.15
 

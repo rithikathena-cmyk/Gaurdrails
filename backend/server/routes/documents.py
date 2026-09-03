@@ -116,12 +116,10 @@ def list_documents() -> dict[str, Any]:
 def get_document(doc_id: str) -> dict[str, Any]:
     """One document, in full — including its chunks, so this is also the one
     read path that has to prove it never shows more than chat retrieval
-    would. `Engine.__init__`'s own reseed already makes the *stored* text
-    safe for every built-in — see `Engine._reseed_builtin_rails` — but this
-    scan is a second, independent layer: the one that still holds even for a
-    document that somehow reached the corpus without going through
-    `ingest()` at all, the same defense-in-depth `agent.data` already gives
-    a tool result rather than trusting what it was told the result is.
+    would. `ingest()` runs no rail on a document's stored text at all — this
+    scan is what actually protects a direct read (the `documents` permission,
+    not `chat`), the same defense-in-depth `agent.data` already gives a tool
+    result rather than trusting what it was told the result is.
     """
     doc = state.corpus.get(doc_id)
     if doc is None:
@@ -229,13 +227,9 @@ def delete_document(doc_id: str) -> dict[str, Any]:
 def reset_documents() -> dict[str, Any]:
     """Back to the built-in documents. Uploads are dropped, not archived.
 
-    `Corpus.reset()` puts every built-in back the same unrailed way it always
-    has — it is a plain store method with no `Engine`, no rails, in reach.
-    `reseed_builtin_rails()` runs right after, on the engine that does have
-    them, so a reset lands in the same state a fresh boot would: real
-    verdicts, PII masked in what is actually stored, not just on the way out.
+    `Corpus.reset()` puts every built-in back exactly as `seed_builtin()`
+    always has — no rail runs on ingest either way, so a reset already lands
+    in the same state a fresh boot would.
     """
     state.corpus.reset()
-    if state.engine is not None:
-        state.engine.reseed_builtin_rails()
     return {"ok": True, "stats": state.corpus.stats()}

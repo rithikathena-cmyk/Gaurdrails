@@ -49,6 +49,18 @@ from .agents import (
 #: boundary `routes/pipeline.py` already used for this chain.
 STOPPING_ACTIONS = {"BLOCK", "REDACT", "ESCALATE"}
 
+#: `PrefilterOutcome.final_action` is a `GuardrailAction` (ALLOW/MASK/REDACT/
+#: BLOCK/FLAG/ESCALATE) — the frontend's chip/trace CSS and JS only know the
+#: four `Verdict` values (pass/flag/mask/block), the same mismatch
+#: `agent/runner.py`'s `_AGENTIC_TO_VERDICT` maps for `ToolCall.verdict`.
+#: Same resolution here: REDACT -> mask, ESCALATE -> block. Shared by every
+#: route that renders a stopped `PrefilterOutcome` (`agent.py`, `chat.py`)
+#: rather than each keeping its own copy to drift out of sync.
+ACTION_TO_VERDICT = {
+    "ALLOW": "pass", "FLAG": "flag", "MASK": "mask",
+    "REDACT": "mask", "BLOCK": "block", "ESCALATE": "block",
+}
+
 
 @dataclass
 class PrefilterOutcome:

@@ -1,25 +1,27 @@
-"""Ingestion-time PII classification, trusted at retrieval — the change that
-actually fixes the latency/grounding failure.
+"""Retrieval trusting an already-known-fresh PII classification, when one
+exists — the mechanism that used to be fed by ingestion, before the ingest
+guardrail (and the classification it did) was removed.
 
-Before this file's own fix, every retrieval-surface question re-ran the full
-`pii.entities` judge scan over the joined retrieved chunks, no matter how
-many times that exact text had already been scanned — the seed RCS charter's
-own institution names cost a multi-window judge call on *every single
-question that retrieved it*, routinely exceeding `policy.latency_budget_ms`
-and dropping the retrieved context, which is what actually broke grounding
-(see `test_scope_retrieval.py::
+Before this file's own original fix, every retrieval-surface question re-ran
+the full `pii.entities` judge scan over the joined retrieved chunks, no
+matter how many times that exact text had already been scanned — the seed
+RCS charter's own institution names cost a multi-window judge call on
+*every single question that retrieved it*, routinely exceeding
+`policy.latency_budget_ms` and dropping the retrieved context, which is what
+actually broke grounding (see `test_scope_retrieval.py::
 test_a_normal_in_corpus_question_survives_retrieval_and_grounds` for the
 symptom this was chasing).
 
-The fix: `Engine.ingest()` classifies once, on the whole document, before it
-is ever chunked (`ingest.mask_before_index`, already locked and unchanged);
-it now also stamps the resulting `Document` with a fingerprint of the exact
-PII config that classification used. `Engine.converse()`'s retrieval step
-checks that fingerprint against today's config before scanning again — a
-match skips the expensive rail entirely (`pii.detect` still runs, cheap and
-deterministic); a document ingested before this existed, or ingested under a
-policy that has since changed in a way that matters, reads as unknown and
-falls back to exactly today's full rescan, unchanged.
+The fix: a `Document` can carry a fingerprint of the exact PII config that
+last classified it (`pii_policy_version`). `Engine.converse()`'s retrieval
+step checks that fingerprint against today's config before scanning again —
+a match skips the expensive rail entirely (`pii.detect` still runs, cheap
+and deterministic). `Engine.ingest()` no longer stamps this fingerprint
+itself — nothing is classified at ingest time any more — so every document
+ingested today reads as unknown and falls back to exactly today's full
+rescan on its first retrieval, same as any document that predates this
+feature always has. The mechanism itself, and its fail-closed default, are
+what these tests still cover.
 """
 
 from __future__ import annotations
@@ -77,33 +79,6 @@ def _policy(**overrides):
     return p
 
 
-# ── Test 4: an already-processed chunk skips the expensive judge ───────
-def test_an_already_ingested_chunk_does_not_invoke_the_judge_on_retrieval(tmp_path):
-    corpus = Corpus(seed=False)
-    ingest_llm = CountingClaude()
-    ingest_engine = Engine(_policy(), ingest_llm, AuditLog(tmp_path / "a.log"), corpus)
-    result = ingest_engine.ingest("RCS Citizen Charter", DOC_TEXT)
-    assert result.document.status == "indexed"
-    assert result.document.pii_policy_version, "ingest must stamp a fingerprint"
-
-    # A fresh Engine, same corpus, same policy — the point is that *this*
-    # engine's own judge is never asked to classify text it did not ingest.
-    # Deliberately no capitalised entity-looking phrase in the *question*
-    # itself — `pii.entities` also runs on `user.prompt` (correctly, and
-    # unaffected by this fix), and a capitalised question would call the
-    # judge there regardless of what retrieval does, which is a different
-    # call this test is not about.
-    query_llm = CountingClaude()
-    query_engine = Engine(_policy(), query_llm, AuditLog(tmp_path / "b.log"), corpus)
-    res = query_engine.converse("what does the state cooperative bank do?")
-
-    assert res.blocked is False
-    assert res.chunks, "retrieved context must have survived"
-    assert query_llm.entity_schema_calls == 0, (
-        "a chunk from an already-classified document must not re-invoke pii.entities' judge"
-    )
-
-
 # ── Test 5: an unprocessed / uncertain chunk falls back ─────────────────
 def test_an_unprocessed_chunk_still_invokes_the_deterministic_fallback(tmp_path):
     """A document seeded directly into the corpus — the shape every document
@@ -114,7 +89,6 @@ def test_an_unprocessed_chunk_still_invokes_the_deterministic_fallback(tmp_path)
     corpus.add(Document(
         id="legacy:doc", title="Legacy Document", source="test", kind="txt",
         chars=len(DOC_TEXT), chunks=[DOC_TEXT], status="indexed", verdict="pass",
-        rails_applied=False,           # never classified by any Engine
     ))
     llm = CountingClaude(entities=[
         {"text": "Tamil Nadu State Apex Cooperative Bank", "kind": "GOVERNMENT",
@@ -134,7 +108,7 @@ def test_freshness_is_false_for_a_document_with_no_fingerprint():
     `converse()` turn — a corpus edited concurrently with a search, or a doc
     missing entirely, must read as unknown, never as fresh."""
     corpus = Corpus(seed=False)
-    corpus.add(Document(id="d1", title="d1", chunks=["text"], rails_applied=False))
+    corpus.add(Document(id="d1", title="d1", chunks=["text"]))
     engine = Engine(_policy(), None, AuditLog("audit.log"), corpus)
     assert engine._doc_pii_is_fresh("d1") is False          # noqa: SLF001
     assert engine._doc_pii_is_fresh("does-not-exist") is False  # noqa: SLF001
@@ -142,22 +116,23 @@ def test_freshness_is_false_for_a_document_with_no_fingerprint():
 
 # ── Test 6: a kind_actions change is picked up without re-ingesting ────
 def test_a_kind_actions_change_invalidates_freshness_without_reingesting(tmp_path):
-    """ORGANISATION => pass at ingest, ORGANISATION => mask afterward — the
-    stored classification never gets thrown away or recomputed by touching
-    the document, only the *freshness check* changes its mind, which is what
-    lets the very next retrieval re-evaluate under the new policy."""
+    """ORGANISATION => pass under one policy, ORGANISATION => mask under
+    another — the stored classification never gets thrown away or
+    recomputed by touching the document, only the *freshness check* changes
+    its mind, which is what lets the very next retrieval re-evaluate under
+    the new policy. `ingest()` no longer stamps a fingerprint of its own, so
+    this seeds the corpus directly with one — exactly the shape a document
+    ingested before the ingest guardrail was removed still carries, and the
+    only way a fresh-classified document reaches the corpus today."""
     corpus = Corpus(seed=False)
-    ingest_engine = Engine(
-        _policy(**{"pii.kind_actions": ["ORGANISATION => pass"]}),
-        CountingClaude(), AuditLog(tmp_path / "a.log"), corpus,
-    )
-    result = ingest_engine.ingest("Charter", DOC_TEXT)
-    doc_id = result.document.id
+    original_policy = _policy(**{"pii.kind_actions": ["ORGANISATION => pass"]})
+    doc_id = "legacy:charter"
+    corpus.add(Document(
+        id=doc_id, title="Charter", chunks=[DOC_TEXT], status="indexed", verdict="pass",
+        pii_policy_version=classification_fingerprint(original_policy),
+    ))
 
-    still_same_policy = Engine(
-        _policy(**{"pii.kind_actions": ["ORGANISATION => pass"]}),
-        None, AuditLog(tmp_path / "b.log"), corpus,
-    )
+    still_same_policy = Engine(original_policy, None, AuditLog(tmp_path / "b.log"), corpus)
     assert still_same_policy._doc_pii_is_fresh(doc_id) is True  # noqa: SLF001
 
     changed_policy = Engine(
@@ -170,7 +145,7 @@ def test_a_kind_actions_change_invalidates_freshness_without_reingesting(tmp_pat
     )
 
     # The document itself, and its chunks, were never touched.
-    assert corpus.get(doc_id).chunks == result.document.chunks
+    assert corpus.get(doc_id).chunks == [DOC_TEXT]
 
     # And retrieval genuinely re-evaluates rather than silently keeping the
     # old decision: with the changed policy, the judge is asked again.

@@ -114,6 +114,31 @@ svg.flow { width: 100%; height: auto; min-width: 640px; display: block; margin: 
 .legend b.gate-mark.agentic { color: var(--accent-ink); }
 .legend b.gate-mark.fixed { color: var(--ink-3); }
 
+/* which entry point runs which stages — one shared Guardrail Supervisor
+   chain, three doors in */
+.gatemap {
+  margin-top: 16px; border: 1px solid var(--border); border-radius: var(--r-lg);
+  background: var(--surface); overflow-x: auto;
+}
+.gatemap table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 560px; }
+.gatemap caption {
+  caption-side: top; text-align: left; padding: 13px 16px 2px;
+  font-size: 13.5px; color: var(--ink-2); line-height: 1.5;
+}
+.gatemap th, .gatemap td { padding: 10px 16px; text-align: left; vertical-align: top;
+                            border-top: 1px solid var(--border); }
+.gatemap thead th { border-top: none; font-size: 10.5px; text-transform: uppercase;
+                     letter-spacing: .05em; color: var(--ink-3); font-weight: 600; }
+.gatemap td code, .gatemap caption code { font-family: var(--mono); font-size: .92em; }
+.gatemap .route { font-family: var(--mono); font-size: 12.5px; }
+.gatemap .flag-on {
+  display: inline-block; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+  letter-spacing: .04em; color: var(--accent-ink); background: var(--accent-soft);
+  border-radius: 999px; padding: 2px 8px;
+}
+.gatemap .flag-off { font-family: var(--mono); font-size: 11px; color: var(--ink-3); }
+.gatemap .stages { color: var(--ink-2); }
+
 .page-tools { display: flex; justify-content: flex-end; align-items: center;
               gap: 10px; padding: 18px 0 6px; }
 .hero { padding: 26px 0 30px; border-bottom: 1px solid var(--border); margin-bottom: 30px; }
@@ -175,16 +200,20 @@ footer code { font-family: var(--mono); }
   <section class="figure">
     <div class="figure-head">
       <h2>How a request is checked, start to finish</h2>
-      <p>Two phases, one pipeline. A document is classified once when it comes in — the judge
-         (<code>entities.py</code>) only ever answers "what is this"; <code>pii.kind_actions</code>
-         and <code>pii.kind_mask_strategy</code>, plain code with no model call, are the only
-         thing that decides what happens to it. Every question afterward then walks five
-         guardrail stages — a risk pre-check, the input rails, the agent with its own tool-call
-         rails, an authorization check, and the output rails — the same path a request actually
-         walks through <code>routes/pipeline.py</code> into <code>Engine.converse()</code>.</p>
+      <p>One Supervisor Agent plans and delegates before anything reaches the model —
+         <code>GuardrailSupervisor.run()</code> in <code>guardrail_supervisor.py</code> — routing
+         to whichever of six specialist agents its own PLAN call actually names. Only once that
+         layer is clear does the request reach the real tools: retrieval
+         (<code>search_documents</code>, BM25 plus an optional local rerank) and the model itself.
+         The reply then answers to a second, symmetric Output Supervisor Agent — the same kind of
+         plan-then-check pass, this time against what came back: PII, safety, policy, grounding,
+         and citations against what was actually retrieved. Only REJECT ever routes to a person;
+         everything ALLOW reaches becomes the response. <code>POST /api/pipeline/run</code> is
+         this diagram's own live demo; see the table below for which of it
+         <code>POST /api/chat</code> and <code>POST /api/agent/chat</code> each opt into.</p>
     </div>
     <div class="sheet">
-<svg viewBox="0 0 1400 2430" class="flow" role="img" aria-label="Document ingestion, then the guardrail pipeline, five stages">
+<svg viewBox="0 0 1400 1319" class="flow" role="img" aria-label="The guardrail pipeline: Supervisor Agent, multi-agents, tools, RAG, LLM, Output Supervisor Agent">
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
     <path class="arrowhead" d="M0 0 L10 5 L0 10 Z"/>
@@ -193,235 +222,185 @@ footer code { font-family: var(--mono); }
     <path class="arrowhead deny-head" d="M0 0 L10 5 L0 10 Z"/>
   </marker>
 </defs>
-<text class="gate-label" x="640" y="14" text-anchor="middle">PHASE 1 — A DOCUMENT GETS IN</text>
-<g class="node terminal">
-  <rect x="420" y="20" width="440" height="74" rx="11"/>
-  <text class="title" x="640" y="50">A document is uploaded</text>
-  <text class="mono" x="640" y="72">Documents tab — admin only</text>
-</g>
-<path class="edge" d="M640 94 L640 129" marker-end="url(#arrow)"/>
-<g class="node solid">
-  <rect x="340" y="138" width="600" height="70" rx="11"/>
-  <text class="title left" x="360" y="168">Parse / OCR</text>
-  <text class="mono left" x="360" y="190">txt · pdf · xlsx · scanned pages → text — knowledge/ingest.py</text>
-</g>
-<path class="edge" d="M640 208 L640 233" marker-end="url(#arrow)"/>
-<g class="node solid">
-  <rect x="340" y="242" width="600" height="70" rx="11"/>
-  <text class="title left" x="360" y="272">Normalize</text>
-  <text class="mono left" x="360" y="294">NFKC · homoglyph fold — locked, same as every other surface</text>
-</g>
-<path class="edge" d="M640 312 L640 342" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="333">the whole document, before it is ever chunked</text>
-<g class="node gate">
-  <rect x="340" y="351" width="600" height="90" rx="11"/>
-  <text class="gate-tag fixed" x="924" y="369">FIXED</text>
-  <text class="gate-label" x="360" y="377">INGEST RAILS</text>
-  <text class="title left" x="360" y="402">Is the document allowed in at all?</text>
-  <text class="mono left" x="360" y="424">words · policy.rules · prompt_attack · content — same fixed job list, every surface</text>
-</g>
-<path class="deny" d="M940 396 L1268 396" marker-end="url(#arrow-deny)"/>
-<text class="deny-label" x="956" y="386">BLOCK — quarantined, never indexed</text>
-<path class="edge" d="M640 441 L640 471" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="462">pii gets its own classify → decide split</text>
-<g class="node model">
-  <rect x="270" y="480" width="345" height="92" rx="11"/>
-  <text class="agent-tag small" x="595" y="497">CLASSIFY</text>
-  <text class="title small" x="442" y="512">PII Policy Agent</text>
-  <text class="mono small" x="442" y="533">Presidio + judge</text>
-  <text class="mono small" x="442" y="550">PERSON · ADDRESS · ORGANISATION · GOVERNMENT</text>
-</g>
-<g class="node solid">
-  <rect x="655" y="480" width="345" height="92" rx="11"/>
-  <text class="title small" x="827" y="512">pii.detect</text>
-  <text class="mono small" x="827" y="533">regex + checksum, classify</text>
-  <text class="mono small" x="827" y="550">email · phone · aadhaar · pan · ...</text>
-</g>
-<path class="edge" d="M442 572 L442 592 L640 592" marker-end="url(#arrow)"/>
-<path class="edge" d="M827 572 L827 592 L640 592"/>
-<path class="edge" d="M640 592 L640 606" marker-end="url(#arrow)"/>
-<g class="node solid">
-  <rect x="340" y="615" width="600" height="90" rx="11"/>
-  <text class="gate-label" x="360" y="641">DECIDE — NO MODEL CALL</text>
-  <text class="title left" x="360" y="666">Policy Engine</text>
-  <text class="mono left" x="360" y="688">pii.kind_actions + pii.kind_mask_strategy — kind_actions.py</text>
-</g>
-<path class="deny" d="M940 660 L1268 660" marker-end="url(#arrow-deny)"/>
-<text class="deny-label" x="956" y="650">a kind resolved to block — same as above</text>
-<path class="edge" d="M640 705 L640 735" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="726">sanitized text — nothing else is ever written</text>
-<g class="node solid">
-  <rect x="340" y="744" width="600" height="70" rx="11"/>
-  <text class="title left" x="360" y="774">Chunk</text>
-  <text class="mono left" x="360" y="796">chunk_text() — paragraph packing with overlap</text>
-</g>
-<path class="edge" d="M640 814 L640 839" marker-end="url(#arrow)"/>
-<g class="node data">
-  <rect x="290" y="848" width="700" height="70" rx="11"/>
-  <text class="title" x="640" y="878">Document stamped</text>
-  <text class="mono" x="640" y="900">pii_policy_version (fingerprint) · pii_kind_counts — engine.py</text>
-</g>
-<path class="edge" d="M640 918 L640 943" marker-end="url(#arrow)"/>
-<g class="node terminal">
-  <rect x="380" y="952" width="520" height="48" rx="11"/>
-  <text class="title small" x="640" y="981">Indexed — retrieval trusts this stamp</text>
-</g>
-<path class="deny" d="M1268 396 L1268 660"/>
-<text class="mono" x="640" y="1030" text-anchor="middle">· · · later, when someone asks a question · · ·</text>
-<g transform="translate(0,1050)">
-<text class="gate-label" x="640" y="14" text-anchor="middle">PHASE 2 — THE REQUEST PIPELINE</text>
 <g class="node terminal" data-node="user-in">
-  <rect x="420" y="54" width="440" height="74" rx="11"/>
+  <rect x="420" y="54" width="440" height="70" rx="11"/>
   <text class="title" x="640" y="84">Citizen or operator</text>
-  <text class="mono" x="640" y="106">asks a question</text>
+  <text class="mono" x="640" y="106">asks a question — USER</text>
 </g>
-<path class="edge" d="M640 128 L640 163" marker-end="url(#arrow)"/>
-<g class="node gate" data-node="guardrail-supervisor">
-  <rect x="340" y="172" width="600" height="98" rx="11"/>
-  <text class="gate-tag agentic" x="924" y="190">AGENTIC</text>
-  <text class="gate-label" x="360" y="198">1. GUARDRAIL SUPERVISOR</text>
-  <text class="title left" x="360" y="223">Quick risk pre-check</text>
-  <text class="mono left" x="360" y="245">a judge plans which checks even run — guardrail_supervisor.py</text>
-  <text class="mono left" x="360" y="262">then up to six specialists: pii · injection · content · scope · authorization · grounding</text>
+<path class="edge" d="M640 124 L640 155" marker-end="url(#arrow)"/>
+<g class="node solid" data-node="input">
+  <rect x="340" y="164" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="194">INPUT — normalize</text>
+  <text class="mono" x="640" y="216">NFKC + homoglyph fold, locked — the same first step every surface uses</text>
 </g>
-<path class="deny" d="M940 221 L1268 221"/>
-<text class="deny-label" x="956" y="211">BLOCK / ESCALATE — sent to a person</text>
-<path class="edge" d="M640 270 L640 305" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="296">risk &amp; policy</text>
-<g class="node gate" data-node="input-guardrails">
-  <rect x="340" y="314" width="600" height="80" rx="11"/>
-  <text class="gate-tag fixed" x="924" y="332">FIXED</text>
-  <text class="gate-label" x="360" y="340">2. INPUT GUARDRAILS</text>
-  <text class="title left" x="360" y="365">Is the question allowed through?</text>
-  <text class="mono left" x="360" y="387">PII · Injection · Scope · Content · Policy — the same fixed job list, every time</text>
+<path class="edge" d="M640 230 L640 265" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="256">handed to the Supervisor Agent</text>
+<g class="node gate" data-node="supervisor-agent">
+  <rect x="340" y="274" width="600" height="96" rx="11"/>
+  <text class="gate-tag agentic" x="924" y="292">AGENTIC</text>
+  <text class="gate-label" x="360" y="300">SUPERVISOR AGENT</text>
+  <text class="title left" x="360" y="325">Plan / Route / Delegate / Decide</text>
+  <text class="mono left" x="360" y="347">PLAN — one judge call: which specialist agents are relevant — agents/supervisor.py</text>
+  <text class="mono left" x="360" y="364">DECIDE — one agent's own decision carries alone; more than one, a second judge call weighs them</text>
 </g>
-<path class="deny" d="M940 354 L1268 354"/>
-<text class="deny-label" x="956" y="344">BLOCK / REDACT</text>
-<path class="edge" d="M640 394 L640 429" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="420">allowed</text>
-<g class="node model" data-node="agent">
-  <rect x="340" y="438" width="600" height="80" rx="11"/>
-  <text class="agent-tag" x="924" y="456">AGENT</text>
-  <text class="title" x="640" y="468">The agent plans</text>
-  <text class="mono" x="640" y="490">uses tools; the same fixed rails check the call and its result</text>
-</g>
-<path class="edge" d="M640 518 L640 549" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="542">the same fixed rails, run again on tool traffic</text>
-<path class="edge" d="M640 558 L640 578"/>
-<path class="edge" d="M361 578 L919 578"/>
-<path class="edge" d="M361 578 L361 595" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 370 L640 407" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="397">delegates to whichever specialists PLAN actually named</text>
+<path class="edge" d="M640 416 L640 436"/>
+<path class="edge" d="M198 436 L1082 436"/>
+<path class="edge" d="M198 436 L198 453" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="276" y="604" width="170" height="60" rx="10"/>
-  <text class="title small" x="361" y="629">pii</text>
-  <text class="mono" x="361" y="650">args &amp; result</text>
+  <rect x="115" y="462" width="165" height="64" rx="10"/>
+  <text class="agent-tag small" x="270" y="476">AGENT</text>
+  <text class="title small" x="198" y="488">PII</text>
+  <text class="mono small" x="198" y="504">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M547 578 L547 595" marker-end="url(#arrow)"/>
+<path class="edge" d="M374 436 L374 453" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="462" y="604" width="170" height="60" rx="10"/>
-  <text class="title small" x="547" y="629">policy</text>
-  <text class="mono" x="547" y="650">args &amp; result</text>
+  <rect x="292" y="462" width="165" height="64" rx="10"/>
+  <text class="agent-tag small" x="447" y="476">AGENT</text>
+  <text class="title small" x="374" y="488">Security</text>
+  <text class="mono small" x="374" y="504">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M733 578 L733 595" marker-end="url(#arrow)"/>
+<path class="edge" d="M552 436 L552 453" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="648" y="604" width="170" height="60" rx="10"/>
-  <text class="title small" x="733" y="629">content</text>
-  <text class="mono" x="733" y="650">result only</text>
+  <rect x="469" y="462" width="165" height="64" rx="10"/>
+  <text class="agent-tag small" x="624" y="476">AGENT</text>
+  <text class="title small" x="552" y="488">Scope</text>
+  <text class="mono small" x="552" y="504">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M919 578 L919 595" marker-end="url(#arrow)"/>
+<path class="edge" d="M728 436 L728 453" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="834" y="604" width="170" height="60" rx="10"/>
-  <text class="title small" x="919" y="629">injection</text>
-  <text class="mono" x="919" y="650">result only — locked on</text>
+  <rect x="646" y="462" width="165" height="64" rx="10"/>
+  <text class="agent-tag small" x="801" y="476">AGENT</text>
+  <text class="title small" x="728" y="488">Authorization</text>
+  <text class="mono small" x="728" y="504">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M361 664 L361 688"/>
-<path class="edge" d="M919 664 L919 688"/>
-<path class="edge" d="M547 664 L547 688"/>
-<path class="edge" d="M733 664 L733 688"/>
-<path class="edge" d="M361 688 L919 688"/>
-<path class="edge" d="M640 688 L640 719" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="712">then the tool runs</text>
-<path class="edge" d="M640 728 L640 748"/>
-<path class="edge" d="M360 748 L920 748"/>
-<path class="edge" d="M360 748 L360 765" marker-end="url(#arrow)"/>
+<path class="edge" d="M906 436 L906 453" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="230" y="774" width="260" height="60" rx="10"/>
-  <text class="title small" x="360" y="799">search_documents</text>
-  <text class="mono" x="360" y="820">pii pre-classified — skip rescan</text>
+  <rect x="823" y="462" width="165" height="64" rx="10"/>
+  <text class="agent-tag small" x="978" y="476">AGENT</text>
+  <text class="title small" x="906" y="488">Content Safety</text>
+  <text class="mono small" x="906" y="504">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M640 748 L640 765" marker-end="url(#arrow)"/>
+<path class="edge" d="M1082 436 L1082 453" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="510" y="774" width="260" height="60" rx="10"/>
-  <text class="title small" x="640" y="799">lookup_fee</text>
-  <text class="mono" x="640" y="820">a fee schedule</text>
+  <rect x="1000" y="462" width="165" height="64" rx="10"/>
+  <text class="agent-tag small" x="1155" y="476">AGENT</text>
+  <text class="title small" x="1082" y="488">Grounding</text>
+  <text class="mono small" x="1082" y="504">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M920 748 L920 765" marker-end="url(#arrow)"/>
-<g class="node solid">
-  <rect x="790" y="774" width="260" height="60" rx="10"/>
-  <text class="title small" x="920" y="799">case / grievance</text>
-  <text class="mono" x="920" y="820">status, or file one</text>
+<path class="edge" d="M198 526 L198 550"/>
+<path class="edge" d="M1082 526 L1082 550"/>
+<path class="edge" d="M374 526 L374 550"/>
+<path class="edge" d="M552 526 L552 550"/>
+<path class="edge" d="M728 526 L728 550"/>
+<path class="edge" d="M906 526 L906 550"/>
+<path class="edge" d="M198 550 L1082 550"/>
+<path class="edge" d="M640 550 L640 589" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="578">PolicyEngine combines every verdict — floor can only rise, never fall</text>
+<g class="node solid" data-node="tools">
+  <rect x="340" y="598" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="628">TOOLS</text>
+  <text class="mono" x="640" y="650">agent/tools.py — search_documents · lookup_fee · case/grievance</text>
 </g>
-<path class="edge" d="M360 834 L360 858"/>
-<path class="edge" d="M920 834 L920 858"/>
-<path class="edge" d="M640 834 L640 858"/>
-<path class="edge" d="M360 858 L920 858"/>
-<path class="edge" d="M640 858 L640 893" marker-end="url(#arrow)"/>
-<g class="node gate" data-node="authorization">
-  <rect x="340" y="902" width="600" height="80" rx="11"/>
-  <text class="gate-tag fixed" x="924" y="920">FIXED</text>
-  <text class="gate-label" x="360" y="928">4. AUTHORIZATION</text>
-  <text class="title left" x="360" y="953">Can this user access this resource or action?</text>
-  <text class="mono left" x="360" y="975">a resource_owner lookup, not a rail or a model call — agent/runner.py</text>
+<path class="edge" d="M640 664 L640 695" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="688">search_documents is the retrieval tool</text>
+<g class="node solid" data-node="rag">
+  <rect x="340" y="704" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="734">RAG</text>
+  <text class="mono" x="640" y="756">BM25 lexical search, optional local rerank — knowledge/ingest.py</text>
 </g>
-<path class="deny" d="M940 942 L1268 942"/>
-<text class="deny-label" x="956" y="932">DENIED — not this caller's record</text>
-<path class="edge" d="M640 982 L640 1017" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="1008">resource + action</text>
-<g class="node gate" data-node="output-grounding">
-  <rect x="340" y="1026" width="600" height="80" rx="11"/>
-  <text class="gate-tag fixed" x="924" y="1044">FIXED</text>
-  <text class="gate-label" x="360" y="1052">5. OUTPUT &amp; GROUNDING</text>
-  <text class="title left" x="360" y="1077">Is the answer safe, and true to its sources?</text>
-  <text class="mono left" x="360" y="1099">the same fixed checks again, then every claim against what was retrieved</text>
+<path class="edge" d="M640 770 L640 805" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="796">candidate chunks join this turn's context</text>
+<g class="node model" data-node="llm">
+  <rect x="340" y="814" width="600" height="80" rx="11"/>
+  <text class="gate-label" x="360" y="840">LLM</text>
+  <text class="title left" x="360" y="865">Generate Response</text>
+  <text class="mono left" x="360" y="887">the next Agent step reads tool results + RAG chunks, drafts the reply</text>
 </g>
-<path class="deny" d="M940 1066 L1268 1066"/>
-<text class="deny-label" x="956" y="1056">BLOCK / HUMAN — sent to a person</text>
-<path class="edge" d="M640 1106 L640 1141" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 894 L640 931" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="921">the drafted reply, before it reaches anyone</text>
+<g class="node gate" data-node="output-supervisor">
+  <rect x="340" y="940" width="600" height="96" rx="11"/>
+  <text class="gate-tag agentic" x="924" y="958">AGENTIC</text>
+  <text class="gate-label" x="360" y="966">OUTPUT SUPERVISOR AGENT</text>
+  <text class="title left" x="360" y="991">Plan / Check the reply</text>
+  <text class="mono left" x="360" y="1013">PII · Safety · Policy · Grounding · Citations — every claim against</text>
+  <text class="mono left" x="360" y="1030">what was actually retrieved, engine.py's evaluate() + grounding_rail</text>
+</g>
+<path class="edge" d="M640 1036 L640 1067" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 1076 L640 1096"/>
+<path class="edge" d="M420 1096 L860 1096"/>
+<path class="deny" d="M420 1096 L420 1123" marker-end="url(#arrow-deny)"/>
+<path class="edge" d="M860 1096 L860 1123" marker-end="url(#arrow)"/>
+<text class="deny-label" x="420" y="1088" text-anchor="middle">REJECT</text>
+<text class="edge-label" x="860" y="1088" text-anchor="middle">ALLOW</text>
+<g class="node solid" data-node="human">
+  <rect x="240" y="1123" width="360" height="66" rx="10"/>
+  <text class="title" x="420" y="1152">HUMAN</text>
+  <text class="mono" x="420" y="1173">a person reviews — never reaches the user unmoderated</text>
+</g>
 <g class="node terminal" data-node="response">
-  <rect x="405" y="1150" width="470" height="74" rx="11"/>
-  <text class="title" x="640" y="1180">The response reaches the user</text>
-  <text class="mono" x="640" y="1202">only what every stage above let through</text>
+  <rect x="680" y="1123" width="360" height="66" rx="10"/>
+  <text class="title" x="860" y="1152">RESPONSE</text>
+  <text class="mono" x="860" y="1173">only what both supervisors let through</text>
 </g>
-<path class="edge" d="M640 1224 L640 1259" marker-end="url(#arrow)"/>
-<g class="node data" data-node="trace">
-  <rect x="290" y="1268" width="700" height="80" rx="11"/>
-  <text class="title" x="640" y="1298">TRACE</text>
-  <text class="mono" x="640" y="1320">every check, decision and action — hash-chained</text>
-</g>
-<path class="deny" d="M1268 221 L1268 1308 L1000 1308" marker-end="url(#arrow-deny)"/>
+<path class="edge" d="M860 1189 L860 1210 L640 1210" marker-end="url(#arrow)"/>
+<g class="node terminal" data-node="user-out">
+  <rect x="490" y="1219" width="300" height="60" rx="11"/>
+  <text class="title" x="640" y="1249">USER</text>
+  <text class="mono" x="640" y="1271">receives the response</text>
 </g>
 </svg>
     </div>
-    <figcaption>Classify never decides, and decide never re-classifies — a kind resolved to
-      <code>pass</code> is still found, counted, and audited, only never rewritten
-      (<code>pii.allowlist_ordering</code>). Change what a kind should do
-      (<code>pii.kind_actions</code>) or look like (<code>pii.kind_mask_strategy</code>) later,
-      and every already-stamped document reads as stale on its next retrieval — that is the
-      <code>search_documents</code> node above skipping <code>pii.entities</code>. Once a
-      question is in flight, the Guardrail Supervisor and Input Guardrails can each stop it
-      before a model is asked anything real — both denies land in the same trace. The agent can
-      call any of its tools, in any order, before Authorization checks the resource itself and
-      Output &amp; Grounding checks the reply. <b class="gate-mark agentic">AGENTIC</b> stages
-      let a judge choose which checks even run, per request; <b class="gate-mark fixed">FIXED</b>
-      stages run the same checklist every time — a judge may still decide one of those checks,
-      but never which checks apply.</figcaption>
+    <figcaption>Two symmetric supervisor agents, not one gate at the front and a checklist at the
+      back. The Supervisor Agent's own PLAN call decides which of the six specialists even run —
+      an unrelated question never pays for a scope or authorization check it doesn't need. Each
+      specialist is a full agent with its own nested PLAN/DECIDE loop before its own detector; the
+      Output Supervisor Agent afterward is the same shape, applied to the reply instead of the
+      request — including citations, which checks every claim against what
+      <code>search_documents</code> actually returned, not what the model assumed. Nothing here is
+      classified on the way in: PII in a retrieved chunk is scanned fresh the moment it's
+      retrieved, not trusted from an old ingest-time stamp. <b class="gate-mark agentic">AGENTIC</b>
+      marks a gate whose own checklist is judge-planned per request, not fixed in advance.</figcaption>
     <div class="legend">
       <span><i class="solid"></i> solid — deterministic code</span>
       <span><i class="dashed"></i> dashed — a one-shot model call</span>
       <span><i class="clay"></i> clay — a guardrail gate</span>
       <span><i class="red"></i> red — where a request can stop short</span>
-      <span><b class="agent-mark">AGENT</b> the one real reasoning step in the main loop — plans, then calls a tool</span>
+      <span><b class="agent-mark">AGENT</b> its own PLAN + DECIDE, calling the judge itself</span>
       <span><b class="gate-mark agentic">AGENTIC</b> a judge plans this gate's own checklist</span>
-      <span><b class="gate-mark fixed">FIXED</b> the same checklist, no planning</span>
+    </div>
+    <div class="gatemap">
+      <table>
+        <caption>One Supervisor Agent chain — <code>GuardrailSupervisor</code> →
+          <code>Supervisor</code> → <code>PolicyEngine</code> — shared by three entry points.
+          Each opts in on its own; turning one on never changes another.</caption>
+        <thead>
+          <tr><th>Entry point</th><th>Supervisor Agent (front)</th><th>Then walks</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td class="route">POST /api/pipeline/run</td>
+            <td><span class="flag-on">always on</span></td>
+            <td class="stages">Supervisor Agent → tools/RAG → LLM → Output Supervisor Agent —
+              this diagram, in full; the live demo behind it.</td>
+          </tr>
+          <tr>
+            <td class="route">POST /api/agent/chat</td>
+            <td><code>agent.prefilter_mode</code><br><span class="flag-off">off by default</span></td>
+            <td class="stages">same full walk as above, from inside <code>AgentRunner</code>,
+              when set to <code>agentic</code>.</td>
+          </tr>
+          <tr>
+            <td class="route">POST /api/chat</td>
+            <td><code>supervisor.chat_prefilter_mode</code><br>
+              <span class="flag-off">off by default</span></td>
+            <td class="stages">Supervisor Agent and the Output Supervisor Agent only, when set to
+              <code>agentic</code> — ordinary chat has no tool loop, so Tools/RAG never apply.</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
   </section>
 

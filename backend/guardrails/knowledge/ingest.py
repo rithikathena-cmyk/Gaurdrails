@@ -1,19 +1,15 @@
 """Document ingestion.
 
-An uploaded document is not "content we own". It is attacker-supplied text that
-the model will later be asked to answer *from* — which makes ingestion a trust
-boundary in its own right, with its own column in the severity matrix
-(`ingest.document`) and its own posture.
+Three things happen, in this order:
 
-Four things happen, in this order, and the order is the point:
+    extract → chunk → index
 
-    extract → ingest rails → chunk → index
-
-Rails run on the whole document **before** it is chunked and written, so the
-index never holds a raw identifier (`ingest.mask_before_index`, locked). A
-document that fails a rail is **quarantined** rather than indexed with a flag
-(`ingest.quarantine_on_block`, locked) — indexing it flagged would make
-retrieval safety a matter of remembering to check the flag, every time, forever.
+No guardrail rail runs on a document at ingest — it is indexed exactly as
+uploaded, once normalized. A document is still attacker-supplied text the
+model will later be asked to answer from, but that trust boundary is now
+enforced downstream instead: at retrieval, the same rails a chat turn's own
+retrieved chunks already cross (`Surface.RETRIEVAL`), the first time a
+question actually returns it.
 
 Retrieval is BM25 over chunks, gated by term coverage. Coverage is the honest
 floor: BM25 ranks well but its scores are unbounded and corpus-relative, so
@@ -433,22 +429,15 @@ class Document:
     reason: str = ""
     request_id: str = ""
     method: str = "text"        # how the text was obtained; see Extraction
-    #: True only when this entry is the output of a real `Engine.ingest()` call
-    #: — rails actually ran, `verdict` and `masked` are real numbers, not
-    #: defaults. False for a built-in seeded straight into the store before an
-    #: `Engine` (and its rails) exist; `Engine.__init__` finds those and
-    #: re-ingests them for real. A fast, dependency-free `Corpus(seed=True)`
-    #: with no `Engine` at all — plenty of tests want exactly that — never
-    #: flips this, and that is the honest answer for it: nothing rail-checked
-    #: this content, so nothing should claim to have.
-    rails_applied: bool = False
     #: `kind_actions.classification_fingerprint()` at the moment this document
-    #: was ingested. A match at retrieval time means the chunks below were
-    #: already classified exactly as today's `pii.entity_kinds`/`pii.entities`/
-    #: etc. would classify them — the expensive judge scan can be skipped, not
-    #: re-run to confirm what ingestion already confirmed. Empty for anything
-    #: ingested before this field existed, or seeded with no `Engine` at all
-    #: (`rails_applied=False`) — both read as "unknown", never as "fresh".
+    #: was ingested — only ever set by a version of `Engine.ingest()` that
+    #: classified PII at ingest time, which today's no longer does. A match at
+    #: retrieval time means the chunks below were already classified exactly
+    #: as today's `pii.entity_kinds`/`pii.entities`/etc. would classify them —
+    #: the expensive judge scan can be skipped, not re-run to confirm what
+    #: ingestion already confirmed. Empty for anything ingested today, or
+    #: seeded with no `Engine` at all — both read as "unknown", never as
+    #: "fresh", so retrieval always falls back to a full scan.
     pii_policy_version: str = ""
     #: How many of each kind `pii.entities`/`pii.detect` found in the whole
     #: document at ingest — counts only, never the values themselves, for the
@@ -477,7 +466,6 @@ class Document:
             "request_id": self.request_id,
             "method": self.method,
             "built_in": self.source == "built-in",
-            "rails_applied": self.rails_applied,
             "pii_policy_version": self.pii_policy_version,
             "pii_kind_counts": self.pii_kind_counts,
         }
@@ -495,7 +483,6 @@ class Document:
             masked=d.get("masked", 0), findings=list(d.get("findings") or []),
             reason=d.get("reason", ""), request_id=d.get("request_id", ""),
             method=d.get("method", "text"),
-            rails_applied=bool(d.get("rails_applied", False)),
             pii_policy_version=str(d.get("pii_policy_version", "")),
             pii_kind_counts=dict(d.get("pii_kind_counts") or {}),
         )

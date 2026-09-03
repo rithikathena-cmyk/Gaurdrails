@@ -215,9 +215,8 @@
         <header class="page-head">
           <h1>Documents</h1>
           <p>What the assistant is allowed to answer from. An uploaded document is
-             attacker-supplied text that the model will later be asked to answer
-             <em>from</em>, so it crosses a rail on the way in — masked before it is
-             indexed, and quarantined rather than flagged if it fails.</p>
+             indexed exactly as uploaded — no rail runs on it at ingest. It still
+             crosses a rail the first time a question actually retrieves it.</p>
         </header>
 
         <div class="d-toolbar">
@@ -229,7 +228,7 @@
         <section class="card d-add">
           <div class="card-head">
             <h3>Add a document</h3>
-            <span class="eyebrow">extract → ingest rails → chunk → index</span>
+            <span class="eyebrow">extract → chunk → index — no rail runs here</span>
           </div>
           <div class="d-body">
             <div class="d-row">
@@ -254,10 +253,10 @@
         </section>
 
         <div class="note">
-          <b>Quarantine is not a flag.</b> A document that fails an ingest rail is stored
-          for review and indexed nowhere — <code>ingest.quarantine_on_block</code> is
-          locked, because indexing it with a warning would make retrieval safety a matter
-          of remembering to check the warning, on every query, forever.
+          <b>Nothing is scanned on the way in.</b> A document is only ever quarantined
+          for being oversized or empty — content, PII, and injection checks all moved
+          downstream, to the same rails a retrieved chunk already crosses the first
+          time a question actually returns it.
         </div>
       </div>
     </section>

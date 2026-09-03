@@ -2,16 +2,19 @@
 
 from __future__ import annotations
 
+import uuid
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 
 from backend.guardrails import Engine, LLMError
+from backend.guardrails.types import Surface
 
 from ..auth import User, cost_micros, current_user, directory, require
 from ..history import history
 from ..state import state
+from ._guardrail_prefilter import ACTION_TO_VERDICT, run_prefilter_stages
 
 router = APIRouter()
 
@@ -105,10 +108,73 @@ def check_budget(user: User) -> None:
     })
 
 
+def _prefilter_chat_payload(pre) -> dict[str, Any]:
+    """The same response shape `chat()` returns from `Engine.converse()`,
+    built instead from a `PrefilterOutcome` that stopped the request before
+    `Engine.converse()` ever ran — the `/api/chat` sibling of `agent.py`'s
+    `_prefilter_payload()`. `trace` carries the same minimal-but-complete
+    shape that fixed `trace.js`/`chat.js` crashing on an empty object there;
+    see that function's docstring for why every field below is load-bearing."""
+    verdict = ACTION_TO_VERDICT.get(pre.final_action, "block")
+    return {
+        "reply": pre.refusal_text,
+        "blocked": True,
+        "refusal_reason": pre.refusal_text,
+        "verdict": verdict,
+        "violations": [],
+        "human_review": pre.final_action == "ESCALATE",
+        "chunks": [],
+        "detections": [],
+        "trace": {
+            "request_id": pre.request_id,
+            "verdict": verdict,
+            "total_ms": pre.wall_clock_ms,
+            "guardrail_ms": pre.wall_clock_ms,
+            "guardrail_pct": 100,
+            "rails_evaluated": 1 if pre.stopped_at == "guardrail_supervisor" else 2,
+            "rail_count": {"pass": 0, "flag": 0, "mask": 0, "block": 0, verdict: 1},
+            "regenerations": 0,
+            "stages": [],
+        },
+        "prefilter": pre.to_dict(),
+    }
+
+
 @router.post("/chat")
 def chat(req: ChatRequest, user: User = Depends(current_user)) -> dict[str, Any]:
     engine = _engine()
     check_budget(user)
+
+    # Opt-in: `supervisor.chat_prefilter_mode="agentic"` runs GuardrailSupervisor
+    # -> Supervisor -> PolicyEngine ahead of the deterministic pipeline below,
+    # the same chain `routes/pipeline.py` and `agent.prefilter_mode` already run
+    # for /api/pipeline/run and /api/agent/chat. Default "off" leaves ordinary
+    # chat exactly as it always was. `engine.llm is not None` guards this the
+    # same way `agent_chat`'s identical check does: with no live model,
+    # GuardrailSupervisor's PLAN step raises on anything its deterministic
+    # hard-block precheck doesn't already catch, which `GuardrailSupervisor.run`
+    # then escalates — every ordinary chat turn would come back blocked in a
+    # no-key deployment instead of falling through to the same
+    # "rails ran, generation skipped" reply `Engine.converse()` already gives.
+    if (str(engine.policy.get("supervisor.chat_prefilter_mode")) == "agentic"
+            and engine.llm is not None):
+        pre = run_prefilter_stages(
+            req.message, Surface.USER_PROMPT, resource_kind="", resource_owner="",
+            user=user, engine=engine, request_id=f"chat_{uuid.uuid4().hex[:10]}")
+        if pre.stopped:
+            body = _prefilter_chat_payload(pre)
+            state.record(body["trace"])
+            # A prefilter-stopped turn is not context for the next turn either
+            # — the same rule the ordinary blocked-reply path below follows.
+            history.append(
+                user.name, session_id=req.session_id, question=req.message,
+                reply=body["reply"], verdict=body["verdict"],
+                request_id=body["trace"]["request_id"], mode="chat", blocked=True,
+                refusal_reason=body["refusal_reason"], masked=0, tokens=0,
+                cost_usd=0.0, model="",
+            )
+            return body
+
     try:
         result = engine.converse(
             req.message, history=state.history(req.session_id, user.name),

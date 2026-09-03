@@ -23,7 +23,7 @@ from backend.guardrails.types import Surface
 
 from ..auth import User, cost_micros, current_user, directory
 from ..history import history
-from ._guardrail_prefilter import run_prefilter_stages
+from ._guardrail_prefilter import ACTION_TO_VERDICT, run_prefilter_stages
 from .chat import check_budget, usage_in
 from ..state import state
 
@@ -101,17 +101,6 @@ def _payload(result: Any) -> dict[str, Any]:
     return body
 
 
-#: `pre.final_action` is a `GuardrailAction` (ALLOW/MASK/REDACT/BLOCK/FLAG/
-#: ESCALATE) — the frontend's chip/trace CSS and JS only know the four
-#: `Verdict` values (pass/flag/mask/block), the same mismatch
-#: `agent/runner.py`'s `_AGENTIC_TO_VERDICT` maps for `ToolCall.verdict`.
-#: Same resolution here: REDACT -> mask, ESCALATE -> block.
-_ACTION_TO_VERDICT = {
-    "ALLOW": "pass", "FLAG": "flag", "MASK": "mask",
-    "REDACT": "mask", "BLOCK": "block", "ESCALATE": "block",
-}
-
-
 def _prefilter_payload(pre) -> dict[str, Any]:
     """The same response shape `_payload()` builds from an `AgentRunner`
     result, built instead from a `PrefilterOutcome` that stopped the request
@@ -129,7 +118,7 @@ def _prefilter_payload(pre) -> dict[str, Any]:
     Supervisor's TraceEvent lists) still rides alongside under `prefilter`,
     unmerged — this is only enough for the trace UI to not crash and to show
     real numbers, not a full stage waterfall."""
-    verdict = _ACTION_TO_VERDICT.get(pre.final_action, "block")
+    verdict = ACTION_TO_VERDICT.get(pre.final_action, "block")
     return {
         "reply": pre.refusal_text,
         "blocked": True,

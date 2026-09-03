@@ -709,9 +709,11 @@ footer code { font-family:var(--mono); }
            record field somebody else filled in, a document somebody else uploaded. Trusting
            it because it arrived through your own tool is precisely how indirect injection
            lands, so it crosses a rail before the model reads it.</p>
-        <p>This is the surface the poisoned-document scenario exercises twice: once at ingest,
-           and again here, when the same payload arrives through a lookup. Covering one and
-           not the other leaves the door open.</p>
+        <p>This is the surface the poisoned-document scenario still catches: no rail runs on
+           a document at ingest any more, so the same payload sitting in the index is
+           retrievable unfiltered — but the same payload arriving through a lookup still
+           crosses this rail, a boundary of its own that removing the ingest guardrail
+           never touched.</p>
         <div class="rails" data-rails>
           <div class="rail"><b>pii.detect</b><span class="eng">regex + checksum + allowlist</span><span class="measure"></span><span class="v"><span class="chip mute">mask</span></span></div>
           <div class="rail"><b>prompt_attack</b><span class="eng">pattern set → claude judge</span><span class="measure"></span><span class="v"><span class="chip mute">block</span></span></div>
