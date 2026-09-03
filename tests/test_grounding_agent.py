@@ -29,9 +29,16 @@ def engine(tmp_path):
 
 
 class ScriptedGroundingLLM:
-    def __init__(self, plans=None, decisions=None):
+    def __init__(self, plans=None, decisions=None,
+                grounding_model_plans=None, grounding_model_decisions=None):
         self.plan_script = list(plans or [])
         self.decision_script = list(decisions or [])
+        # `GroundingModelAgent`'s own nested PLAN/DECIDE — `check_local_entailment`
+        # delegates to it now rather than calling the tool flat. Left
+        # unscripted, it falls back to an honest "nothing found" default
+        # rather than raising on an unrecognized shape.
+        self.grounding_model_plan_script = list(grounding_model_plans or [])
+        self.grounding_model_decision_script = list(grounding_model_decisions or [])
         self.plan_calls = 0
         self.decision_calls = 0
 
@@ -47,6 +54,16 @@ class ScriptedGroundingLLM:
             if self.decision_script:
                 return self.decision_script.pop(0)
             return decision("ALLOW")
+        if "needs_local_entailment" in props:
+            if self.grounding_model_plan_script:
+                return self.grounding_model_plan_script.pop(0)
+            return {"needs_local_entailment": False, "tools": [], "more_evidence_needed": False,
+                    "rationale": "default stub — no script left"}
+        if "local_entailment_verdict" in props:
+            if self.grounding_model_decision_script:
+                return self.grounding_model_decision_script.pop(0)
+            return {"local_entailment_verdict": "ALLOW", "confidence": 1.0,
+                    "rationale": "default stub — no script left", "findings": []}
         raise AssertionError(f"unexpected schema shape: {sorted(props)}")
 
 

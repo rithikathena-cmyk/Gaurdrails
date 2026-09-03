@@ -52,9 +52,19 @@ def no_presidio_model(monkeypatch):
 
 
 @pytest.fixture
-def engine(tmp_path):
+def engine(tmp_path, monkeypatch):
+    """`llm=None` — the agent's own model is `ScriptedAgentLLM`, separate from
+    `engine.llm`, which no test here needs real. But `detect_pii_entities`
+    calls `engine.entity_rail._judge_entities()`, which — unlike the deleted
+    regex tool — needs a judge; with no deterministic layer left, every kind
+    is judge-only. Stubbed to report nothing by default so the tool call
+    itself never raises; a test that needs specific findings overrides this
+    with its own `monkeypatch.setattr(engine.entity_rail, "_judge_entities", ...)`.
+    """
     policy = load(REPO / "config" / "policy.yaml")
-    return Engine(policy, None, AuditLog(tmp_path / "audit.log"))
+    eng = Engine(policy, None, AuditLog(tmp_path / "audit.log"))
+    monkeypatch.setattr(eng.entity_rail, "_judge_entities", lambda text: [])
+    return eng
 
 
 class ScriptedAgentLLM:
@@ -63,9 +73,18 @@ class ScriptedAgentLLM:
     `test_adjudicator.py` uses for the same reason: a schema's property names
     are a more stable key than call order."""
 
-    def __init__(self, plans=None, decisions=None):
+    def __init__(self, plans=None, decisions=None, ner_plans=None, ner_decisions=None):
         self.plan_script = list(plans or [])
         self.decision_script = list(decisions or [])
+        # `NERAgent`'s own nested PLAN/DECIDE — `pii_agent.py` delegates
+        # `detect_pii_presidio` to it rather than calling the tool flat. Its
+        # schema shapes (`needs_ner_scan`/`ner_verdict`) are deliberately
+        # distinct from this class's own, so a script left empty here — the
+        # common case, since most tests don't care what Presidio itself
+        # found — falls back to an honest "nothing found" default rather
+        # than raising on an unrecognized shape.
+        self.ner_plan_script = list(ner_plans or [])
+        self.ner_decision_script = list(ner_decisions or [])
         self.plan_calls = 0
         self.decision_calls = 0
         self.seen_users: list[str] = []
@@ -83,6 +102,16 @@ class ScriptedAgentLLM:
             if self.decision_script:
                 return self.decision_script.pop(0)
             return decision("ALLOW", rationale="default stub — no script left")
+        if "needs_ner_scan" in props:
+            if self.ner_plan_script:
+                return self.ner_plan_script.pop(0)
+            return {"needs_ner_scan": False, "tools": [], "more_evidence_needed": False,
+                    "rationale": "default stub — no script left"}
+        if "ner_verdict" in props:
+            if self.ner_decision_script:
+                return self.ner_decision_script.pop(0)
+            return {"ner_verdict": "ALLOW", "confidence": 1.0,
+                    "rationale": "default stub — no script left", "findings": []}
         raise AssertionError(f"unexpected schema shape: {sorted(props)}")
 
 
@@ -107,100 +136,123 @@ def finding(entity, risk="high", confidence=0.9, evidence=None):
 
 
 # ── 1-3: detection reaches the model's decision ──────────────────────
-def test_agent_detects_ssn(engine):
+# Each kind here used to have its own regex/checksum recognizer; all three
+# are judge-only now, so the entity judge is scripted to report exactly what
+# the old pattern would have matched — the tool wrapper and the agent
+# orchestration around it are what these tests actually verify.
+def test_agent_detects_ssn(engine, monkeypatch):
+    # entity_rail.evaluate()'s use_judge gate requires a truthy llm, even
+    # though _judge_entities is monkeypatched below to bypass calling it for
+    # real — engine.llm is None here (only the agent's own scripted llm is
+    # real in this file's tests), so without this the gate silently never
+    # reaches the judge branch at all.
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}])
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("MASK", findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
     assert result.decision.action == "MASK"
-    regex_call = next(c for c in result.tool_calls if c.tool == "detect_pii_regex")
-    assert regex_call.result["findings"][0]["kind"] == "US_SSN"
+    entities_call = next(c for c in result.tool_calls if c.tool == "detect_pii_entities")
+    assert entities_call.result["findings"][0]["kind"] == "US_SSN"
 
 
-def test_agent_detects_email(engine):
+def test_agent_detects_email(engine, monkeypatch):
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "meera@example.com", "kind": "EMAIL_ADDRESS",
+                                       "confidence": 0.9}])
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("MASK", findings=[finding("EMAIL_ADDRESS")])])
     result = PIIAgent(llm, engine).run("write to meera@example.com", owner="citizen")
-    regex_call = next(c for c in result.tool_calls if c.tool == "detect_pii_regex")
-    assert regex_call.result["findings"][0]["kind"] == "EMAIL_ADDRESS"
+    entities_call = next(c for c in result.tool_calls if c.tool == "detect_pii_entities")
+    assert entities_call.result["findings"][0]["kind"] == "EMAIL_ADDRESS"
     assert result.decision.action == "MASK"
 
 
-def test_agent_detects_phone(engine):
+def test_agent_detects_phone(engine, monkeypatch):
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "415-555-0143", "kind": "PHONE_NUMBER",
+                                       "confidence": 0.9}])
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("MASK", findings=[finding("PHONE_NUMBER")])])
     result = PIIAgent(llm, engine).run("call me at 415-555-0143", owner="citizen")
-    regex_call = next(c for c in result.tool_calls if c.tool == "detect_pii_regex")
-    assert regex_call.result["findings"][0]["kind"] == "PHONE_NUMBER"
+    entities_call = next(c for c in result.tool_calls if c.tool == "detect_pii_entities")
+    assert entities_call.result["findings"][0]["kind"] == "PHONE_NUMBER"
     assert result.decision.action == "MASK"
 
 
 # ── 4-5: tool selection is real, not always-run-everything ───────────
 def test_agent_selects_only_the_tools_its_plan_named(engine):
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                            decisions=[decision("ALLOW")])
     result = PIIAgent(llm, engine).run("opening hours are 9 to 5", owner="citizen")
-    assert {c.tool for c in result.tool_calls} == {"detect_pii_regex"}
+    assert {c.tool for c in result.tool_calls} == {"detect_pii_entities"}
 
 
 def test_agent_can_call_multiple_tools(engine):
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex", "detect_pii_presidio"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities", "detect_pii_presidio"])],
                            decisions=[decision("ALLOW")])
     result = PIIAgent(llm, engine).run("some ordinary text", owner="citizen")
-    assert {c.tool for c in result.tool_calls} == {"detect_pii_regex", "detect_pii_presidio"}
+    assert {c.tool for c in result.tool_calls} == {"detect_pii_entities", "detect_pii_presidio"}
 
 
 # ── 6: conflicting evidence reaches the decision call intact ─────────
-def test_agent_evaluates_conflicting_tool_results(engine):
-    """Regex finds a checksum-verified SSN; Presidio — which was never built to
-    look for one — reports nothing. Both real, divergent results reach the
-    decision call; the scripted answer proves the model saw both rather than
-    the loop resolving the conflict itself with a hardcoded rule.
+def test_agent_evaluates_conflicting_tool_results(engine, monkeypatch):
+    """The judge finds the SSN; Presidio — which was never built to look for
+    one — reports nothing. Both real, divergent results reach the decision
+    call; the scripted answer proves the model saw both rather than the loop
+    resolving the conflict itself with a hardcoded rule.
     """
+    # entity_rail.evaluate()'s use_judge gate requires a truthy llm, even
+    # though _judge_entities is monkeypatched below to bypass calling it for
+    # real — engine.llm is None here (only the agent's own scripted llm is
+    # real in this file's tests), so without this the gate silently never
+    # reaches the judge branch at all.
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}])
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex", "detect_pii_presidio"])],
-        decisions=[decision("MASK", rationale="checksum-verified SSN outweighs "
+        plans=[full_plan(["detect_pii_entities", "detect_pii_presidio"])],
+        decisions=[decision("MASK", rationale="the judge-verified SSN outweighs "
                                               "presidio's silence on a kind it "
                                               "was never built to find",
                             findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
 
-    regex_call = next(c for c in result.tool_calls if c.tool == "detect_pii_regex")
+    entities_call = next(c for c in result.tool_calls if c.tool == "detect_pii_entities")
     presidio_call = next(c for c in result.tool_calls if c.tool == "detect_pii_presidio")
-    assert regex_call.result["findings"], "regex should have found the SSN"
+    assert entities_call.result["findings"], "the judge should have found the SSN"
     assert presidio_call.result["findings"] == [], "presidio should report nothing"
-    assert "detect_pii_regex" in llm.seen_users[-1] and "detect_pii_presidio" in llm.seen_users[-1]
+    assert "detect_pii_entities" in llm.seen_users[-1] and "detect_pii_presidio" in llm.seen_users[-1]
     assert result.decision.action == "MASK"
 
 
 # ── detect_pii_entities: the unknown-pattern case ──────────────────────
-def test_detect_pii_entities_finds_what_regex_and_presidio_miss(engine, monkeypatch):
-    """'EMP-XJ7291' matches no regex (no checksum, no known shape) and is not
-    a name or address Presidio was trained to find — the exact case neither
-    of the other two tools can help with. The free-form judge tier
-    (EntityRail._judge_entities, wired in this session) is the one tool that
-    can still name it, because it is not gated on any pattern matching
+def test_detect_pii_entities_finds_what_presidio_misses(engine, monkeypatch):
+    """'2024/HRD/ANNUAL/00892' is not a name or address Presidio was trained
+    to find — no deterministic layer exists any more to catch it either, so
+    the free-form judge tier (`EntityRail._judge_entities`) is the only tool
+    that can still name it, because it is not gated on any pattern matching
     first."""
     monkeypatch.setattr(
         engine.entity_rail, "_judge_entities",
-        lambda text: [{"text": "EMP-XJ7291", "kind": "ORGANISATION", "confidence": 0.91}])
+        lambda text: [{"text": "2024/HRD/ANNUAL/00892", "kind": "OTHER_PII", "confidence": 0.91}])
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex", "detect_pii_presidio", "detect_pii_entities"])],
-        decisions=[decision("MASK", rationale="an internal employee identifier, no known "
+        plans=[full_plan(["detect_pii_presidio", "detect_pii_entities"])],
+        decisions=[decision("MASK", rationale="an internal case reference, no known "
                                               "format but clearly identifying",
-                            findings=[finding("employee_identifier")])])
+                            findings=[finding("case_reference")])])
     result = PIIAgent(llm, engine).run(
-        "Please route this to EMP-XJ7291 for review.", owner="citizen")
+        "Please route this to 2024/HRD/ANNUAL/00892 for review.", owner="citizen")
 
-    regex_call = next(c for c in result.tool_calls if c.tool == "detect_pii_regex")
     presidio_call = next(c for c in result.tool_calls if c.tool == "detect_pii_presidio")
     entities_call = next(c for c in result.tool_calls if c.tool == "detect_pii_entities")
-    assert regex_call.result["findings"] == [], "no regex should match an unfamiliar shape"
     assert presidio_call.result["findings"] == [], "not a name or address Presidio knows"
     assert entities_call.result["findings"], "the free-form judge tier should still surface it"
-    assert entities_call.result["findings"][0]["kind"] == "ORGANISATION"
+    assert entities_call.result["findings"][0]["kind"] == "OTHER_PII"
     assert entities_call.result["findings"][0]["start"] != -1, \
         "the raw matched text must not be echoed back — only where it is"
     assert result.decision.action == "MASK"
@@ -218,7 +270,7 @@ def test_detect_pii_entities_is_in_the_tool_allowlist(engine, monkeypatch):
 # ── 7-10: each action is reachable, chosen by the model ───────────────
 @pytest.mark.parametrize("action", ["MASK", "BLOCK", "ALLOW", "ESCALATE"])
 def test_agent_chooses_each_action(engine, action):
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                            decisions=[decision(action)])
     result = PIIAgent(llm, engine).run("some text", owner="citizen")
     assert result.decision.action == action
@@ -228,7 +280,7 @@ def test_the_decision_is_genuinely_the_models_not_a_hardcoded_rule(engine):
     """Same SSN-bearing input, a scripted answer that disagrees with what a
     naive `if ssn_found: MASK` would return. If DECIDE were hardcoded this
     could not fail; scripted, it must follow the script."""
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                            decisions=[decision("FLAG", rationale="operator judgement call")])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
     assert result.decision.action == "FLAG"
@@ -241,7 +293,7 @@ def test_unknown_tool_raises_tool_not_allowed(engine):
 
 
 def test_a_hallucinated_tool_in_a_plan_is_never_silently_run(engine):
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex", "read_database"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities", "read_database"])],
                            decisions=[decision("ALLOW")])
     with pytest.raises(ToolNotAllowed):
         PIIAgent(llm, engine).run("some text", owner="citizen")
@@ -249,10 +301,11 @@ def test_a_hallucinated_tool_in_a_plan_is_never_silently_run(engine):
 
 def test_the_tool_registry_has_no_dynamic_dispatch(engine):
     """There is no getattr/eval path from a name to a function — only the
-    five names below resolve to anything, and nothing widens that set."""
+    three names below resolve to anything, and nothing widens that set.
+    `detect_pii_regex`/`classify_pii_type` are gone with the regex/checksum
+    rail they wrapped."""
     assert set(PII_AGENT_TOOLS) == set(PII_TOOL_NAMES) == {
-        "detect_pii_regex", "detect_pii_presidio", "detect_pii_entities",
-        "classify_pii_type", "get_pii_policy",
+        "detect_pii_entities", "detect_pii_presidio", "get_pii_policy",
     }
     for hostile in ("__import__", "exec", "eval", "os.system", "subprocess.run"):
         with pytest.raises(ToolNotAllowed):
@@ -261,7 +314,7 @@ def test_the_tool_registry_has_no_dynamic_dispatch(engine):
 
 # ── 13-15: capability-layer hard boundaries ────────────────────────────
 def test_capability_layer_denies_policy_modification(engine):
-    caps = PIICapabilities(engine.pii_rail, engine.vault)
+    caps = PIICapabilities(engine.entity_rail, engine.vault)
     with pytest.raises(CapabilityDenied):
         caps.request("modify_policy")
     with pytest.raises(CapabilityDenied):
@@ -269,7 +322,7 @@ def test_capability_layer_denies_policy_modification(engine):
 
 
 def test_capability_layer_denies_rbac_modification(engine):
-    caps = PIICapabilities(engine.pii_rail, engine.vault)
+    caps = PIICapabilities(engine.entity_rail, engine.vault)
     with pytest.raises(CapabilityDenied):
         caps.request("modify_rbac")
     with pytest.raises(CapabilityDenied):
@@ -277,7 +330,7 @@ def test_capability_layer_denies_rbac_modification(engine):
 
 
 def test_capability_layer_denies_self_permission_escalation(engine):
-    caps = PIICapabilities(engine.pii_rail, engine.vault)
+    caps = PIICapabilities(engine.entity_rail, engine.vault)
     with pytest.raises(CapabilityDenied):
         caps.request("grant_permission")
     with pytest.raises(CapabilityDenied):
@@ -289,9 +342,53 @@ def test_every_named_forbidden_capability_is_denied(engine, capability):
     """Every entry in the explicit forbidden list, not just the three the
     spec named — reveal_vault, execute_code, filesystem/database access,
     disabling a guardrail, and the rest all deny the same way."""
-    caps = PIICapabilities(engine.pii_rail, engine.vault)
+    caps = PIICapabilities(engine.entity_rail, engine.vault)
     with pytest.raises(CapabilityDenied):
         caps.request(capability)
+
+
+def test_redact_is_genuinely_irreversible_even_under_partial_strategy(engine, monkeypatch):
+    """REDACT and MASK used to reach `EntityRail.evaluate()` identically —
+    both passed the literal string `"mask"` as the rail-level action — so a
+    REDACT decision rendered through whatever `pii.mask_strategy` was
+    configured, `partial` included, leaving part of the value directly
+    readable. `force_strategy="redact"` (`entities.py`) is what makes
+    REDACT's own "removed, not recoverable" description true regardless of
+    the configured strategy."""
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}])
+    # `EntityRail.strategy` is read once at construction, not re-read from
+    # `policy` per call — set it directly, the same as `engine`'s own
+    # `_build_rails()` would from a `pii.mask_strategy="partial"` deployment.
+    monkeypatch.setattr(engine.entity_rail, "strategy", "partial")
+    monkeypatch.setattr(engine.entity_rail, "partial_reveal", 4)
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
+    text = "My SSN is 796-33-9021."
+
+    masked = caps.execute("MASK", text, owner="citizen")
+    redacted = caps.execute("REDACT", text, owner="citizen")
+
+    assert "9021" in masked.text_out, "MASK should still honor the configured partial strategy"
+    assert "9021" not in redacted.text_out, "REDACT must not leave any digits readable"
+    assert redacted.text_out == "My SSN is [REDACTED]."
+    assert masked.text_out != redacted.text_out
+
+
+def test_redact_mints_no_vault_token(engine, monkeypatch):
+    """A redacted value has nothing to reveal later — unlike MASK, which
+    mints a real, ownerscoped vault entry an authorized caller can unmask."""
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}])
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
+
+    caps.execute("MASK", "My SSN is 796-33-9021.", owner="citizen")
+    minted_after_mask = len(engine.vault._store)
+    caps.execute("REDACT", "My SSN is 796-33-9021.", owner="citizen")
+    minted_after_redact = len(engine.vault._store)
+
+    assert minted_after_redact == minted_after_mask, "REDACT must not mint any new vault entry"
 
 
 def test_a_decision_action_is_the_only_thing_that_reaches_the_capability_layer(engine):
@@ -309,7 +406,7 @@ def test_a_decision_action_is_the_only_thing_that_reaches_the_capability_layer(e
 # ── 16-18: bounded loop limits ──────────────────────────────────────────
 def test_max_tool_calls_is_enforced(engine):
     llm = ScriptedAgentLLM(plans=[full_plan(
-        ["detect_pii_regex", "detect_pii_presidio", "classify_pii_type", "get_pii_policy"])])
+        ["detect_pii_entities", "detect_pii_presidio", "get_pii_policy"])])
     result = PIIAgent(llm, engine, max_tool_calls=1).run(
         "My SSN is 796-33-9021", owner="citizen")
     assert result.status == "escalated"
@@ -320,7 +417,7 @@ def test_max_tool_calls_is_enforced(engine):
 def test_max_iterations_is_enforced(engine):
     """A model that always asks for another round never gets to decide — the
     loop stops it rather than looping forever."""
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"], more=True)] * 10)
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"], more=True)] * 10)
     result = PIIAgent(llm, engine, max_iterations=2, max_tool_calls=20).run(
         "My SSN is 796-33-9021", owner="citizen")
     assert result.status == "escalated"
@@ -334,7 +431,7 @@ def test_timeout_is_enforced(engine):
             time.sleep(0.05)
             return super().judge(*a, **k)
 
-    llm = SlowLLM(plans=[full_plan(["detect_pii_regex"])], decisions=[decision("ALLOW")])
+    llm = SlowLLM(plans=[full_plan(["detect_pii_entities"])], decisions=[decision("ALLOW")])
     result = PIIAgent(llm, engine, timeout_s=0.01).run("some text", owner="citizen")
     assert result.status == "escalated"
     assert "exceeded" in result.escalation_reason
@@ -372,7 +469,7 @@ def test_malformed_decision_output_escalates(engine):
     """An action outside the six, or a confidence outside 0..1, fails Pydantic
     validation — caught by the loop and turned into ESCALATE, not a crash."""
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[{"action": "DESTROY_EVERYTHING", "confidence": 2.0,
                    "rationale": "x", "findings": []}])
     result = PIIAgent(llm, engine).run("some text", owner="citizen")
@@ -382,7 +479,7 @@ def test_malformed_decision_output_escalates(engine):
 
 def test_a_hallucinated_evidence_citation_is_dropped(engine):
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("MASK", findings=[
             finding("US_SSN", evidence=["a_call_id_nobody_recorded"])])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
@@ -391,7 +488,7 @@ def test_a_hallucinated_evidence_citation_is_dropped(engine):
 
 # ── 20-21: trace and action execution ───────────────────────────────────
 def test_a_complete_trace_is_produced(engine):
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                            decisions=[decision("MASK", findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
     phases = [t.phase for t in result.trace]
@@ -399,8 +496,16 @@ def test_a_complete_trace_is_produced(engine):
         assert expected in phases, f"{expected} missing from {phases}"
 
 
-def test_action_execution_is_traced_and_the_outcome_recorded(engine):
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+def test_action_execution_is_traced_and_the_outcome_recorded(engine, monkeypatch):
+    # entity_rail.evaluate()'s use_judge gate requires a truthy llm, even
+    # though _judge_entities is monkeypatched below to bypass calling it for
+    # real — engine.llm is None here (only the agent's own scripted llm is
+    # real in this file's tests), so without this the gate silently never
+    # reaches the judge branch at all.
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}])
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                            decisions=[decision("MASK", findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
     assert result.outcome is not None
@@ -438,16 +543,24 @@ def test_detect_pii_presidio_really_calls_the_existing_recognizer(engine, monkey
 
 
 # ── the Policy Engine: the agent recommends, it decides ──────────────────
-def test_the_policy_engine_overrides_a_permissive_recommendation(engine):
-    """The agent finds a checksum-verified SSN but — misjudging it, or being
-    scripted to for this test — recommends ALLOW. `pii.action.user_prompt`
-    is `mask` in the checked-in policy. The Policy Engine's deterministic
-    floor must win: `AgentDecision.action` stays ALLOW as the honest record
-    of what the model recommended, but `outcome.action` — what actually gets
-    executed — is MASK.
+def test_the_policy_engine_overrides_a_permissive_recommendation(engine, monkeypatch):
+    """The agent finds the SSN but — misjudging it, or being scripted to for
+    this test — recommends ALLOW. `pii.action.user_prompt` is `mask` in the
+    checked-in policy. The Policy Engine's deterministic floor must win:
+    `AgentDecision.action` stays ALLOW as the honest record of what the model
+    recommended, but `outcome.action` — what actually gets executed — is
+    MASK.
     """
+    # entity_rail.evaluate()'s use_judge gate requires a truthy llm, even
+    # though _judge_entities is monkeypatched below to bypass calling it for
+    # real — engine.llm is None here (only the agent's own scripted llm is
+    # real in this file's tests), so without this the gate silently never
+    # reaches the judge branch at all.
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}])
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("ALLOW", rationale="misjudged as not sensitive",
                             findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
@@ -467,7 +580,7 @@ def test_the_policy_engine_upholds_a_recommendation_at_or_above_the_floor(engine
     — more caution than the floor needs no permission, and is not overridden
     downward to match it."""
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("BLOCK", rationale="context makes this look adversarial",
                             findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
@@ -481,7 +594,7 @@ def test_the_policy_engine_leaves_a_recommendation_alone_with_no_findings(engine
     """Nothing was found — the floor is ALLOW, and the agent's own
     recommendation (whatever it was) is never second-guessed against a floor
     that has nothing behind it."""
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                            decisions=[decision("FLAG", findings=[])])
     result = PIIAgent(llm, engine).run("some ordinary text", owner="citizen")
 
@@ -497,7 +610,7 @@ def test_a_confident_floor_survives_the_agents_own_escalation(engine):
     still enforces the floor.
     """
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"])],
+        plans=[full_plan(["detect_pii_entities"])],
         decisions=[decision("ESCALATE", rationale="conflicting signals, unsure",
                             findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
@@ -512,7 +625,7 @@ def test_every_result_carries_a_policy_decision_including_when_escalated(engine)
     agent's own uncertainty) also produces a `policy_decision` — the trace
     shape stays uniform whether the agent decided anything or not."""
     llm = ScriptedAgentLLM(plans=[full_plan(
-        ["detect_pii_regex", "detect_pii_presidio", "classify_pii_type", "get_pii_policy"])])
+        ["detect_pii_entities", "detect_pii_presidio", "get_pii_policy"])])
     result = PIIAgent(llm, engine, max_tool_calls=1).run(
         "My SSN is 796-33-9021", owner="citizen")
     assert result.status == "escalated"
@@ -540,7 +653,7 @@ def test_a_first_round_irrelevant_request_completes_without_decide(engine):
 
 def test_a_first_round_relevant_request_runs_tools_then_decides(engine):
     """(B) `needs_analysis=true` on round 1 runs tools and reaches DECIDE."""
-    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[full_plan(["detect_pii_entities"])],
                           decisions=[decision("MASK", findings=[finding("US_SSN")])])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
     assert result.tool_calls
@@ -554,7 +667,7 @@ def test_multi_round_evidence_survives_a_later_needs_analysis_false(engine):
     distinct rationale) meaning "no more evidence needed," not "irrelevant."
     The evidence from round 1 must still reach DECIDE, POLICY, and ACT."""
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"], more=True,
+        plans=[full_plan(["detect_pii_entities"], more=True,
                          rationale="a structured identifier was found, checking policy next"),
               no_plan(rationale="checksum verified and policy read — enough to decide")],
         decisions=[decision("MASK", findings=[finding("US_SSN")])])
@@ -576,7 +689,7 @@ def test_policy_engine_and_capabilities_are_not_bypassed_by_a_later_plan(engine)
     result shape — proves a later `needs_analysis=false` cannot route
     around POLICY or ACT."""
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"], more=True), no_plan()],
+        plans=[full_plan(["detect_pii_entities"], more=True), no_plan()],
         decisions=[decision("MASK", findings=[finding("US_SSN")])])
     agent = PIIAgent(llm, engine)
     policy_calls, capability_calls = [], []
@@ -594,7 +707,7 @@ def test_no_allow_with_null_outcome_once_evidence_was_gathered(engine):
     """(G) The exact shape the live bug produced — ALLOW with `outcome=None`
     — must be unreachable once any tool has actually run."""
     llm = ScriptedAgentLLM(
-        plans=[full_plan(["detect_pii_regex"], more=True), no_plan()],
+        plans=[full_plan(["detect_pii_entities"], more=True), no_plan()],
         decisions=[decision("ALLOW", rationale="checksum failed, not a real SSN")])
     result = PIIAgent(llm, engine).run("My SSN is 796-33-9021", owner="citizen")
 

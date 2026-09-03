@@ -27,9 +27,16 @@ def engine(tmp_path):
 
 
 class ScriptedContentLLM:
-    def __init__(self, plans=None, decisions=None):
+    def __init__(self, plans=None, decisions=None,
+                content_model_plans=None, content_model_decisions=None):
         self.plan_script = list(plans or [])
         self.decision_script = list(decisions or [])
+        # `ContentModelAgent`'s own nested PLAN/DECIDE — `score_content_categories`
+        # delegates to it now rather than calling the tool flat. Left
+        # unscripted, it falls back to an honest "nothing found" default
+        # rather than raising on an unrecognized shape.
+        self.content_model_plan_script = list(content_model_plans or [])
+        self.content_model_decision_script = list(content_model_decisions or [])
         self.plan_calls = 0
         self.decision_calls = 0
 
@@ -45,6 +52,16 @@ class ScriptedContentLLM:
             if self.decision_script:
                 return self.decision_script.pop(0)
             return decision("ALLOW")
+        if "needs_local_score" in props:
+            if self.content_model_plan_script:
+                return self.content_model_plan_script.pop(0)
+            return {"needs_local_score": False, "tools": [], "more_evidence_needed": False,
+                    "rationale": "default stub — no script left"}
+        if "local_content_verdict" in props:
+            if self.content_model_decision_script:
+                return self.content_model_decision_script.pop(0)
+            return {"local_content_verdict": "ALLOW", "confidence": 1.0,
+                    "rationale": "default stub — no script left", "findings": []}
         raise AssertionError(f"unexpected schema shape: {sorted(props)}")
 
 

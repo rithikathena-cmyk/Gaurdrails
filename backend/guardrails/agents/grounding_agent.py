@@ -49,6 +49,7 @@ from ..llm import LLMError
 from ..prompts import judge_prompt
 from ..types import Surface
 from .capabilities import PIICapabilities
+from .grounding_model_agent import GroundingModelAgent
 from .grounding_tools import GROUNDING_TOOL_NAMES, ToolNotAllowed, call as call_tool
 from .policy_engine import PolicyEngine
 from .types import (
@@ -151,7 +152,7 @@ class GroundingAgent:
                  timeout_s: float = 30.0) -> None:
         self.llm = llm
         self.engine = engine
-        self.capabilities = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+        self.capabilities = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
         self.policy_engine = PolicyEngine()
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
@@ -230,7 +231,7 @@ class GroundingAgent:
                         trace, calls, began, request_id, plan)
 
                 round_calls, truncated = self._execute(
-                    plan.tools, answer, chunks, budget_left, note)
+                    plan.tools, answer, question, chunks, surface, owner, budget_left, note)
                 calls.extend(round_calls)
 
                 if truncated:
@@ -291,8 +292,9 @@ class GroundingAgent:
         note("PLAN", plan.rationale or f"tools={list(plan.tools)}")
         return plan
 
-    def _execute(self, tool_names: list[str], answer: str, chunks: list[str],
-                budget_left: int, note: Any) -> tuple[list[ToolResult], bool]:
+    def _execute(self, tool_names: list[str], answer: str, question: str, chunks: list[str],
+                surface: Surface, owner: str, budget_left: int,
+                note: Any) -> tuple[list[ToolResult], bool]:
         results: list[ToolResult] = []
         truncated = False
 
@@ -303,6 +305,17 @@ class GroundingAgent:
                 break
             if name not in GROUNDING_TOOL_NAMES:
                 raise ToolNotAllowed(name)
+
+            if name == "check_local_entailment":
+                call_id = _call_id()
+                nested = GroundingModelAgent(self.llm, self.engine).run(
+                    answer, question=question, chunks=chunks, surface=surface, owner=owner,
+                    request_id=f"{call_id}_grounding_model")
+                res = _wrap_nested(nested, name, call_id)
+                results.append(res)
+                note("EXECUTE", f"{name} -> nested grounding_model_agent: {nested.decision.action} "
+                                f"({len(nested.decision.findings)} finding(s))")
+                continue
 
             args = {"answer": answer, "chunks": chunks}
             res = call_tool(name, args, self.engine, _call_id())
@@ -376,6 +389,25 @@ def _summarise(name: str, result: dict) -> str:
     if name == "get_grounding_policy":
         return f"action_on_fail={result.get('action_on_fail')}"
     return str(result)
+
+
+def _wrap_nested(result: AgentResult, tool_name: str, call_id: str) -> ToolResult:
+    """A nested agent's own `AgentResult`, folded into the shape `_decide()`'s
+    evidence trail already expects — see `ner_agent.py`'s identical helper
+    for the rationale; duplicated here rather than imported so each agent
+    file stays self-contained, the same convention every other piece of this
+    skeleton already follows."""
+    d = result.decision
+    return ToolResult(
+        call_id=call_id, tool=tool_name,
+        status="ok" if result.status != "failed" else "error",
+        duration_ms=result.duration_ms,
+        result={
+            "nested_agent": result.agent, "nested_status": result.status,
+            "action": d.action, "confidence": d.confidence, "rationale": d.rationale,
+            "findings": [f.model_dump() for f in d.findings],
+        },
+    )
 
 
 _call_counter = 0

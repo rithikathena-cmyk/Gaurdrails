@@ -95,7 +95,7 @@ class StubPipelineLLM:
                 return {"needs_analysis": False, "tools": [],
                         "more_evidence_needed": False,
                         "rationale": "stubbed — nothing to check"}
-            return {"needs_analysis": True, "tools": ["detect_pii_regex"],
+            return {"needs_analysis": True, "tools": ["detect_pii_entities"],
                     "more_evidence_needed": False, "rationale": "stubbed — checking"}
         if "action" in props and "findings" in props:
             self.calls.append("pii_decide")

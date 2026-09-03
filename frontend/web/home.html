@@ -72,6 +72,7 @@ svg.flow { width: 100%; height: auto; min-width: 640px; display: block; margin: 
 .flow .title.left { text-anchor: start; }
 .flow .mono { font-family: var(--mono); font-size: 11.5px; fill: var(--ink-2); }
 .flow .mono.small { font-size: 10.5px; }
+.flow .mono.small.nested { font-style: italic; fill: var(--accent-ink); font-size: 9.5px; }
 .flow .mono.left { text-anchor: start; }
 .flow .gate-label {
   font-family: var(--mono); font-size: 11px; fill: var(--accent-ink);
@@ -113,6 +114,7 @@ svg.flow { width: 100%; height: auto; min-width: 640px; display: block; margin: 
 .legend b.agent-mark { color: var(--accent-ink); }
 .legend b.gate-mark.agentic { color: var(--accent-ink); }
 .legend b.gate-mark.fixed { color: var(--ink-3); }
+.legend b.nested-mark { color: var(--accent-ink); font-style: italic; }
 
 /* which entry point runs which stages — one shared Guardrail Supervisor
    chain, three doors in */
@@ -213,7 +215,7 @@ footer code { font-family: var(--mono); }
          <code>POST /api/chat</code> and <code>POST /api/agent/chat</code> each opt into.</p>
     </div>
     <div class="sheet">
-<svg viewBox="0 0 1400 1319" class="flow" role="img" aria-label="The guardrail pipeline: Supervisor Agent, multi-agents, tools, RAG, LLM, Output Supervisor Agent">
+<svg viewBox="0 0 1400 1362" class="flow" role="img" aria-label="The guardrail pipeline: Supervisor Agent, multi-agents, tools, RAG, LLM, Output Supervisor Agent">
 <defs>
   <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
     <path class="arrowhead" d="M0 0 L10 5 L0 10 Z"/>
@@ -236,120 +238,125 @@ footer code { font-family: var(--mono); }
 <path class="edge" d="M640 230 L640 265" marker-end="url(#arrow)"/>
 <text class="edge-label" x="654" y="256">handed to the Supervisor Agent</text>
 <g class="node gate" data-node="supervisor-agent">
-  <rect x="340" y="274" width="600" height="96" rx="11"/>
+  <rect x="340" y="274" width="600" height="113" rx="11"/>
   <text class="gate-tag agentic" x="924" y="292">AGENTIC</text>
   <text class="gate-label" x="360" y="300">SUPERVISOR AGENT</text>
   <text class="title left" x="360" y="325">Plan / Route / Delegate / Decide</text>
   <text class="mono left" x="360" y="347">PLAN — one judge call: which specialist agents are relevant — agents/supervisor.py</text>
-  <text class="mono left" x="360" y="364">DECIDE — one agent's own decision carries alone; more than one, a second judge call weighs them</text>
+  <text class="mono left" x="360" y="364">DECIDE — one agent's own decision carries alone; more than one specialist,</text>
+  <text class="mono left" x="360" y="381">a second judge call weighs them</text>
 </g>
-<path class="edge" d="M640 370 L640 407" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="397">delegates to whichever specialists PLAN actually named</text>
-<path class="edge" d="M640 416 L640 436"/>
-<path class="edge" d="M198 436 L1082 436"/>
-<path class="edge" d="M198 436 L198 453" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 387 L640 424" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="414">delegates to whichever specialists PLAN actually named</text>
+<path class="edge" d="M640 433 L640 453"/>
+<path class="edge" d="M160 453 L1120 453"/>
+<path class="edge" d="M160 453 L160 470" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="115" y="462" width="165" height="64" rx="10"/>
-  <text class="agent-tag small" x="270" y="476">AGENT</text>
-  <text class="title small" x="198" y="488">PII</text>
-  <text class="mono small" x="198" y="504">own PLAN + DECIDE</text>
+  <rect x="70" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="240" y="493">AGENT</text>
+  <text class="title small" x="160" y="505">PII</text>
+  <text class="mono small" x="160" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="160" y="537">+ nested NER agent</text>
 </g>
-<path class="edge" d="M374 436 L374 453" marker-end="url(#arrow)"/>
+<path class="edge" d="M352 453 L352 470" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="292" y="462" width="165" height="64" rx="10"/>
-  <text class="agent-tag small" x="447" y="476">AGENT</text>
-  <text class="title small" x="374" y="488">Security</text>
-  <text class="mono small" x="374" y="504">own PLAN + DECIDE</text>
+  <rect x="262" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="432" y="493">AGENT</text>
+  <text class="title small" x="352" y="505">Security</text>
+  <text class="mono small" x="352" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="352" y="537">+ nested DeBERTa agent</text>
 </g>
-<path class="edge" d="M552 436 L552 453" marker-end="url(#arrow)"/>
+<path class="edge" d="M544 453 L544 470" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="469" y="462" width="165" height="64" rx="10"/>
-  <text class="agent-tag small" x="624" y="476">AGENT</text>
-  <text class="title small" x="552" y="488">Scope</text>
-  <text class="mono small" x="552" y="504">own PLAN + DECIDE</text>
+  <rect x="454" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="624" y="493">AGENT</text>
+  <text class="title small" x="544" y="505">Scope</text>
+  <text class="mono small" x="544" y="521">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M728 436 L728 453" marker-end="url(#arrow)"/>
+<path class="edge" d="M736 453 L736 470" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="646" y="462" width="165" height="64" rx="10"/>
-  <text class="agent-tag small" x="801" y="476">AGENT</text>
-  <text class="title small" x="728" y="488">Authorization</text>
-  <text class="mono small" x="728" y="504">own PLAN + DECIDE</text>
+  <rect x="646" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="816" y="493">AGENT</text>
+  <text class="title small" x="736" y="505">Authorization</text>
+  <text class="mono small" x="736" y="521">own PLAN + DECIDE</text>
 </g>
-<path class="edge" d="M906 436 L906 453" marker-end="url(#arrow)"/>
+<path class="edge" d="M928 453 L928 470" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="823" y="462" width="165" height="64" rx="10"/>
-  <text class="agent-tag small" x="978" y="476">AGENT</text>
-  <text class="title small" x="906" y="488">Content Safety</text>
-  <text class="mono small" x="906" y="504">own PLAN + DECIDE</text>
+  <rect x="838" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="1008" y="493">AGENT</text>
+  <text class="title small" x="928" y="505">Content Safety</text>
+  <text class="mono small" x="928" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="928" y="537">+ nested Toxic-BERT agent</text>
 </g>
-<path class="edge" d="M1082 436 L1082 453" marker-end="url(#arrow)"/>
+<path class="edge" d="M1120 453 L1120 470" marker-end="url(#arrow)"/>
 <g class="node solid">
-  <rect x="1000" y="462" width="165" height="64" rx="10"/>
-  <text class="agent-tag small" x="1155" y="476">AGENT</text>
-  <text class="title small" x="1082" y="488">Grounding</text>
-  <text class="mono small" x="1082" y="504">own PLAN + DECIDE</text>
+  <rect x="1030" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="1200" y="493">AGENT</text>
+  <text class="title small" x="1120" y="505">Grounding</text>
+  <text class="mono small" x="1120" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="1120" y="537">+ nested NLI agent</text>
 </g>
-<path class="edge" d="M198 526 L198 550"/>
-<path class="edge" d="M1082 526 L1082 550"/>
-<path class="edge" d="M374 526 L374 550"/>
-<path class="edge" d="M552 526 L552 550"/>
-<path class="edge" d="M728 526 L728 550"/>
-<path class="edge" d="M906 526 L906 550"/>
-<path class="edge" d="M198 550 L1082 550"/>
-<path class="edge" d="M640 550 L640 589" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="578">PolicyEngine combines every verdict — floor can only rise, never fall</text>
+<path class="edge" d="M160 569 L160 593"/>
+<path class="edge" d="M1120 569 L1120 593"/>
+<path class="edge" d="M352 569 L352 593"/>
+<path class="edge" d="M544 569 L544 593"/>
+<path class="edge" d="M736 569 L736 593"/>
+<path class="edge" d="M928 569 L928 593"/>
+<path class="edge" d="M160 593 L1120 593"/>
+<path class="edge" d="M640 593 L640 632" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="621">PolicyEngine combines every verdict — floor can only rise, never fall</text>
 <g class="node solid" data-node="tools">
-  <rect x="340" y="598" width="600" height="66" rx="11"/>
-  <text class="title" x="640" y="628">TOOLS</text>
-  <text class="mono" x="640" y="650">agent/tools.py — search_documents · lookup_fee · case/grievance</text>
+  <rect x="340" y="641" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="671">TOOLS</text>
+  <text class="mono" x="640" y="693">agent/tools.py — search_documents · lookup_fee · case/grievance</text>
 </g>
-<path class="edge" d="M640 664 L640 695" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="688">search_documents is the retrieval tool</text>
+<path class="edge" d="M640 707 L640 738" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="731">search_documents is the retrieval tool</text>
 <g class="node solid" data-node="rag">
-  <rect x="340" y="704" width="600" height="66" rx="11"/>
-  <text class="title" x="640" y="734">RAG</text>
-  <text class="mono" x="640" y="756">BM25 lexical search, optional local rerank — knowledge/ingest.py</text>
+  <rect x="340" y="747" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="777">RAG</text>
+  <text class="mono" x="640" y="799">BM25 lexical search, optional local rerank — knowledge/ingest.py</text>
 </g>
-<path class="edge" d="M640 770 L640 805" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="796">candidate chunks join this turn's context</text>
+<path class="edge" d="M640 813 L640 848" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="839">candidate chunks join this turn's context</text>
 <g class="node model" data-node="llm">
-  <rect x="340" y="814" width="600" height="80" rx="11"/>
-  <text class="gate-label" x="360" y="840">LLM</text>
-  <text class="title left" x="360" y="865">Generate Response</text>
-  <text class="mono left" x="360" y="887">the next Agent step reads tool results + RAG chunks, drafts the reply</text>
+  <rect x="340" y="857" width="600" height="80" rx="11"/>
+  <text class="gate-label" x="360" y="883">LLM</text>
+  <text class="title left" x="360" y="908">Generate Response</text>
+  <text class="mono left" x="360" y="930">the next Agent step reads tool results + RAG chunks, drafts the reply</text>
 </g>
-<path class="edge" d="M640 894 L640 931" marker-end="url(#arrow)"/>
-<text class="edge-label" x="654" y="921">the drafted reply, before it reaches anyone</text>
+<path class="edge" d="M640 937 L640 974" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="964">the drafted reply, before it reaches anyone</text>
 <g class="node gate" data-node="output-supervisor">
-  <rect x="340" y="940" width="600" height="96" rx="11"/>
-  <text class="gate-tag agentic" x="924" y="958">AGENTIC</text>
-  <text class="gate-label" x="360" y="966">OUTPUT SUPERVISOR AGENT</text>
-  <text class="title left" x="360" y="991">Plan / Check the reply</text>
-  <text class="mono left" x="360" y="1013">PII · Safety · Policy · Grounding · Citations — every claim against</text>
-  <text class="mono left" x="360" y="1030">what was actually retrieved, engine.py's evaluate() + grounding_rail</text>
+  <rect x="340" y="983" width="600" height="96" rx="11"/>
+  <text class="gate-tag agentic" x="924" y="1001">AGENTIC</text>
+  <text class="gate-label" x="360" y="1009">OUTPUT SUPERVISOR AGENT</text>
+  <text class="title left" x="360" y="1034">Plan / Check the reply</text>
+  <text class="mono left" x="360" y="1056">PII · Safety · Policy · Grounding · Citations — every claim against</text>
+  <text class="mono left" x="360" y="1073">what was actually retrieved, engine.py's evaluate() + grounding_rail</text>
 </g>
-<path class="edge" d="M640 1036 L640 1067" marker-end="url(#arrow)"/>
-<path class="edge" d="M640 1076 L640 1096"/>
-<path class="edge" d="M420 1096 L860 1096"/>
-<path class="deny" d="M420 1096 L420 1123" marker-end="url(#arrow-deny)"/>
-<path class="edge" d="M860 1096 L860 1123" marker-end="url(#arrow)"/>
-<text class="deny-label" x="420" y="1088" text-anchor="middle">REJECT</text>
-<text class="edge-label" x="860" y="1088" text-anchor="middle">ALLOW</text>
+<path class="edge" d="M640 1079 L640 1110" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 1119 L640 1139"/>
+<path class="edge" d="M420 1139 L860 1139"/>
+<path class="deny" d="M420 1139 L420 1166" marker-end="url(#arrow-deny)"/>
+<path class="edge" d="M860 1139 L860 1166" marker-end="url(#arrow)"/>
+<text class="deny-label" x="420" y="1131" text-anchor="middle">REJECT</text>
+<text class="edge-label" x="860" y="1131" text-anchor="middle">ALLOW</text>
 <g class="node solid" data-node="human">
-  <rect x="240" y="1123" width="360" height="66" rx="10"/>
-  <text class="title" x="420" y="1152">HUMAN</text>
-  <text class="mono" x="420" y="1173">a person reviews — never reaches the user unmoderated</text>
+  <rect x="240" y="1166" width="360" height="66" rx="10"/>
+  <text class="title" x="420" y="1195">HUMAN</text>
+  <text class="mono" x="420" y="1216">a person reviews — never reaches the user unmoderated</text>
 </g>
 <g class="node terminal" data-node="response">
-  <rect x="680" y="1123" width="360" height="66" rx="10"/>
-  <text class="title" x="860" y="1152">RESPONSE</text>
-  <text class="mono" x="860" y="1173">only what both supervisors let through</text>
+  <rect x="680" y="1166" width="360" height="66" rx="10"/>
+  <text class="title" x="860" y="1195">RESPONSE</text>
+  <text class="mono" x="860" y="1216">only what both supervisors let through</text>
 </g>
-<path class="edge" d="M860 1189 L860 1210 L640 1210" marker-end="url(#arrow)"/>
+<path class="edge" d="M860 1232 L860 1253 L640 1253" marker-end="url(#arrow)"/>
 <g class="node terminal" data-node="user-out">
-  <rect x="490" y="1219" width="300" height="60" rx="11"/>
-  <text class="title" x="640" y="1249">USER</text>
-  <text class="mono" x="640" y="1271">receives the response</text>
+  <rect x="490" y="1262" width="300" height="60" rx="11"/>
+  <text class="title" x="640" y="1292">USER</text>
+  <text class="mono" x="640" y="1314">receives the response</text>
 </g>
 </svg>
     </div>
@@ -362,7 +369,13 @@ footer code { font-family: var(--mono); }
       <code>search_documents</code> actually returned, not what the model assumed. Nothing here is
       classified on the way in: PII in a retrieved chunk is scanned fresh the moment it's
       retrieved, not trusted from an old ingest-time stamp. <b class="gate-mark agentic">AGENTIC</b>
-      marks a gate whose own checklist is judge-planned per request, not fixed in advance.</figcaption>
+      marks a gate whose own checklist is judge-planned per request, not fixed in advance. Four of
+      the six specialists go one level deeper still: PII, Security, Content Safety, and Grounding
+      each delegate their one local model — Presidio, DeBERTa, Toxic-BERT, and an NLI model, in
+      that order — to a small nested agent with its own PLAN+DECIDE, rather than calling it as a
+      flat, un-reasoned function. That nested agent's own decision carries no deterministic floor
+      by default (<code>agent.nested_model_floor</code>, off by default) — the parent specialist's
+      own floor, unchanged, is what still governs the request either way.</figcaption>
     <div class="legend">
       <span><i class="solid"></i> solid — deterministic code</span>
       <span><i class="dashed"></i> dashed — a one-shot model call</span>
@@ -370,6 +383,7 @@ footer code { font-family: var(--mono); }
       <span><i class="red"></i> red — where a request can stop short</span>
       <span><b class="agent-mark">AGENT</b> its own PLAN + DECIDE, calling the judge itself</span>
       <span><b class="gate-mark agentic">AGENTIC</b> a judge plans this gate's own checklist</span>
+      <span><b class="nested-mark">+ nested …</b> a local model, in its own PLAN+DECIDE agent</span>
     </div>
     <div class="gatemap">
       <table>
@@ -388,16 +402,18 @@ footer code { font-family: var(--mono); }
           </tr>
           <tr>
             <td class="route">POST /api/agent/chat</td>
-            <td><code>agent.prefilter_mode</code><br><span class="flag-off">off by default</span></td>
-            <td class="stages">same full walk as above, from inside <code>AgentRunner</code>,
-              when set to <code>agentic</code>.</td>
+            <td><code>agent.prefilter_mode</code><br><span class="flag-on">on by default</span></td>
+            <td class="stages">same full walk as above, from inside <code>AgentRunner</code> —
+              <code>agentic</code> is the current default; set to <code>off</code> to skip it.</td>
           </tr>
           <tr>
             <td class="route">POST /api/chat</td>
             <td><code>supervisor.chat_prefilter_mode</code><br>
-              <span class="flag-off">off by default</span></td>
-            <td class="stages">Supervisor Agent and the Output Supervisor Agent only, when set to
-              <code>agentic</code> — ordinary chat has no tool loop, so Tools/RAG never apply.</td>
+              <span class="flag-on">on by default</span></td>
+            <td class="stages">Supervisor Agent and the Output Supervisor Agent only —
+              ordinary chat has no tool loop, so Tools/RAG never apply. <code>agentic</code> is
+              the current default; set to <code>off</code> to fall back to the deterministic
+              rail pipeline alone.</td>
           </tr>
         </tbody>
       </table>

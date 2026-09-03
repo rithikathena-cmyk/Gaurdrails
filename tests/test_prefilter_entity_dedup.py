@@ -143,7 +143,11 @@ def test_prefilter_on_makes_strictly_more_judge_calls_than_off(client):
     """The `agentic` cost is real, not free — the two modes must not be
     indistinguishable in what they ask the model. Same message, two
     separately-scripted turns, compared by total call count — but
-    AgentRunner's own pii.entities call count must not move at all."""
+    AgentRunner's own pii.entities call count must not move at all.
+
+    `agent.prefilter_mode` defaults to `agentic` now, so the `off` baseline
+    below is set explicitly rather than relied on as the ambient default."""
+    _patch(client, {"agent.prefilter_mode": "off"})
     off_llm = _install(client, [("answer", "Weekdays, 10 to 5.")])
     off_resp = client.post("/api/agent/chat", json={"message": CLEAN_MESSAGE})
     assert off_resp.status_code == 200, off_resp.text

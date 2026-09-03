@@ -6,7 +6,7 @@
 # Safe to delete: removing it reverts every parameter to the baseline. Safe to
 # commit: it is the record of what a deployment actually changed.
 
-updated_at: 2026-09-03T09:34:36+0530
+updated_at: 2026-09-03T21:15:46+0530
 values:
   agent.prefilter_mode: agentic
   pii.mask_strategy: partial

@@ -12,7 +12,7 @@ import pytest
 
 from backend.guardrails import AuditLog, Corpus, Engine, load
 from backend.guardrails.rails.entities import EntityRail
-from backend.guardrails.rails.pii import Vault
+from backend.guardrails.rails.vault import Vault
 from backend.guardrails.rails.scope import ScopeRail
 from backend.guardrails.tracing import Tracer
 from backend.guardrails.types import RailResult, Surface, Verdict
@@ -353,16 +353,26 @@ def test_partial_masking_of_a_name_reveals_nothing_regardless_of_config():
 
 
 # ── the composition fix these rails depend on ──────────────────────
+@pytest.mark.presidio
 def test_two_masking_rails_both_survive(tmp_path):
     """Regression: each rail computed its rewrite from the original text, so the
-    last one to finish silently discarded the others. A blocked word next to an
-    SSN came out unmasked."""
+    last one to finish silently discarded the others. A blocked word next to a
+    name came out unmasked.
+
+    A name, not an SSN: PII has no deterministic layer any more, and an SSN is
+    judge-only now — this test wants no model (`llm=None`), so it needs a kind
+    Presidio's real local NER can still find without one. `@pytest.mark.presidio`
+    turns off `conftest.py`'s `no_local_ner` stub, which otherwise blocks every
+    kind in this suite, checksummed or not, the same way it always blocked
+    PERSON/ADDRESS."""
     engine = Engine(load(REPO / "config" / "policy.yaml"), None,
                     AuditLog(tmp_path / "a.log"), Corpus(seed=True))
-    result = engine.evaluate("you are an idiot, my ssn is 796-33-9021",
+    result = engine.evaluate("you are an idiot, my name is Meera Balan",
                              Surface.USER_PROMPT, Tracer(), "s")
     assert "*****" in result.text, "the word rail's masking was lost"
-    assert "<US_SSN:" in result.text, "the pii rail's masking was lost"
+    # vault-token, the configured default — not literal asterisks.
+    assert "<PERSON:" in result.text, "the entity rail's masking was lost"
+    assert "Meera Balan" not in result.text
 
 
 # ── secrets and destructive intent, deterministic ──────────────────

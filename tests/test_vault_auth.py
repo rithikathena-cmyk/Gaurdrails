@@ -17,7 +17,7 @@ import time
 
 import pytest
 
-from backend.guardrails.rails.pii import Vault
+from backend.guardrails.rails.vault import Vault
 
 
 SSN = "796-33-9021"

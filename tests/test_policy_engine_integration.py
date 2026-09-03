@@ -130,7 +130,7 @@ def test_case_2_mask_recommendation_block_floor(engine):
 def test_case_3_block_recommendation_allow_floor(engine):
     """More caution than the floor requires needs no permission — a BLOCK
     recommendation is never downgraded to match a permissive floor."""
-    llm = ScriptedAgentLLM(plans=[pii_plan(["detect_pii_regex"])],
+    llm = ScriptedAgentLLM(plans=[pii_plan(["detect_pii_entities"])],
                            decisions=[pii_decision("BLOCK", findings=[])])
     result = PIIAgent(llm, engine).run("some ordinary text", owner="citizen")
 
@@ -181,7 +181,7 @@ def test_case_6_escalate_recommendation_allow_floor(engine):
     # about) — the genuine ESCALATE-recommendation path is exercised instead
     # via a plan that finds something but a decision the model cannot commit to.
     llm2 = ScriptedAgentLLM(
-        plans=[pii_plan(["detect_pii_regex"])],
+        plans=[pii_plan(["detect_pii_entities"])],
         decisions=[pii_decision("ESCALATE", findings=[])])
     result2 = PIIAgent(llm2, engine).run("some ordinary text", owner="citizen")
 
@@ -253,7 +253,7 @@ def test_case_9_final_is_never_less_restrictive_than_either_side(recommended, fl
 # ── 10. every result records all five Policy Engine fields, and a trace ──
 AGENT_CASES = [
     ("pii", lambda llm, eng: PIIAgent(llm, eng),
-     ScriptedAgentLLM([pii_plan(["detect_pii_regex"])], [pii_decision("MASK", findings=[
+     ScriptedAgentLLM([pii_plan(["detect_pii_entities"])], [pii_decision("MASK", findings=[
          pii_finding("US_SSN")])]),
      "My SSN is 796-33-9021", {}),
     ("injection", lambda llm, eng: PromptInjectionAgent(llm, eng),

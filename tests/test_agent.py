@@ -40,7 +40,8 @@ class ScriptedClaude:
     model = "stub"
 
     def __init__(self, script, injection=0.0, consistency=1.0, in_scope=1.0,
-                 agentic_pii="ALLOW", agentic_injection="ALLOW", agentic_content="ALLOW"):
+                 agentic_pii="ALLOW", agentic_injection="ALLOW", agentic_content="ALLOW",
+                 entities=()):
         self.script = list(script)
         self.calls: list[list[dict]] = []
         self.injection = injection
@@ -49,9 +50,17 @@ class ScriptedClaude:
         self.agentic_pii = agentic_pii
         self.agentic_injection = agentic_injection
         self.agentic_content = agentic_content
+        #: `EntityRail`'s own judge call (the fixed rail path, not the
+        #: agentic specialists above) — no deterministic layer exists for
+        #: PII any more, so any test that needs the rail path to find a
+        #: specific kind (an SSN, an email, ...) must script it here the
+        #: same way `StubClaude.entities` already does.
+        self.entities = entities
 
     def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
+        if "entities" in props:
+            return {"entities": list(self.entities)}
         if "consistency" in props:
             return {"consistency": self.consistency, "relevance": 1.0,
                     "unsupported": [], "rationale": "stub"}
@@ -94,11 +103,13 @@ class ScriptedClaude:
 
 
 def build(script, tmp_path, *, corpus=None, in_scope=1.0,
-          agentic_pii="ALLOW", agentic_injection="ALLOW", agentic_content="ALLOW", **values):
+          agentic_pii="ALLOW", agentic_injection="ALLOW", agentic_content="ALLOW",
+          entities=(), **values):
     policy = load(REPO / "config" / "policy.yaml")
     policy.values.update(values)
     llm = ScriptedClaude(script, in_scope=in_scope, agentic_pii=agentic_pii,
-                         agentic_injection=agentic_injection, agentic_content=agentic_content)
+                         agentic_injection=agentic_injection, agentic_content=agentic_content,
+                         entities=entities)
     engine = Engine(policy, llm, AuditLog(tmp_path / "audit.log"), corpus or Corpus(seed=True))
     return AgentRunner(engine, llm), engine, llm
 
@@ -153,11 +164,17 @@ def test_search_tool_feeds_the_grounding_context(tmp_path):
 
 # ── agent.data: tool results are untrusted ─────────────────────────
 def test_injection_in_a_tool_result_is_withheld_from_the_model(tmp_path):
-    """CLM-88817766's note field carries an injection. The model must not see it."""
+    """CLM-88817766's note field carries an injection. The model must not see
+    it. `agent.data_check_mode="rail"` is explicit here — this test is
+    specifically about the fixed pipeline's own `INJECTION_ALWAYS` lock, not
+    the specialist agents' scripted verdict; `agentic` is now the default,
+    and that path is `test_agentic_mode_blocks_and_withholds_like_rail_mode`'s
+    job to cover, below."""
     runner, _, llm = build(
         [("tool", "check_claim_status", {"reference": "CLM-88817766"}),
          ("answer", "I could not read that record.")],
         tmp_path,
+        **{"agent.data_check_mode": "rail"},
     )
     result = runner.run("check claim CLM-88817766", principal="citizen")
     call = result.calls[0]
@@ -212,15 +229,29 @@ def test_agentic_mode_blocks_and_withholds_like_rail_mode(tmp_path):
     assert "100 rupees" not in last_user_text(llm)
 
 
-def test_agentic_mode_defaults_off(tmp_path):
-    """`agent.data_check_mode` defaults to `rail` — the fixed pipeline, not
-    the specialists — so a deployment that never touches this parameter sees
-    no behaviour change at all."""
+def test_data_check_mode_defaults_to_agentic(tmp_path):
+    """`agent.data_check_mode` defaults to `agentic` — the specialist agents,
+    not the fixed pipeline — so a deployment that never touches this
+    parameter still gets PIIAgent's own verdict on a tool result."""
     runner, _, _ = build(
         [("tool", "lookup_fee", {"service": "birth_certificate"}),
          ("answer", "100 rupees per copy.")],
         tmp_path,
-        agentic_pii="BLOCK",  # would block if agentic mode were somehow on
+        agentic_pii="BLOCK",  # proves agentic mode actually ran, unset
+    )
+    result = runner.run("what does a birth certificate copy cost")
+    assert result.calls[0].result_verdict == "block"
+
+
+def test_data_check_mode_rail_is_still_available(tmp_path):
+    """Explicitly opting back into the fixed pipeline still works — a
+    scripted agentic BLOCK is ignored because the specialists never run."""
+    runner, _, _ = build(
+        [("tool", "lookup_fee", {"service": "birth_certificate"}),
+         ("answer", "100 rupees per copy.")],
+        tmp_path,
+        agentic_pii="BLOCK",  # would block if agentic mode ran; it should not
+        **{"agent.data_check_mode": "rail"},
     )
     result = runner.run("what does a birth certificate copy cost")
     assert result.calls[0].result_verdict in ("pass", "flag")
@@ -408,12 +439,15 @@ def test_the_args_verdict_from_before_approval_survives_the_resume(tmp_path):
     decision, not the enforcement itself (a genuinely `block`-worthy
     argument never reaches approval at all — see the read-tool/write-tool
     split above)."""
+    # US_SSN is judge-only now — no deterministic layer exists — so the
+    # stub is scripted to report it the same way a real judge call would.
     runner, _, _ = build(
         [("tool", "file_grievance",
           {"subject": "Billing dispute — SSN 796-33-9021 on file",
            "details": "Please investigate the duplicate charge."}),
          ("answer", "done")],
         tmp_path, **{"pii.action.agent_tool": "mask"},
+        entities=[{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9}],
     )
     paused = runner.run("file a grievance about a billing error")
     assert paused.approval.args_verdict == "mask", \
@@ -474,10 +508,17 @@ def test_pii_in_the_prompt_is_masked_before_the_agent_sees_it(tmp_path):
     # value to begin with, so a real run could not have passed it through
     # either — scripting the actual number here would test something no real
     # model call could ever do.
+    #
+    # No deterministic layer exists for pii.custom_patterns any more — the
+    # CLM- claim-reference pattern is folded into the judge's own prompt as a
+    # description (see config/policy.yaml), so the judge is scripted to
+    # report it directly, tagged OTHER_PII (the catch-all for a kind with no
+    # fixed shape — see ENTITY_INSTRUCTIONS in entities.py).
     runner, _, llm = build(
-        [("tool", "check_claim_status", {"reference": "<CUSTOM_2:placeholder>"}),
+        [("tool", "check_claim_status", {"reference": "<OTHER_PII:placeholder>"}),
          ("answer", "ok")],
         tmp_path,
+        entities=[{"text": "CLM-40028871", "kind": "OTHER_PII", "confidence": 0.9}],
     )
     result = runner.run("my claim is CLM-40028871, please check it")
     assert "CLM-40028871" not in last_user_text(llm)

@@ -123,7 +123,19 @@ def test_firing_harder_than_labelled_is_not_a_miss(engine):
     assert section.metrics["exact_verdict_match"] == 0.0       # block != mask
 
 
-def test_expected_detection_kinds_are_checked(engine):
+def test_expected_detection_kinds_are_checked(tmp_path):
+    """US_SSN is judge-only now — no deterministic layer exists — so this
+    needs its own engine with a scripted judge rather than the shared
+    `engine` fixture's `llm=None`. `StubClaude` (not a hand-rolled stub) —
+    every other rail's own schema (scope, injection, content, ...) needs a
+    type-correct answer or it fails closed."""
+    from tests.test_parameters import StubClaude
+
+    engine = Engine(load(REPO / "config" / "policy.yaml"),
+                    StubClaude(entities=[
+                        {"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9},
+                    ]),
+                    AuditLog(tmp_path / "audit.log"), Corpus(seed=True))
     suite = Suite(rails=[RailCase(
         id="pii", text="My SSN is 796-33-9021.", expect="mask", kinds=["US_SSN"])])
     assert not run_rails(suite, engine).failures

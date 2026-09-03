@@ -45,11 +45,16 @@ def test_bad_enum_is_rejected(tmp_path):
         load(f)
 
 
-def test_bad_regex_is_rejected(tmp_path):
+def test_custom_patterns_accepts_arbitrary_text_without_validation(tmp_path):
+    """`pii.custom_regex` (compiled, validated at load time) was replaced by
+    `pii.custom_patterns` — descriptive hints folded into the judge's prompt,
+    not a compiled pattern, so there is nothing left here to reject at load
+    time. Malformed-regex-looking text loads clean; recognising it (or not)
+    is the judge's job now, not this config's."""
     f = tmp_path / "p.yaml"
-    f.write_text("pii:\n  custom_regex: ['([unclosed']\n")
-    with pytest.raises(ConfigError, match="not a valid regex"):
-        load(f)
+    f.write_text("pii:\n  custom_patterns: ['([unclosed']\n")
+    policy = load(f)
+    assert policy.get("pii.custom_patterns") == ["([unclosed"]
 
 
 def test_unknown_surface_is_rejected(tmp_path):

@@ -43,7 +43,7 @@ from ..engine import REFUSAL_FALLBACK, Engine
 from ..llm import Claude, LLMError, Refusal, ToolUse
 from ..tracing import Tracer
 from ..types import Surface, Trace, Verdict, precedence
-from ..rails.pii import SYSTEM_OWNER
+from ..rails.vault import SYSTEM_OWNER
 from ..rails.scope import requires_retrieval
 from .tools import MASK_TOKEN, TOOLS, Tool, ToolContext
 

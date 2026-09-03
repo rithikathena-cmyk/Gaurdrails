@@ -36,14 +36,17 @@ def _patch(client, values):
     return resp.json()
 
 
-def test_chat_prefilter_mode_defaults_to_off(client):
+def test_chat_prefilter_mode_defaults_to_agentic(client):
     snapshot = client.get("/api/parameters").json()
-    assert snapshot["current"]["supervisor.chat_prefilter_mode"] == "off"
+    assert snapshot["current"]["supervisor.chat_prefilter_mode"] == "agentic"
 
 
 def test_chat_prefilter_off_never_touches_guardrail_supervisor(client):
-    """Default mode: an ordinary message reaches `Engine.converse()`
-    unfiltered — no `prefilter` key at all in the response."""
+    """`supervisor.chat_prefilter_mode=off`, set explicitly rather than
+    relied on as the ambient default: an ordinary message reaches
+    `Engine.converse()` unfiltered — no `prefilter` key at all in the
+    response."""
+    _patch(client, {"supervisor.chat_prefilter_mode": "off"})
     resp = client.post("/api/chat", json={"message": "what are your opening hours?"})
     assert resp.status_code == 200, resp.text
     assert "prefilter" not in resp.json()

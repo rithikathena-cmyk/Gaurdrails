@@ -39,12 +39,21 @@ def _install_scripted_llm(script, **agentic_kwargs):
     scripted model has to be reinstalled after every reload, the same way a
     real deployment re-points at its real model after a config change.
 
+    `engine.llm` alone is not enough any more: `entity_rail` (like every
+    other model-backed rail) captured its own `llm` reference when
+    `_build_rails()` last ran — at `state.reload()` time, before this
+    function ever sets `engine.llm` to the scripted model — so it keeps
+    calling the stale one (`None` in tests) unless rebuilt. This never
+    mattered while PII detection was deterministic; it does now that
+    `entity_rail`'s own judge call is the only thing that can find anything.
+
     `agentic_kwargs` (`agentic_pii=`/`agentic_injection=`/`agentic_content=`)
     forward to `ScriptedClaude`, for `agent.data_check_mode="agentic"` tests."""
     from backend.server.state import state as app_state
 
     llm = ScriptedClaude(script, **agentic_kwargs)
     app_state.engine.llm = llm
+    app_state.engine._build_rails()  # noqa: SLF001 — rebuild every rail against the new llm
     app_state.agent = AgentRunner(app_state.engine, llm)
     app_state.model_rails = True
     return llm
@@ -94,13 +103,19 @@ def test_an_undocumented_action_is_rejected_by_validation(client):
 # except when blocked, which never reaches the approval gate at all.
 @pytest.mark.parametrize("action", ["block", "mask", "flag", "pass"])
 def test_agent_tool_action_changes_real_tool_call_behaviour(client, action):
-    _patch(client, {"pii.action.agent_tool": action})
+    # agent.prefilter_mode and agent.data_check_mode both default to
+    # "agentic" now — pinned back to the fixed pipeline here since this test
+    # is isolating pii.action.agent_tool specifically, not either agentic path.
+    _patch(client, {"pii.action.agent_tool": action,
+                    "agent.prefilter_mode": "off", "agent.data_check_mode": "rail"})
+    # US_SSN is judge-only now — no deterministic layer exists — so the
+    # stub is scripted to report it the same way a real judge call would.
     _install_scripted_llm([
         ("tool", "file_grievance",
          {"subject": f"Billing dispute — SSN {SSN} on file",
           "details": "Please investigate the duplicate charge."}),
         ("answer", "Noted, thank you."),
-    ])
+    ], entities=[{"text": SSN, "kind": "US_SSN", "confidence": 0.9}])
 
     resp = client.post("/api/agent/chat",
                        json={"message": "file a grievance about a billing error"})
@@ -135,13 +150,16 @@ def test_agent_data_action_changes_real_tool_result_behaviour(client, action):
     # `_file_grievance` echoes `subject` back in its own JSON response but
     # never includes `details` at all — only `subject` actually reaches the
     # agent.data surface for this tool.
-    _patch(client, {"pii.action.agent_tool": "pass", "pii.action.agent_data": action})
+    _patch(client, {"pii.action.agent_tool": "pass", "pii.action.agent_data": action,
+                    "agent.prefilter_mode": "off", "agent.data_check_mode": "rail"})
+    # EMAIL_ADDRESS is judge-only now — no deterministic layer exists — so
+    # the stub is scripted to report it the same way a real judge call would.
     _install_scripted_llm([
         ("tool", "file_grievance",
          {"subject": f"Billing dispute — contact {EMAIL}",
           "details": "Please investigate the duplicate charge."}),
         ("answer", "Noted, thank you."),
-    ])
+    ], entities=[{"text": EMAIL, "kind": "EMAIL_ADDRESS", "confidence": 0.9}])
 
     resp = client.post("/api/agent/chat",
                        json={"message": "file a grievance about a billing error"})
@@ -175,13 +193,18 @@ def test_agent_data_check_mode_agentic_through_the_real_api(client):
     but flips the *mode* rather than the fixed rail's own action: with
     `agent.data_check_mode=agentic`, pii_agent — not `engine.evaluate()` —
     decides what happens to the email in `file_grievance`'s echoed result."""
-    _patch(client, {"pii.action.agent_tool": "pass", "agent.data_check_mode": "agentic"})
+    _patch(client, {"pii.action.agent_tool": "pass", "agent.data_check_mode": "agentic",
+                    "agent.prefilter_mode": "off"})
+    # `agentic_pii="MASK"` scripts PIIAgent's own decision; separately,
+    # PIICapabilities.execute()'s actual substitution still goes through
+    # EntityRail (judge-only now), so the span itself is scripted too.
     _install_scripted_llm(
         [("tool", "file_grievance",
           {"subject": f"Billing dispute — contact {EMAIL}",
            "details": "Please investigate the duplicate charge."}),
          ("answer", "Noted, thank you.")],
         agentic_pii="MASK",
+        entities=[{"text": EMAIL, "kind": "EMAIL_ADDRESS", "confidence": 0.9}],
     )
 
     resp = client.post("/api/agent/chat",

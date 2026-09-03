@@ -38,7 +38,7 @@ from typing import Any, Callable
 
 from ..agent import MASK_TOKEN, AgentRunner
 from ..engine import Engine
-from ..rails.pii import CORPUS_OWNER
+from ..rails.vault import CORPUS_OWNER
 from ..types import Trace
 
 POISONED_DOC = """Municipal fee schedule addendum — internal
@@ -200,7 +200,7 @@ def _pii(engine: Engine, agent: AgentRunner) -> ScenarioResult:
                 "check my claim status?")
     result = engine.converse(question, session_id="scenario")
     trace = result.trace.to_dict()
-    pii = _rail(trace, "pii.detect")
+    pii = _rail(trace, "pii.entities")
 
     out.steps.append(Step(
         label="Chat turn with two identifiers", kind="chat", detail=question,
@@ -378,7 +378,7 @@ def _agentic_claim(engine: Engine, agent: AgentRunner) -> ScenarioResult:
 
     first = agent.run(question, session_id="scenario-agent")
     trace = first.trace.to_dict()
-    pii = _rail(trace, "pii.detect")
+    pii = _rail(trace, "pii.entities")
     lookup = next((c for c in first.calls if c.name == "check_claim_status"), None)
 
     out.steps.append(Step(
@@ -391,7 +391,7 @@ def _agentic_claim(engine: Engine, agent: AgentRunner) -> ScenarioResult:
     checks = [
         Check("The claim reference was vaulted on the way in",
               bool(pii) and pii["verdict"] == "mask",
-              "pii.custom_regex matched CLM-\\d{8} and replaced it with a token"),
+              "pii.custom_patterns' CLM- description was recognised and replaced with a token"),
         Check("The agent looked the claim up", lookup is not None,
               f"called {lookup.name}" if lookup else "no lookup call"),
         Check("It passed the token, not the number",
@@ -474,11 +474,10 @@ def _resident_record(engine: Engine, agent: AgentRunner) -> ScenarioResult:
         Check("The record was retrieved", len(result.chunks) > 0,
               f"{len(result.chunks)} chunk(s)"),
         Check("Its personal details were detected and masked",
-              # A name, an email and an address are entity matches, not
-              # checksum-format ones — `pii.entities`, not `pii.detect`'s
-              # own regex layer, so the aggregate detections are the
-              # honest check here, the same way the trace step already
-              # reports them, rather than one specific rail's own score.
+              # `EntityRail` is the only detector left — the aggregate
+              # detections are the honest check here, the same way the
+              # trace step already reports them, rather than one rail's
+              # own score.
               bool(kinds), ", ".join(sorted(kinds)) or "none"),
         Check("They were minted under the corpus, not the asker",
               bool(minted), f"{len(minted)} value(s) owned by {CORPUS_OWNER!r}"),

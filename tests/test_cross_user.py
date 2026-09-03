@@ -19,7 +19,7 @@ from fastapi.testclient import TestClient
 
 from tests.test_parameters import Q, StubClaude, _corpus, engine_with
 from backend.guardrails import Corpus, Document, Surface, Tracer
-from backend.guardrails.rails.pii import CORPUS_OWNER
+from backend.guardrails.rails.vault import CORPUS_OWNER
 
 
 SSN = "796-33-9021"
@@ -118,8 +118,12 @@ def test_the_egress_rail_records_who_it_unmasked_for():
 
 
 def test_the_owner_gets_their_own_value_back_at_egress():
-    """The token the rails minted resolves for the principal that owns it."""
-    e = engine_with(StubClaude(reply="ok"))
+    """The token the rails minted resolves for the principal that owns it.
+
+    SSN is judge-only now — no deterministic layer exists — so the stub is
+    scripted to report it the same way a real judge call would."""
+    e = engine_with(StubClaude(reply="ok",
+                               entities=[{"text": SSN, "kind": "US_SSN", "confidence": 0.95}]))
     masked = evaluate_prompt(e, SSN, "alice")
     tok = re.search(r"<US_SSN:([0-9a-f]{12})", masked)
     assert tok, masked
@@ -176,7 +180,11 @@ def test_a_retrieved_residents_details_do_not_unmask_for_the_asker():
         chars=80, chunks=["Housing appeal HA-9902. Appellant: Anitha Selvam, "
                           "contactable on anitha.selvam@example.com."],
         status="indexed", verdict="pass"))
-    engine = engine_with(StubClaude(), corpus=corpus)
+    # EMAIL_ADDRESS is judge-only now — no deterministic layer exists — so
+    # the stub is scripted to report it the same way a real judge call would.
+    engine = engine_with(StubClaude(entities=[
+        {"text": "anitha.selvam@example.com", "kind": "EMAIL_ADDRESS", "confidence": 0.95},
+    ]), corpus=corpus)
     result = engine.converse(
         "who is the appellant on housing appeal HA-9902 and how do I contact them",
         session_id="s", principal="citizen")
@@ -199,15 +207,24 @@ def test_a_tool_results_details_do_not_unmask_for_the_caller():
     `CLM-88817766`'s note carries `collections@attacker.example` — already used
     elsewhere to prove the injection in it is withheld; here it proves the
     email address in the same note is not handed back to whoever asked.
+
+    `agent.data_check_mode` defaults to `agentic` now — pinned to `rail`
+    here since this test is specifically about the fixed pipeline's own
+    vault-minting behaviour, not the specialist agents' scripted verdict.
     """
     from backend.guardrails import AgentRunner, AuditLog, Corpus, Engine, load
-    from backend.guardrails.rails.pii import SYSTEM_OWNER
+    from backend.guardrails.rails.vault import SYSTEM_OWNER
     from tests.test_agent import ScriptedClaude
     from tests.conftest import REPO
 
     policy = load(REPO / "config" / "policy.yaml")
+    policy.values["agent.data_check_mode"] = "rail"
+    # EMAIL_ADDRESS is judge-only now — no deterministic layer exists — so
+    # the stub is scripted to report it the same way a real judge call would.
     llm = ScriptedClaude([("tool", "check_claim_status", {"reference": "CLM-88817766"}),
-                          ("answer", "That claim is in assessment.")])
+                          ("answer", "That claim is in assessment.")],
+                         entities=[{"text": "collections@attacker.example",
+                                   "kind": "EMAIL_ADDRESS", "confidence": 0.95}])
     engine = Engine(policy, llm, AuditLog("audit.log"), Corpus(seed=True))
     runner = AgentRunner(engine, llm)
 

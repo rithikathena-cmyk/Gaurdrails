@@ -139,7 +139,7 @@ def test_get_policy_for_a_specific_pii_entity(engine, policy):
     res = call_guardrail_tool("get_policy", {"policy": "pii.US_SSN"}, engine, "call_1")
     assert res.result["valid"] is True
     assert res.result["entity"] == "US_SSN"
-    assert res.result["entity_enabled"] == ("US_SSN" in set(policy.get("pii.entities") or []))
+    assert res.result["entity_enabled"] == ("US_SSN" in set(policy.get("pii.entity_kinds") or []))
 
 
 def test_get_policy_honours_the_surface_argument(engine, policy):
@@ -415,7 +415,13 @@ def test_scenario_1_normal_request_allows(engine):
     assert result.policy_decision.final_action == "ALLOW"
 
 
-def test_scenario_2_pii_is_masked_or_blocked_per_policy(engine):
+def test_scenario_2_pii_is_masked_or_blocked_per_policy(engine, monkeypatch):
+    # US_SSN is judge-only now — no deterministic layer exists — and this
+    # engine's own `llm` is None, so `entity_rail`'s judge call is stubbed
+    # directly, the same way `test_pii_agent.py`'s `engine` fixture does.
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities",
+                        lambda text: [{"text": "796-33-9021", "kind": "US_SSN",
+                                       "confidence": 0.95}])
     llm = ScriptedLLM(plans=[plan(["detect_pii"], reason="text names an SSN")])
     result = GuardrailSupervisor(llm, engine).run(
         "My SSN is 796-33-9021, can you check my claim?", owner="citizen")

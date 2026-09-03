@@ -226,7 +226,21 @@ words:
 
 pii:
 
-  entities:
+  # No deterministic regex/checksum rail exists any more — removed by
+  # deliberate choice. entity_kinds below is the *only* detection surface:
+  # every kind the old regex layer used to match by shape (EMAIL_ADDRESS
+  # through DATE_OF_BIRTH) is judge-only now, described to it by shape
+  # instead — see rails/entities.py's ENTITY_INSTRUCTIONS for the exact
+  # wording per kind.
+  entity_kinds:
+
+    - PERSON
+
+    - ADDRESS
+
+    - ORGANISATION
+
+    - OTHER_PII
 
     - EMAIL_ADDRESS
 
@@ -246,17 +260,16 @@ pii:
 
     - IBAN
 
-  confidence_threshold: 0.50
+    - VEHICLE_PLATE
 
-  # Named entities a model finds that a pattern cannot: people, addresses,
+    - PASSPORT_NUMBER
 
-  # private employers. Same vault, same masking strategy, same egress unmask.
+    - NATIONAL_ID
 
-  entity_kinds: [PERSON, ADDRESS, ORGANISATION]
-
-  # What finds names and addresses. Presidio is local NER; the judge reads
+  # What finds PERSON/ADDRESS. Presidio is local NER; the judge reads
   # context but costs a call. Together, the judge is asked only when Presidio
-  # comes back empty.
+  # comes back empty. Every other kind above has no Presidio recognizer at
+  # all (see presidio_ner.KIND_MAP) and is judge-only regardless of this.
   entity_engine: presidio+judge
   entity_confidence: 0.60
 
@@ -266,23 +279,16 @@ pii:
 
   reversible: true
 
-  custom_regex:
+  # The judge-prompt successor to the old, compiled `custom_regex` — shown to
+  # the judge as one more thing to recognise by description, best-effort, not
+  # matched exactly. The Indian mobile/landline pattern this used to carry
+  # alongside the claim-reference one is gone: PHONE_NUMBER's own description
+  # in ENTITY_INSTRUCTIONS already covers that shape, extensions included, so
+  # keeping a second, narrower description of the same thing here would only
+  # invite the two to drift apart.
+  custom_patterns:
 
-    - 'CLM-\d{8}'               # claim reference numbers
-    # Indian mobile and landline. Numbers here have no checksum, so the
-    # lookbehind and lookahead do the work a checksum would: they stop a
-    # longer digit run being sliced into something that looks like a phone.
-    # The landline alternative's trailing `(?:\s*[,/]\s*\d{4,8})*` catches a
-    # second extension sharing the first number's STD code — "0452-2690055,
-    # 2690056" — which a bare 7-digit "2690056" cannot match on its own, no
-    # leading 0 to anchor it. Immediate whitespace only between the
-    # separator and the digits, so it cannot reach across intervening words
-    # to an unrelated number two sentences later.
-    # `[\s-]*`, not `[\s-]?`, between number groups everywhere below: a real
-    # STD code is sometimes typeset with more than one separator character —
-    # "044 -2534 0508" is a space *and* a dash — and `?` only ever allows one,
-    # so that whole number matched nothing at all.
-    - '(?<![\d+])(?:\+91[\s-]*(?:\d[\s-]*){9}\d|0\d{2,4}[\s-]*\d{3,4}[\s-]*\d{4}(?:\s*[,/]\s*\d{4,8})*|[6-9]\d{4}[\s-]*\d{5})(?!\d)'
+    - 'a claim reference number, the letters CLM- followed by 8 digits'
 
 
 

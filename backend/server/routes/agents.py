@@ -209,7 +209,7 @@ def _resolve_guardrail_result_for_reader(result: GuardrailSupervisorResult, engi
                                          reader: str) -> None:
     """Same deterministic egress step `_resolve_for_reader` runs for
     `run_supervisor`, applied to the flat result's own single `outcome`."""
-    caps = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
     if result.outcome is not None and result.outcome.text_out:
         result.outcome.text_out, _ = caps.resolve_for_reader(result.outcome.text_out, reader)
 
@@ -257,7 +257,7 @@ def _resolve_for_reader(result: SupervisorResult, engine: Any, reader: str) -> N
     used for this alone; it owns no agent's decision, only the one
     deterministic check this function exists to run.
     """
-    caps = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
     if result.outcome is not None and result.outcome.text_out:
         result.outcome.text_out, _ = caps.resolve_for_reader(result.outcome.text_out, reader)
     for agent_result in result.agent_results.values():

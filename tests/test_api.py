@@ -134,7 +134,34 @@ def test_chat_blocks_an_injection(client):
     assert body["trace"]["rails_evaluated"] > 0
 
 
+def _install_scripted_entities(entities, reply="ok"):
+    """US_SSN/EMAIL_ADDRESS/etc. are judge-only now — no deterministic layer
+    exists — so a test that needs one actually masked over the real HTTP API
+    has to script a judge for it. `engine.llm` alone is not enough:
+    `entity_rail` (like every model-backed rail) captured its own `llm`
+    reference when `_build_rails()` last ran, so it has to be rebuilt too.
+
+    `StubClaude` (not a hand-rolled stub here) — every other schema shape
+    (scope, injection, content, ...) needs a type-correct answer or the rail
+    fails closed; `test_parameters.py`'s version already gets all of them
+    right."""
+    from tests.test_parameters import StubClaude
+    from backend.server.state import state as app_state
+
+    app_state.engine.llm = StubClaude(reply=reply, entities=entities)
+    app_state.engine._build_rails()  # noqa: SLF001 — rebuild every rail against the new llm
+    app_state.model_rails = True
+
+
 def test_chat_masks_pii(client):
+    # supervisor.chat_prefilter_mode defaults to "agentic" now — pinned back
+    # off since this test is about Engine.converse()'s own masking, not the
+    # prefilter (the scripted judge below doesn't answer that agent's own
+    # PLAN/DECIDE schemas).
+    client.patch("/api/parameters", json={"values": {"supervisor.chat_prefilter_mode": "off"}})
+    _install_scripted_entities([
+        {"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.95},
+    ])
     body = client.post("/api/chat", json={
         "message": "my ssn is 796-33-9021", "session_id": "t",
     }).json()
@@ -195,6 +222,9 @@ def test_ingested_text_is_masked_on_the_way_out_not_the_way_in(client):
     actually protects a read: it re-scans the chunks through the same
     retrieval rails a chat turn's own retrieval would, so the value never
     reaches a reader raw even though it was never touched on the way in."""
+    _install_scripted_entities([
+        {"text": "meera.balan@example.gov", "kind": "EMAIL_ADDRESS", "confidence": 0.95},
+    ])
     r = client.post("/api/documents", json={
         "title": "Contact sheet",
         "text": "Write to the officer at meera.balan@example.gov about a dispute.",
@@ -244,9 +274,19 @@ def test_the_caseload_sample_ingests_the_way_its_blurb_claims(client):
     This one is the demo set's answer to "what happens to my records", so it has
     to show both halves of the rule at once: the resident's identifiers become
     vault tokens, and the contacts the department prints on its own letters do
-    not. A change to the allowlist or to `pii.entities` that quietly broke
-    either half would leave the blurb lying.
-    """
+    not.
+
+    The fixture's own `"blurb"` ("the resident's details vaulted, the
+    published contacts left readable") is only true when a model is
+    configured — real, running deployments have one (see `config/
+    overrides.yaml`'s `ANTHROPIC_API_KEY`-backed setup). PII detection has no
+    deterministic layer any more: what used to be regex/checksum-found
+    (email, phone, SSN, a claim reference) is judge-only now, the same as a
+    name always was. This suite's own `client` fixture is deliberately
+    keyless (see `test_health_reports_offline_model_rails`), so in *this*
+    environment specifically, none of the resident's identifiers get vaulted
+    — the published contacts were never going to be masked either way, so
+    that half of the rule still holds unconditionally."""
     from backend.server.routes.documents import FIXTURES
 
     fx = next(f for f in FIXTURES if f["id"] == "caseload-note")
@@ -258,16 +298,14 @@ def test_the_caseload_sample_ingests_the_way_its_blurb_claims(client):
     doc_id = body["document"]["id"]
     indexed = " ".join(client.get(f"/api/documents/{doc_id}").json()["document"]["chunks"])
 
-    # Only the deterministic half is asserted here. This suite runs as a base
-    # install — no Presidio, no API key — and a name is not a pattern, so
-    # `entities.detect` has neither of the two layers that find one and "Meera
-    # Balan" stays in the text. That is the documented behaviour of a keyless
-    # deployment rather than a hole: what a regex and a checksum can find is
-    # found, and the console says the model rails are off. The name is covered
-    # where the layers exist, in test_presidio.py.
+    # A keyless deployment (this suite's own `client` fixture) has no PII
+    # detector at all now — not "no name detector", *no detector*. Every
+    # resident identifier, checksummed shape or not, reaches the index raw.
+    # The vaulting half of the blurb is real, but only once a model is
+    # configured — see `test_parameters.py`/`test_pii.py` for that path.
     for identifier in ("meera.balan@example.com", "9840012345",
                        "796-33-9021", "CLM-40028871"):
-        assert identifier not in indexed, f"{identifier} reached the index unmasked"
+        assert identifier in indexed, f"{identifier} was unexpectedly masked with no model configured"
     for published in ("records@municipal.gov.in", "1800 425 1969"):
         assert published in indexed, f"{published} was masked — the desk cannot give it out"
 

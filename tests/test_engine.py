@@ -37,12 +37,24 @@ def test_blocked_prompt_never_reaches_retrieval(engine):
     assert not [s for s in res.trace.stages if s.name.startswith("Retrieval")]
 
 
-def test_pii_is_masked_before_dispatch(engine):
+def test_pii_is_masked_before_dispatch(engine, monkeypatch):
+    """US_SSN and the CLM- claim reference are both judge-only now — no
+    deterministic layer exists, and `pii.custom_patterns` (the successor to
+    `pii.custom_regex`) is a prompt hint, not a compiled pattern, so a match
+    against it comes back tagged OTHER_PII rather than the old CUSTOM_1.
+    `engine` has no model — `entity_rail.llm` is `None`, and `evaluate()`'s
+    own `use_judge` gate short-circuits on that before ever reaching
+    `_judge_entities`, so both the gate and the method are stubbed."""
+    monkeypatch.setattr(engine.entity_rail, "llm", object())
+    monkeypatch.setattr(engine.entity_rail, "_judge_entities", lambda text: [
+        {"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.9},
+        {"text": "CLM-40028811", "kind": "OTHER_PII", "confidence": 0.9},
+    ])
     res = engine.converse("my ssn is 796-33-9021, check claim CLM-40028811")
     assert res.trace.verdict is Verdict.MASK
     kinds = {d["kind"] for d in res.detections}
     assert "US_SSN" in kinds
-    assert "CUSTOM_1" in kinds     # the CLM- regex from policy.yaml
+    assert "OTHER_PII" in kinds     # the CLM- pattern from pii.custom_patterns
 
 
 def test_clean_prompt_passes_and_retrieves(tmp_path):

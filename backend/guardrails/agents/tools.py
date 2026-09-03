@@ -1,9 +1,9 @@
 """The PII agent's tool allowlist.
 
-Every function here wraps something that already exists in `rails/pii.py` or
-`rails/presidio_ner.py` — none of it re-implements detection, checksums, or
-policy lookup. This module's only job is to expose that existing behaviour to
-an agent through a fixed set of names, and to make calling anything else
+Every function here wraps something that already exists in `rails/entities.py`
+or `rails/presidio_ner.py` — none of it re-implements detection or policy
+lookup. This module's only job is to expose that existing behaviour to an
+agent through a fixed set of names, and to make calling anything else
 impossible in Python rather than merely discouraged in a prompt.
 
 `ToolNotAllowed` is the boundary. `select()` looks a name up in a plain dict;
@@ -38,32 +38,21 @@ class GuardrailTool:
 
 
 # ---------------------------------------------------------------------------
-# The four tools. Each takes (args, engine) and returns a plain, redacted dict
-# — never the raw matched value. A caller who needs the raw value for a real
-# action (masking, a checksum re-check) reaches the production rail directly,
-# not through this trace-visible layer.
+# The tools. Each takes (args, engine) and returns a plain, redacted dict —
+# never the raw matched value. A caller who needs the raw value for a real
+# action (masking) reaches the production rail directly, not through this
+# trace-visible layer.
 # ---------------------------------------------------------------------------
-def _detect_pii_regex(args: dict, engine: Engine) -> dict:
-    """The deterministic regex + checksum layer — `PIIRail._detect`, unchanged."""
-    text = str(args.get("text", ""))
-    pairs = engine.pii_rail._detect(text)  # noqa: SLF001 — the existing detector, reused whole
-    return {
-        "findings": [
-            {"kind": det.kind, "start": det.start, "end": det.end,
-             "confidence": round(det.confidence, 3),
-             "checksum_verified": rec.check is not None}
-            for det, rec in pairs
-        ],
-    }
-
-
 def _detect_pii_presidio(args: dict, engine: Engine) -> dict:
     """The local NER layer — `presidio_ner.find`, unchanged.
 
-    Named entities only: people, addresses, organisations. It was never going
-    to find an SSN — that is `detect_pii_regex`'s job — so "presidio found
-    nothing" here is an honest report of what this tool covers, not a
-    disagreement to be explained away.
+    Named entities only: people and addresses, the two kinds
+    `presidio_ner.KIND_MAP` actually maps. Everything else this rail can
+    find — an SSN, an email, a phone number, any other kind with no fixed
+    shape for Presidio's own recognizers to key off — is
+    `detect_pii_entities`'s job, so "presidio found nothing" here is an
+    honest report of what this tool covers, not a disagreement to be
+    explained away.
     """
     from ..rails import presidio_ner
 
@@ -118,27 +107,6 @@ def _detect_pii_entities(args: dict, engine: Engine) -> dict:
     return {"findings": findings}
 
 
-def _classify_pii_type(args: dict, engine: Engine) -> dict:
-    """What kind of thing a prior detection was — not a new detection pass.
-
-    Looks the kind up against the same `RECOGNIZERS` table the production
-    rail masks with, so "is this checksum-backed" answers the same way here
-    as it does in the rail that actually acts on it.
-    """
-    from ..rails.pii import RECOGNIZERS
-
-    kind = str(args.get("kind", "")).strip()
-    rec = next((r for r in RECOGNIZERS if r.entity == kind), None)
-    if rec is None:
-        return {"kind": kind, "known": False}
-    return {
-        "kind": kind, "known": True,
-        "checksum_backed": rec.check is not None,
-        "base_confidence": round(rec.confidence, 3),
-        "reveal_chars": rec.reveal,
-    }
-
-
 def _get_pii_policy(args: dict, engine: Engine) -> dict:
     """The configured action for this kind on this surface — read, not decided.
 
@@ -156,16 +124,14 @@ def _get_pii_policy(args: dict, engine: Engine) -> dict:
     return {
         "kind": kind, "surface": surface.value, "action": action,
         "mask_strategy": str(engine.policy.get("pii.mask_strategy")),
-        "entities_enabled": kind in set(engine.policy.get("pii.entities") or []),
+        "entities_enabled": kind in set(engine.policy.get("pii.entity_kinds") or []),
         "reversible": bool(engine.policy.get("pii.reversible")),
     }
 
 
 PII_AGENT_TOOLS: dict[str, GuardrailTool] = {
-    "detect_pii_regex": GuardrailTool("detect_pii_regex", _detect_pii_regex),
     "detect_pii_presidio": GuardrailTool("detect_pii_presidio", _detect_pii_presidio),
     "detect_pii_entities": GuardrailTool("detect_pii_entities", _detect_pii_entities),
-    "classify_pii_type": GuardrailTool("classify_pii_type", _classify_pii_type),
     "get_pii_policy": GuardrailTool("get_pii_policy", _get_pii_policy),
 }
 

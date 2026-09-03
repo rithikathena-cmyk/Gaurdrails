@@ -35,7 +35,7 @@ from backend.guardrails.knowledge import (
 )
 
 from backend.guardrails.knowledge.seed import CORPUS
-from backend.guardrails.rails.pii import CORPUS_OWNER
+from backend.guardrails.rails.vault import CORPUS_OWNER
 from tests.conftest import REPO
 
 

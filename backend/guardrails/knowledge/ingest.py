@@ -433,16 +433,17 @@ class Document:
     #: was ingested — only ever set by a version of `Engine.ingest()` that
     #: classified PII at ingest time, which today's no longer does. A match at
     #: retrieval time means the chunks below were already classified exactly
-    #: as today's `pii.entity_kinds`/`pii.entities`/etc. would classify them —
-    #: the expensive judge scan can be skipped, not re-run to confirm what
-    #: ingestion already confirmed. Empty for anything ingested today, or
-    #: seeded with no `Engine` at all — both read as "unknown", never as
-    #: "fresh", so retrieval always falls back to a full scan.
+    #: as today's `pii.entity_kinds` (the only detection surface there is)
+    #: would classify them — the expensive judge scan can be skipped, not
+    #: re-run to confirm what ingestion already confirmed. Empty for anything
+    #: ingested today, or seeded with no `Engine` at all — both read as
+    #: "unknown", never as "fresh", so retrieval always falls back to a full
+    #: scan.
     pii_policy_version: str = ""
-    #: How many of each kind `pii.entities`/`pii.detect` found in the whole
-    #: document at ingest — counts only, never the values themselves, for the
-    #: same reason `findings` already redacts its own values. Audit and
-    #: freshness bookkeeping, not something retrieval reads to decide anything.
+    #: How many of each kind `EntityRail` found in the whole document at
+    #: ingest — counts only, never the values themselves, for the same reason
+    #: `findings` already redacts its own values. Audit and freshness
+    #: bookkeeping, not something retrieval reads to decide anything.
     pii_kind_counts: dict[str, int] = field(default_factory=dict)
 
     @property

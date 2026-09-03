@@ -348,13 +348,13 @@ PARAMS: list[Param] = [
        "belongs in the content or grounding rails."),
 
     # ---------------- pii ----------------
-    _a("pii.entities", "pii",
-       "Which entity types to detect.", "enum[]",
-       ["EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD", "IP_ADDRESS",
-        "DATE_OF_BIRTH", "AADHAAR", "PAN", "IBAN"]),
-    _a("pii.confidence_threshold", "pii",
-       "Minimum recognizer confidence to count as a detection.",
-       "float", 0.50, minimum=0, maximum=1, step=0.01),
+    # No deterministic regex/checksum layer exists any more — removed by
+    # deliberate choice, trading its speed, cost, and provable correctness
+    # for judge-only detection on every kind. `pii.entities`,
+    # `pii.confidence_threshold`, and the old regex-syntax `pii.custom_regex`
+    # were that layer's own parameters and are gone with it; `pii.entity_kinds`
+    # / `pii.entity_confidence` / `pii.custom_patterns` below now cover every
+    # kind, not just the ones that used to have no fixed shape.
     _a("pii.mask_strategy", "pii",
        "How a detected value is replaced.", "enum", "vault-token",
        options=["redact", "replace", "hash", "partial", "vault-token"]),
@@ -369,9 +369,13 @@ PARAMS: list[Param] = [
        "int", 0, minimum=0, maximum=4, step=1),
     _a("pii.reversible", "pii",
        "Whether an authorized caller can unmask at egress.", "bool", True),
-    _a("pii.custom_regex", "pii",
-       "Domain identifiers the built-ins don't cover — claim numbers, file refs.",
-       "regex[]", []),
+    _a("pii.custom_patterns", "pii",
+       "Domain identifiers the built-ins don't cover — claim numbers, file refs — "
+       "described in plain text or regex-like shorthand and shown to the judge as "
+       "one more thing to recognise. Best-effort, not a compiled regex: there is "
+       "no deterministic layer left to guarantee an exact-shape match, only the "
+       "judge's own reading of the description.",
+       "string[]", []),
     _a("pii.allowlist", "pii",
        "Published contacts that are exempt from masking — a department's own address or "
        "helpline. Matched case-insensitively against the whole text, not against the "
@@ -417,12 +421,20 @@ PARAMS: list[Param] = [
        "Egress scan on generated text.", "enum", "mask",
        options=["block", "mask", "flag", "pass"]),
     _a("pii.entity_kinds", "pii",
-       "Named entities a model looks for, on top of the regex recognizers. These "
-       "are the identifiers a pattern cannot find — a person, a street address. "
-       "GOVERNMENT (public offices, statutory and cooperative bodies) is its own kind, "
-       "separate from ORGANISATION (a private employer) — see pii.kind_actions for why "
-       "that split exists.",
-       "set", ["PERSON", "ADDRESS", "ORGANISATION", "GOVERNMENT"]),
+       "Every PII kind the judge looks for — the only detection surface there "
+       "is. GOVERNMENT (public offices, statutory and cooperative bodies) is its "
+       "own kind, separate from ORGANISATION (a private employer) — see "
+       "pii.kind_actions for why that split exists. OTHER_PII is the judge's own "
+       "catch-all for a personal identifier that fits none of the named kinds and "
+       "has no fixed shape — a membership number, a case reference, and the "
+       "like. EMAIL_ADDRESS/PHONE_NUMBER/US_SSN/CREDIT_CARD/AADHAAR/PAN/IBAN/"
+       "VEHICLE_PLATE/PASSPORT_NUMBER/NATIONAL_ID/IP_ADDRESS/DATE_OF_BIRTH used "
+       "to have their own regex/checksum recognizer; they are judge-only now, "
+       "described to it by shape rather than matched against one.",
+       "set", ["PERSON", "ADDRESS", "ORGANISATION", "GOVERNMENT", "OTHER_PII",
+               "EMAIL_ADDRESS", "PHONE_NUMBER", "US_SSN", "CREDIT_CARD", "AADHAAR",
+               "PAN", "IBAN", "VEHICLE_PLATE", "PASSPORT_NUMBER", "NATIONAL_ID",
+               "IP_ADDRESS", "DATE_OF_BIRTH"]),
     _a("pii.entity_engine", "pii",
        "What finds names and addresses. Presidio is local NER — about a second of CPU "
        "and no API call; the judge is slower but reads context. On retrieval only, "
@@ -556,12 +568,13 @@ PARAMS: list[Param] = [
        "Whether GuardrailSupervisor + Supervisor run as a pre-filter on every "
        "ordinary /api/chat turn, before Engine.converse() ever runs — the "
        "same chain routes/pipeline.py and agent.prefilter_mode already run "
-       "for /api/pipeline/run and /api/agent/chat. 'off' is today's exact "
-       "behaviour: /api/chat runs only the deterministic rail pipeline. "
-       "Costs one GuardrailSupervisor pass always, and a Supervisor pass (up "
-       "to six specialists, run sequentially) when GuardrailSupervisor "
-       "doesn't already decide the request — several extra seconds per turn.",
-       "enum", "off", options=["off", "agentic"]),
+       "for /api/pipeline/run and /api/agent/chat. Default is 'agentic'; "
+       "'off' falls back to /api/chat running only the deterministic rail "
+       "pipeline. Costs one GuardrailSupervisor pass always, and a "
+       "Supervisor pass (up to six specialists, run sequentially) when "
+       "GuardrailSupervisor doesn't already decide the request — several "
+       "extra seconds per turn.",
+       "enum", "agentic", options=["off", "agentic"]),
 
     _l("grounding.score_direction", "grounding",
        "Higher score means better grounded.",
@@ -768,18 +781,39 @@ PARAMS: list[Param] = [
        "rail pipeline, or pii_agent/injection_agent/content_safety_agent run "
        "in sequence — the same specialists Supervisor uses, each re-scanning "
        "the text as the previous one left it. Costs roughly two extra judge "
-       "calls per specialist, per tool call.",
-       "enum", "rail", options=["rail", "agentic"]),
+       "calls per specialist, per tool call. Default is 'agentic': every "
+       "detector these specialists call is still the same deterministic "
+       "regex/checksum code (pii.detect) or local NER (Presidio) as the rail "
+       "path — this only changes who orchestrates them, from a fixed "
+       "pipeline to a PLAN/DECIDE agent.",
+       "enum", "agentic", options=["rail", "agentic"]),
     _a("agent.prefilter_mode", "agent",
        "Whether GuardrailSupervisor + Supervisor run as a pre-filter on the "
        "user's message before the agent loop starts — the same chain "
        "routes/pipeline.py already runs, now reachable from /api/agent/chat "
-       "too. 'off' is today's exact behaviour: nothing under agents/ sees "
-       "the message before AgentRunner does. Costs one GuardrailSupervisor "
-       "pass always, and a Supervisor pass (up to six specialists, run "
-       "sequentially) when GuardrailSupervisor doesn't already decide the "
-       "request — several extra seconds per turn.",
-       "enum", "off", options=["off", "agentic"]),
+       "too. Default is 'agentic'; 'off' falls back to nothing under agents/ "
+       "seeing the message before AgentRunner does. Costs one "
+       "GuardrailSupervisor pass always, and a Supervisor pass (up to six "
+       "specialists, run sequentially) when GuardrailSupervisor doesn't "
+       "already decide the request — several extra seconds per turn.",
+       "enum", "agentic", options=["off", "agentic"]),
+    _a("agent.nested_model_floor", "agent",
+       "Whether the four local-model nested agents — ner_agent.py, "
+       "content_model_agent.py, injection_model_agent.py, "
+       "grounding_model_agent.py, each wrapping one deterministic detector "
+       "(Presidio, Toxic-BERT, DeBERTa, an NLI entailment model) in its own "
+       "PLAN+DECIDE loop — apply PolicyEngine.decide()'s own configured "
+       "floor to their own decision, the same floor every other agent in "
+       "this package applies. Default is 'off': each nested agent's own "
+       "judge call is final for its own record, with no deterministic floor "
+       "under it — the parent specialist that called it (PIIAgent, "
+       "ContentSafetyAgent, PromptInjectionAgent, GroundingAgent) still "
+       "applies its own floor to the request as a whole regardless of this "
+       "setting, so 'off' does not remove floor enforcement from the "
+       "request, only this one redundant layer of it. 'on' restores the "
+       "floor at this layer too, exactly as every other agent already has "
+       "it.",
+       "enum", "off", options=["off", "on"]),
 
     _l("agent.retrieval_required_for_domain_questions", "agent",
        "Whether an in-domain factual question must be backed by a tool call "

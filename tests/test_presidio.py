@@ -16,7 +16,7 @@ import pytest
 
 from backend.guardrails.rails import presidio_ner
 from backend.guardrails.rails.entities import EntityRail
-from backend.guardrails.rails.pii import Vault
+from backend.guardrails.rails.vault import Vault
 from backend.guardrails.types import Detection, RailResult, Verdict
 
 pytestmark = pytest.mark.presidio

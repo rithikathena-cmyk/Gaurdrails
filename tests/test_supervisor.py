@@ -83,7 +83,11 @@ class SupervisorLLM:
                 injection_plans=None, injection_decisions=None,
                 content_plans=None, content_decisions=None,
                 scope_plans=None, scope_decisions=None,
-                authorization_plans=None, authorization_decisions=None):
+                authorization_plans=None, authorization_decisions=None,
+                ner_plans=None, ner_decisions=None,
+                content_model_plans=None, content_model_decisions=None,
+                injection_model_plans=None, injection_model_decisions=None,
+                grounding_model_plans=None, grounding_model_decisions=None):
         self.sup_plan_script = list(sup_plans or [])
         self.sup_decision_script = list(sup_decisions or [])
         self.pii_plan_script = list(pii_plans or [])
@@ -96,6 +100,21 @@ class SupervisorLLM:
         self.scope_decision_script = list(scope_decisions or [])
         self.authz_plan_script = list(authorization_plans or [])
         self.authz_decision_script = list(authorization_decisions or [])
+        # The four nested local-model agents each specialist above may now
+        # delegate to (`ner_agent.py`, `content_model_agent.py`,
+        # `injection_model_agent.py`, `grounding_model_agent.py`) instead of
+        # calling their one local-model tool flat. Left unscripted — the
+        # common case, since most of this file's tests don't care what the
+        # local model itself found — each falls back to an honest "nothing
+        # found" default rather than raising on an unrecognized shape.
+        self.ner_plan_script = list(ner_plans or [])
+        self.ner_decision_script = list(ner_decisions or [])
+        self.content_model_plan_script = list(content_model_plans or [])
+        self.content_model_decision_script = list(content_model_decisions or [])
+        self.injection_model_plan_script = list(injection_model_plans or [])
+        self.injection_model_decision_script = list(injection_model_decisions or [])
+        self.grounding_model_plan_script = list(grounding_model_plans or [])
+        self.grounding_model_decision_script = list(grounding_model_decisions or [])
         self.calls: list[str] = []
 
     def judge(self, system, user, schema, *, max_tokens=2048, label=""):
@@ -170,6 +189,54 @@ class SupervisorLLM:
                 return self.pii_decision_script.pop(0)
             return {"action": "ALLOW", "confidence": 1.0, "rationale": "stub",
                     "findings": []}
+        if "needs_ner_scan" in props:
+            self.calls.append("ner_plan")
+            if self.ner_plan_script:
+                return self.ner_plan_script.pop(0)
+            return {"needs_ner_scan": False, "tools": [], "more_evidence_needed": False,
+                    "rationale": "stub — nothing scripted"}
+        if "ner_verdict" in props:
+            self.calls.append("ner_decide")
+            if self.ner_decision_script:
+                return self.ner_decision_script.pop(0)
+            return {"ner_verdict": "ALLOW", "confidence": 1.0, "rationale": "stub",
+                    "findings": []}
+        if "needs_local_score" in props:
+            self.calls.append("content_model_plan")
+            if self.content_model_plan_script:
+                return self.content_model_plan_script.pop(0)
+            return {"needs_local_score": False, "tools": [], "more_evidence_needed": False,
+                    "rationale": "stub — nothing scripted"}
+        if "local_content_verdict" in props:
+            self.calls.append("content_model_decide")
+            if self.content_model_decision_script:
+                return self.content_model_decision_script.pop(0)
+            return {"local_content_verdict": "ALLOW", "confidence": 1.0, "rationale": "stub",
+                    "findings": []}
+        if "needs_local_classification" in props:
+            self.calls.append("injection_model_plan")
+            if self.injection_model_plan_script:
+                return self.injection_model_plan_script.pop(0)
+            return {"needs_local_classification": False, "tools": [],
+                    "more_evidence_needed": False, "rationale": "stub — nothing scripted"}
+        if "local_injection_verdict" in props:
+            self.calls.append("injection_model_decide")
+            if self.injection_model_decision_script:
+                return self.injection_model_decision_script.pop(0)
+            return {"local_injection_verdict": "ALLOW", "confidence": 1.0, "rationale": "stub",
+                    "findings": []}
+        if "needs_local_entailment" in props:
+            self.calls.append("grounding_model_plan")
+            if self.grounding_model_plan_script:
+                return self.grounding_model_plan_script.pop(0)
+            return {"needs_local_entailment": False, "tools": [], "more_evidence_needed": False,
+                    "rationale": "stub — nothing scripted"}
+        if "local_entailment_verdict" in props:
+            self.calls.append("grounding_model_decide")
+            if self.grounding_model_decision_script:
+                return self.grounding_model_decision_script.pop(0)
+            return {"local_entailment_verdict": "ALLOW", "confidence": 1.0, "rationale": "stub",
+                    "findings": []}
         raise AssertionError(f"unexpected schema shape: {sorted(props)}")
 
 
@@ -183,9 +250,12 @@ def sup_decision(action, confidence=0.9, reasoning_summary="stub decision"):
 
 
 def pii_plan_all(more=False):
+    # detect_pii_regex/classify_pii_type were the deterministic regex/
+    # checksum layer's own tools — deleted along with rails/pii.py.
+    # detect_pii_entities (the judge) is now the only way to find a
+    # checksummed kind like US_SSN at all.
     return {"needs_analysis": True,
-            "tools": ["detect_pii_regex", "detect_pii_presidio",
-                     "classify_pii_type", "get_pii_policy"],
+            "tools": ["detect_pii_entities", "detect_pii_presidio", "get_pii_policy"],
             "more_evidence_needed": more, "rationale": "text names an identifier"}
 
 

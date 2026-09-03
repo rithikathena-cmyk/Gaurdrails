@@ -10,10 +10,17 @@ outside `PII_AGENT_TOOLS`, or reach a capability outside `PIICapabilities` —
 those are hard boundaries, enforced in Python, not asked of the model.
 
     ANALYZE + PLAN   one judge call: is there anything here worth looking at,
-                     and if so, which of the five tools should run
+                     and if so, which of the tools should run
     SELECT + EXECUTE the plan's tool names, fanned out over whatever kinds
                      the detectors actually found — deterministic Python,
-                     no model involved
+                     no model involved, except `detect_pii_presidio`: that
+                     one now delegates to `NERAgent` (`ner_agent.py`), a
+                     nested agent with its own PLAN+DECIDE reasoning over
+                     Presidio's output, rather than a flat, un-reasoned tool
+                     call. Its own `AgentResult` is folded back in as this
+                     agent's evidence — see `_wrap_nested` below — the same
+                     relationship `Supervisor` already has with each
+                     specialist it delegates to, one level deeper.
     OBSERVE + DECIDE a second judge call, given only what the tools actually
                      returned, recommending one of the six actions
     POLICY           `PolicyEngine.decide()` — the recommendation against
@@ -40,6 +47,7 @@ from ..llm import LLMError
 from ..prompts import judge_prompt
 from ..types import Surface
 from .capabilities import PIICapabilities
+from .ner_agent import NERAgent
 from .policy_engine import PolicyEngine
 from .tools import PII_TOOL_NAMES, ToolNotAllowed, call as call_tool
 from .types import (
@@ -168,7 +176,7 @@ class PIIAgent:
                  timeout_s: float = 30.0) -> None:
         self.llm = llm
         self.engine = engine
-        self.capabilities = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+        self.capabilities = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
         self.policy_engine = PolicyEngine()
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
@@ -233,7 +241,7 @@ class PIIAgent:
                         trace, calls, began, request_id, plan)
 
                 round_calls, round_kinds, truncated = self._execute(
-                    plan.tools, text, surface, known_kinds, note, budget_left)
+                    plan.tools, text, surface, owner, known_kinds, note, budget_left)
                 calls.extend(round_calls)
                 known_kinds |= round_kinds
 
@@ -290,7 +298,7 @@ class PIIAgent:
         note("PLAN", plan.rationale or f"tools={list(plan.tools)}")
         return plan
 
-    def _execute(self, tool_names: list[str], text: str, surface: Surface,
+    def _execute(self, tool_names: list[str], text: str, surface: Surface, owner: str,
                 known_kinds: set[str], note: Any,
                 budget_left: int) -> tuple[list[ToolResult], set[str], bool]:
         results: list[ToolResult] = []
@@ -306,7 +314,19 @@ class PIIAgent:
             if name not in PII_TOOL_NAMES:
                 raise ToolNotAllowed(name)
 
-            if name in ("detect_pii_regex", "detect_pii_presidio", "detect_pii_entities"):
+            if name == "detect_pii_presidio":
+                call_id = _call_id()
+                nested = NERAgent(self.llm, self.engine).run(
+                    text, surface=surface, owner=owner, request_id=f"{call_id}_ner")
+                res = _wrap_nested(nested, name, call_id)
+                results.append(res)
+                calls_made += 1
+                found_kinds |= {f.entity for f in nested.decision.findings}
+                note("EXECUTE", f"{name} -> nested ner_agent: {nested.decision.action} "
+                                f"({len(nested.decision.findings)} finding(s))")
+                continue
+
+            if name == "detect_pii_entities":
                 res = call_tool(name, {"text": text}, self.engine, _call_id())
                 results.append(res)
                 calls_made += 1
@@ -392,6 +412,24 @@ class PIIAgent:
             duration_ms=round((time.perf_counter() - began) * 1000, 1),
             escalation_reason=escalation_reason,
         )
+
+
+def _wrap_nested(result: AgentResult, tool_name: str, call_id: str) -> ToolResult:
+    """A nested agent's own `AgentResult`, folded into the shape `_decide()`'s
+    evidence trail already expects — the same `ToolResult` shape every flat
+    tool call in this file already returns, so a nested agent's finding reads
+    no differently in evidence or in the trace from any other tool's."""
+    d = result.decision
+    return ToolResult(
+        call_id=call_id, tool=tool_name,
+        status="ok" if result.status != "failed" else "error",
+        duration_ms=result.duration_ms,
+        result={
+            "nested_agent": result.agent, "nested_status": result.status,
+            "action": d.action, "confidence": d.confidence, "rationale": d.rationale,
+            "findings": [f.model_dump() for f in d.findings],
+        },
+    )
 
 
 _call_counter = 0

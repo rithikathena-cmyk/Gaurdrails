@@ -211,7 +211,7 @@ class Supervisor:
                  timeout_s: float = 45.0) -> None:
         self.llm = llm
         self.engine = engine
-        self.capabilities = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+        self.capabilities = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
         self.policy_engine = PolicyEngine()
         self.max_iterations = max_iterations
         self.max_agent_calls = max_agent_calls

@@ -1,12 +1,46 @@
-"""The autonomous scope agent.
+"""The autonomous local-classifier agent — Toxic-BERT, with its own PLAN + DECIDE.
 
-Same shape as the other three. `check_domain_vocabulary` is the cheap layer
-— exactly `ScopeRail`'s own set intersection — and the agent's own DECIDE
-call is where "ambiguous, sideways-phrased, or adversarially worded" gets
-resolved, the same job `SCOPE_SYSTEM` already does for the deterministic
-rail's judge fallback. There is no "ambiguous" action to invent: an
-ambiguous request that should proceed with a caveat is FLAG; one this agent
-cannot resolve at all is ESCALATE.
+Nested under `ContentSafetyAgent`: where `content_safety_agent.py` used to
+call the `score_content_categories` tool as a flat, un-reasoned function, it
+now delegates to this agent instead. Same shape every other agent in this
+package already has:
+
+    ANALYZE + PLAN   one judge call: is it worth scoring this text locally
+    SELECT + EXECUTE this agent's one tool — `score_content_categories`,
+                     `agents/content_tools.py`'s existing wrapper around
+                     `toxicity_check.score`, called through the same
+                     dispatcher, not reimplemented
+    OBSERVE + DECIDE a second judge call, given only what the classifier
+                     actually scored, recommending one of the six actions —
+                     final, not a recommendation a floor can override
+    ACT              `PIICapabilities.execute()` — the same capability layer
+                     every other agent uses, not a second one
+
+**No `PolicyEngine` floor here by default** — `agent.nested_model_floor`
+(registry.py, default `"off"`); see `ner_agent.py`'s module docstring for
+the full rationale, identical here: `ContentSafetyAgent`'s own POLICY/ACT
+(unchanged, still floor-governed) is what actually decides what happens to
+the text; with the floor off, this agent's own decision is only ever
+evidence for that outer call.
+
+Toxic-BERT only covers three of the six configured categories (hate,
+violence, insults — see `toxicity_check.COVERED`); a category outside that
+set was never evaluated by this tool, not cleared, and the DECIDE prompt
+below is written to keep that distinction visible rather than letting a
+"nothing scored" result read as "nothing wrong."
+
+`ContentSafetyAgent` folds this agent's `AgentResult` into its own evidence
+trail as a `ToolResult` — this agent's own POLICY/ACT still run, for its own
+complete, audit-ready record, but it is `ContentSafetyAgent`'s own POLICY/ACT
+(unchanged) that governs what actually happens to the text, the same
+relationship `Supervisor` already has with each specialist it delegates to.
+
+Its own PLAN/DECIDE schemas use field names distinct from every sibling
+agent's (`needs_local_score`/`local_content_verdict`, not `needs_analysis`/
+`action` or `possible_violation`/`judgment`) — the same reason
+`injection_agent.py`'s docstring already states: a test harness driving more
+than one agent through one scripted model needs to tell their schemas apart
+by shape, not just by which agent instance happened to call it.
 """
 
 from __future__ import annotations
@@ -22,42 +56,54 @@ from ..llm import LLMError
 from ..prompts import judge_prompt
 from ..types import Surface
 from .capabilities import PIICapabilities
+from .content_tools import ToolNotAllowed, call as call_tool
 from .policy_engine import PolicyEngine
-from .scope_tools import SCOPE_TOOL_NAMES, ToolNotAllowed, call as call_tool
 from .types import (
     ActionOutcome, AgentDecision, AgentPlan, AgentResult, PolicyDecision, ToolResult,
     TraceEvent,
 )
 
+#: This agent's entire allowlist — one entry, out of `content_tools`'s two
+#: (`get_content_policy` stays the parent's own tool, not duplicated here).
+CONTENT_MODEL_TOOL_NAMES: tuple[str, ...] = ("score_content_categories",)
+
 PLAN_SCHEMA = {
     "type": "object",
     "properties": {
-        "needs_scope_review": {
+        "needs_local_score": {
             "type": "boolean",
-            "description": "False only if the question obviously belongs to what "
-                           "this assistant is for on its wording alone.",
+            "description": "False only if the text plainly holds nothing that could "
+                           "touch hate, violence, or insults — including text that is "
+                           "merely distressing.",
         },
-        "tools": {"type": "array", "items": {"type": "string", "enum": list(SCOPE_TOOL_NAMES)}},
+        "tools": {
+            "type": "array",
+            "description": "Empty, or ['score_content_categories'] — this agent has "
+                           "exactly one tool.",
+            "items": {"type": "string", "enum": list(CONTENT_MODEL_TOOL_NAMES)},
+        },
         "more_evidence_needed": {"type": "boolean"},
-        "rationale": {"type": "string"},
+        "rationale": {"type": "string", "description": "One sentence."},
     },
-    "required": ["needs_scope_review", "tools", "more_evidence_needed", "rationale"],
+    "required": ["needs_local_score", "tools", "more_evidence_needed", "rationale"],
     "additionalProperties": False,
 }
 
 DECISION_SCHEMA = {
     "type": "object",
     "properties": {
-        "ruling": {"type": "string", "enum": ["ALLOW", "MASK", "REDACT", "BLOCK", "FLAG", "ESCALATE"]},
+        "local_content_verdict": {
+            "type": "string",
+            "enum": ["ALLOW", "MASK", "REDACT", "BLOCK", "FLAG", "ESCALATE"],
+        },
         "confidence": {"type": "number"},
-        "evidence_summary": {"type": "string"},
+        "rationale": {"type": "string"},
         "findings": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "entity": {"type": "string", "description": "The topic the question "
-                              "is actually about, in two or three words."},
+                    "entity": {"type": "string", "description": "hate, violence, or insults."},
                     "risk": {"type": "string", "enum": ["low", "medium", "high", "critical"]},
                     "confidence": {"type": "number"},
                     "evidence": {"type": "array", "items": {"type": "string"}},
@@ -67,62 +113,51 @@ DECISION_SCHEMA = {
             },
         },
     },
-    "required": ["ruling", "confidence", "evidence_summary", "findings"],
+    "required": ["local_content_verdict", "confidence", "rationale", "findings"],
     "additionalProperties": False,
 }
 
 PLAN_SYSTEM = judge_prompt("""\
-You are the planning step of a scope agent for a document-grounded assistant. \
-It has no fixed subject of its own — only whatever documents and records it \
-has actually been given, whatever domain those happen to cover.
+You are the planning step of a local content-classifier agent. You have \
+exactly one tool:
 
-- check_domain_vocabulary   whether the text's own wording hits the \
-configured vocabulary for this service
-- get_scope_policy          the configured threshold and action
+- score_content_categories   a local classifier's own scores for hate, \
+violence, and insults only — it cannot speak to misconduct or self-harm at \
+all, and reports which categories it even covers.
 
-If the question obviously belongs here on its wording, you do not need a \
-tool call to know that; say so and name none. Reach for \
-check_domain_vocabulary when it is not obvious, so you know whether the \
-wording alone would have settled it before you reason about meaning.""",
-                            calibrate=False)
+A user describing something distressing that happened to them, reporting a \
+crime, or expressing frustration at the service is not what this tool exists \
+to catch — say needs_analysis is false and name no tool rather than running \
+one to be sure.""")
 
 DECISION_SYSTEM = judge_prompt("""\
-You are the decision step of a scope agent. Decide whether this question \
-belongs to what this assistant is actually for: answering questions \
-grounded in whatever documents and records it has been given.
+You are the decision step of a local content-classifier agent. You are given \
+the original text and exactly what the classifier scored — nothing more. \
+Decide the one action.
 
-- ALLOW     clearly in scope
-- MASK      not applicable here
-- REDACT    not applicable here
-- BLOCK     not applicable here — an out-of-scope question is declined, not \
-blocked as a security matter
-- FLAG      ambiguous: plausibly in scope on a sideways reading, worth a \
-person's judgment or a clarifying question rather than a confident answer \
-either way
-- ESCALATE  you cannot form a view from what you were given
+- ALLOW     nothing here violates policy, however distressing the subject
+- MASK      not typically applicable here
+- REDACT    not typically applicable here
+- BLOCK     the text itself expresses or seeks hate, violence, or insults \
+aimed at a person
+- FLAG      it may proceed, but a person should see it
+- ESCALATE  the score alone does not clearly support any of the above
 
-Take the sideways reading — the underlying need, not the exact wording, is \
-what matters. A question about the service itself — what it can do, which \
-documents it holds, why an earlier message was refused — is in scope: a \
-service nobody can question is not a safer one.
-
-Score out of scope only for a genuinely different subject: general \
-knowledge trivia, creative writing, coding help, clinical or legal advice, \
-financial speculation, entertainment, or a request to become a different \
-product. A subject that is obviously fictional or made up also scores out \
-of scope — a real deployment's documents describe real things. Wording \
-engineered to look in-scope while asking for something else is still out of \
-scope; take the actual request, not the frame around it. Being rude, \
-distressed, or badly worded does not put a question out of scope; only its \
-subject does.""", calibrate=False)
+A classifier score is evidence of wording, not of intent: it can flag "this \
+is killing me" as violence when it describes distress, not a threat. Do not \
+let a high score alone stand in for a reading of what the text is actually \
+doing. A category this tool does not cover was never evaluated by it — say \
+so rather than treating its silence on misconduct or self-harm as a clean \
+bill of health. Cite only call_id values you were actually shown as \
+evidence; never invent one.""")
 
 
-class ScopeAgent:
-    name = "scope_agent"
+class ContentModelAgent:
+    name = "content_model_agent"
     version = "1.0.0"
 
     def __init__(self, llm: Any, engine: Engine, *,
-                 max_iterations: int = 3, max_tool_calls: int = 8,
+                 max_iterations: int = 2, max_tool_calls: int = 2,
                  timeout_s: float = 30.0) -> None:
         self.llm = llm
         self.engine = engine
@@ -135,7 +170,7 @@ class ScopeAgent:
     # -----------------------------------------------------------------
     def run(self, text: str, *, surface: Surface = Surface.USER_PROMPT,
             owner: str = "", request_id: str = "") -> AgentResult:
-        request_id = request_id or f"scope_agent_{uuid.uuid4().hex[:10]}"
+        request_id = request_id or f"content_model_agent_{uuid.uuid4().hex[:10]}"
         began = time.perf_counter()
         trace: list[TraceEvent] = []
         calls: list[ToolResult] = []
@@ -166,16 +201,13 @@ class ScopeAgent:
 
                 if not plan.needs_analysis:
                     if not calls:
-                        note("DECIDE", "wording alone settles this — in scope")
+                        note("DECIDE", "no content-relevant concern — nothing to analyze")
                         return self._finish(
                             "completed",
                             AgentDecision(action="ALLOW", confidence=1.0,
-                                         rationale="in scope on its wording alone", findings=[]),
+                                         rationale="no content-safety concern found",
+                                         findings=[]),
                             plan, trace, calls, began, request_id)
-                    # Evidence already gathered in an earlier round — `needs_analysis`
-                    # going false here means "no more evidence needed," not "this was
-                    # never relevant." Fall through to DECIDE with what was already
-                    # gathered; never discard it and never skip POLICY/ACT.
                     break
 
                 budget_left = self.max_tool_calls - len(calls)
@@ -217,9 +249,25 @@ class ScopeAgent:
             return self._escalate("EVALUATE", "malformed model output failed validation",
                                   trace, calls, began, request_id, plan)
 
-        policy_action = str(self.engine.policy.get("scope.action"))
-        policy_decision = self.policy_engine.decide(
-            decision.action, has_findings=bool(decision.findings), policy_action=policy_action)
+        # `agent.nested_model_floor` (default "off"): this agent's own
+        # decision is final for its own record, but never for the request
+        # either way — `ContentSafetyAgent`'s own POLICY/ACT (unchanged,
+        # still floor-governed) is what actually decides what happens to the
+        # text. "on" restores the floor at this layer too.
+        if str(self.engine.policy.get("agent.nested_model_floor")) == "on":
+            content_action_key = ("content.action.llm_response" if surface == Surface.LLM_RESPONSE
+                                  else "content.action.user_prompt")
+            policy_action = str(self.engine.policy.get(content_action_key))
+            policy_decision = self.policy_engine.decide(
+                decision.action, has_findings=bool(decision.findings),
+                policy_action=policy_action)
+        else:
+            policy_decision = PolicyDecision(
+                final_action=decision.action, recommended_action=decision.action,
+                floor_action=decision.action, overridden=False,
+                rationale="no deterministic floor at this layer "
+                          "(agent.nested_model_floor=off) — ContentSafetyAgent's "
+                          "own POLICY step is what enforces one")
         note("POLICY", policy_decision.rationale)
 
         note("ACT", f"executing {policy_decision.final_action}")
@@ -236,7 +284,7 @@ class ScopeAgent:
         user = f"TEXT:\n{text}\n\nEVIDENCE SO FAR:\n{evidence}"
         raw = self.llm.judge(PLAN_SYSTEM, user, PLAN_SCHEMA)
         plan = AgentPlan.model_validate({
-            "needs_analysis": raw.get("needs_scope_review"),
+            "needs_analysis": raw.get("needs_local_score"),
             "tools": raw.get("tools", []),
             "more_evidence_needed": raw.get("more_evidence_needed", False),
             "rationale": raw.get("rationale", ""),
@@ -254,7 +302,7 @@ class ScopeAgent:
                 note("EXECUTE", f"stopped at the tool budget mid-plan ({budget_left})")
                 truncated = True
                 break
-            if name not in SCOPE_TOOL_NAMES:
+            if name not in CONTENT_MODEL_TOOL_NAMES:
                 raise ToolNotAllowed(name)
 
             res = call_tool(name, {"text": text}, self.engine, _call_id())
@@ -270,9 +318,9 @@ class ScopeAgent:
         user = f"TEXT:\n{text}\n\nTOOL RESULTS:\n{evidence}"
         raw = self.llm.judge(DECISION_SYSTEM, user, DECISION_SCHEMA)
         decision = AgentDecision.model_validate({
-            "action": raw.get("ruling"),
+            "action": raw.get("local_content_verdict"),
             "confidence": raw.get("confidence"),
-            "rationale": raw.get("evidence_summary", ""),
+            "rationale": raw.get("rationale", ""),
             "findings": raw.get("findings", []),
         })
 
@@ -317,4 +365,4 @@ _call_counter = 0
 def _call_id() -> str:
     global _call_counter
     _call_counter += 1
-    return f"scope_{_call_counter:04d}_{uuid.uuid4().hex[:6]}"
+    return f"content_model_{_call_counter:04d}_{uuid.uuid4().hex[:6]}"

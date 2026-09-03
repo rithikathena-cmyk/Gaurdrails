@@ -12,8 +12,10 @@ The dividing line against `agent/` is what a thing decides:
 
     normalize.py     NFKC, invisibles, homoglyphs — locked on, runs first
     words.py         Aho–Corasick over the lexicons
-    pii.py           regex recognizers, checksums, the allowlist, the vault
-    entities.py      names and addresses: gate → presidio → judge
+    vault.py         reversible masking — AES-256-GCM, scoped to an owner
+    entities.py      the only PII detector: gate → presidio → judge, every
+                     kind, judge-only wherever presidio_ner.KIND_MAP has no
+                     entry (which is most of them)
     presidio_ner.py  the local NER layer entities.py calls
     policy.py        named regex rule sets
     content.py       content safety, and prompt injection
@@ -23,21 +25,23 @@ The dividing line against `agent/` is what a thing decides:
 
 Deterministic rails come first in that list on purpose: where a family can be
 settled without a model, it is, and the cheap layer short-circuits the
-expensive one.
+expensive one. PII no longer has a deterministic layer at all — see
+`entities.py`'s own docstring for why.
 """
 
 from .content import ContentRail, PromptAttackRail
+from .entities import EntityRail
 from .grounding import GroundingRail
 from .normalize import normalize
-from .pii import PIIRail, Vault
+from .vault import Vault
 from .words import WordRail
 
 __all__ = [
     "ContentRail",
     "PromptAttackRail",
+    "EntityRail",
     "GroundingRail",
     "normalize",
-    "PIIRail",
     "Vault",
     "WordRail",
 ]

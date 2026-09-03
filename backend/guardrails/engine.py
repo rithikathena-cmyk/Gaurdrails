@@ -36,7 +36,7 @@ from .rails.kind_actions import (
 from .rails.scope import ScopeRail, requires_retrieval
 from .rails.grounding import GroundingRail
 from .rails.normalize import normalize
-from .rails.pii import CORPUS_OWNER, SYSTEM_OWNER, PIIRail, Vault
+from .rails.vault import CORPUS_OWNER, SYSTEM_OWNER, Vault
 from .rails.policy import PolicyRail
 from .rails.words import WordRail
 from .tracing import AuditLog, Tracer
@@ -176,18 +176,6 @@ class Engine:
         )
         kind_actions = parse_kind_actions(list(p.get("pii.kind_actions") or []))
         kind_mask_strategy = parse_kind_strategy(list(p.get("pii.kind_mask_strategy") or []))
-        self.pii_rail = PIIRail(
-            entities=list(p.get("pii.entities") or []),
-            confidence_threshold=float(p.get("pii.confidence_threshold")),
-            mask_strategy=str(p.get("pii.mask_strategy")),
-            partial_reveal=int(p.get("pii.partial_reveal")),
-            partial_reveal_prefix=int(p.get("pii.partial_reveal_prefix")),
-            custom_regex=list(p.get("pii.custom_regex") or []),
-            vault=self.vault,
-            allowlist=list(p.get("pii.allowlist") or []),
-            kind_actions=kind_actions,
-            kind_mask_strategy=kind_mask_strategy,
-        )
         self.policy_rail = PolicyRail({
             "security_rules": list(p.get("policy.security_rules") or []),
             "privacy_rules": list(p.get("policy.privacy_rules") or []),
@@ -215,8 +203,11 @@ class Engine:
             use_judge=self.llm is not None,
             hard_block_threshold=float(p.get("scope.hard_block_threshold")),
         )
-        # Names and addresses have no shape for a regex to match, so this one
-        # is model-only. It shares the vault with pii.detect.
+        # The only PII detector — model-only, since removing the regex/
+        # checksum rail. Presidio still finds PERSON/ADDRESS locally, for
+        # nothing, before any kind reaches the judge; every other kind
+        # (including what used to be regex-matched: emails, phone numbers,
+        # national IDs, and so on) is judge-only, model calls included.
         self.entity_rail = EntityRail(
             self.llm, self.vault,
             confidence_threshold=float(p.get("pii.entity_confidence")),
@@ -228,6 +219,7 @@ class Engine:
             partial_reveal_prefix=int(p.get("pii.partial_reveal_prefix")),
             kind_actions=kind_actions,
             kind_mask_strategy=kind_mask_strategy,
+            custom_patterns=list(p.get("pii.custom_patterns") or []),
         )
         # The adjudicator is not a rail: it reviews what the rails decided,
         # and only when one of them landed within a margin of its threshold.
@@ -347,20 +339,6 @@ class Engine:
         st.rails.append(res)
         return res
 
-    # -----------------------------------------------------------------
-    def _pii_spans(self, text: str):
-        """Where the deterministic rail would find identifiers in this text.
-
-        Recomputed rather than shared, because the rails run concurrently and
-        the entity rail cannot wait on a sibling's result. A second regex pass
-        costs a tenth of a millisecond; a dependency between two concurrent
-        jobs costs a deadlock the first time somebody reorders them.
-        """
-        try:
-            return [d for d, _ in self.pii_rail._detect(text)]  # noqa: SLF001
-        except Exception:  # noqa: BLE001 — an overlap hint is never worth a failure
-            return []
-
     def _doc_pii_is_fresh(self, doc_id: str) -> bool:
         """Was this document's PII already classified exactly as today's
         config would classify it — so retrieval can trust its chunks instead
@@ -395,9 +373,11 @@ class Engine:
         `_doc_pii_is_fresh` and `classification_fingerprint`, which folds in
         `pii.kind_actions` for exactly this reason: an already-baked chunk is
         only safe to trust unscanned if nothing that decided its masking has
-        changed since. `pii.detect` (deterministic, no model) always runs
-        regardless — a classification decision is skippable once trusted, a
-        checksum-backed regex scan is cheap enough that there is no reason to.
+        changed since. With the regex/checksum rail removed, `entity_rail` is
+        the only PII detector left, so `skip_entity_rail=True` now means no
+        PII scan runs at all for that call — full trust in the ingest-time
+        classification, with no cheap deterministic backstop behind it the
+        way `pii.detect` used to be.
         """
         p = self.policy
         s = surface.value
@@ -413,13 +393,6 @@ class Engine:
                     lambda r, t, a=action: self.word_rail.evaluate(t, a, r),
                 ))
 
-            if p.enabled("pii", s):
-                action = str(p.get(PII_ACTION_KEY[surface]))
-                jobs.append((
-                    self.pii_rail.name, self.pii_rail.engine,
-                    lambda r, t, a=action: self.pii_rail.evaluate(t, a, r, owner),
-                ))
-
             if p.enabled("scope", s) and self.scope_rail and surface in SCOPE_SURFACES:
                 action = str(p.get("scope.action"))
                 jobs.append((
@@ -432,7 +405,7 @@ class Engine:
                 jobs.append((
                     self.entity_rail.name, self.entity_rail.engine,
                     lambda r, t, a=action: self.entity_rail.evaluate(
-                        t, a, r, prior=self._pii_spans(t), owner=owner, surface=s),
+                        t, a, r, owner=owner, surface=s),
                 ))
 
             if p.enabled("policy", s) and self.policy_rail:

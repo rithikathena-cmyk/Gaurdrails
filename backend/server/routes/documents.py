@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from backend.guardrails import Engine, IngestError, LLMError, Surface, Tracer
 from backend.guardrails.knowledge import extension, extract
-from backend.guardrails.rails.pii import CORPUS_OWNER
+from backend.guardrails.rails.vault import CORPUS_OWNER
 
 from ..state import state
 

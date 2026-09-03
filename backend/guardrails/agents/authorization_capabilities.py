@@ -28,8 +28,8 @@ from .types import ActionOutcome, GuardrailAction
 
 
 class AuthorizationCapabilities:
-    def __init__(self, pii_rail, vault, policy: object = None) -> None:
-        self._base = PIICapabilities(pii_rail, vault, policy)
+    def __init__(self, entity_rail, vault, policy: object = None) -> None:
+        self._base = PIICapabilities(entity_rail, vault, policy)
 
     def execute(self, action: GuardrailAction, text: str, *,
                ctx: AuthorizationContext) -> ActionOutcome:

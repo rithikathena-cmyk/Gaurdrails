@@ -42,7 +42,8 @@ from __future__ import annotations
 
 import re
 
-from ..rails.pii import PIIRail, Vault
+from ..rails.entities import EntityRail
+from ..rails.vault import Vault
 from ..types import RailResult, Verdict
 from .types import ActionOutcome, GuardrailAction
 
@@ -69,15 +70,15 @@ class CapabilityDenied(PermissionError):
 class PIICapabilities:
     """What a PII agent's ACT phase is actually permitted to do.
 
-    Bound to one engine's real `pii_rail` and `vault` — the same objects
+    Bound to one engine's real `entity_rail` and `vault` — the same objects
     every ordinary request masks through — so `MASK` here produces the exact
     token format, vault entry, and owner semantics a rail-driven request
     would, not a parallel implementation an operator has to reason about
     twice.
     """
 
-    def __init__(self, pii_rail: PIIRail, vault: Vault, policy: object = None) -> None:
-        self.pii_rail = pii_rail
+    def __init__(self, entity_rail: EntityRail, vault: Vault, policy: object = None) -> None:
+        self.entity_rail = entity_rail
         self.vault = vault
         #: Optional on purpose — every test that only exercises the six-action
         #: boundary (`request()`, `FORBIDDEN`) has no policy to thread through
@@ -122,8 +123,24 @@ class PIICapabilities:
         result = RailResult(rail="agents.pii.act", engine="pii-agent · vault-token",
                             verdict=Verdict.PASS)
         # The exact call `Engine.evaluate` makes for every ordinary request —
-        # no separate masking logic exists for the agentic path.
-        out = self.pii_rail.evaluate(text, "mask", result, owner)
+        # no separate masking logic exists for the agentic path. `owner=` is
+        # passed by keyword deliberately: `EntityRail.evaluate()`'s fourth
+        # positional parameter is `prior`, not `owner` — a positional call
+        # here would silently hand the owner string to `prior` instead.
+        #
+        # `force_strategy="redact"` for REDACT alone: without it, REDACT and
+        # MASK reached this rail identically and rendered through whatever
+        # `pii.mask_strategy` was configured — `partial`, say — so a REDACT
+        # decision could leave part of the value directly readable, the
+        # opposite of what every agent's own DECIDE prompt tells the model
+        # REDACT means ("removed, not recoverable"). Forcing the strategy
+        # here, not the configured one, is also what makes REDACT genuinely
+        # non-reversible: `_replacement()`'s "redact" branch returns
+        # "[REDACTED]" before ever reaching the vault, so no token is minted
+        # for a redacted span the way one is for a masked one.
+        strategy = "redact" if action == "REDACT" else None
+        out = self.entity_rail.evaluate(text, "mask", result, owner=owner,
+                                        force_strategy=strategy)
         masked = out.text_out if out.text_out is not None else text
 
         if action == "MASK" and not self._policy_bool("pii.agent.preserve_masked_tokens", True):

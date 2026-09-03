@@ -46,9 +46,16 @@ class ScriptedInjectionLLM:
     DECIDE — deliberately distinct from PIIAgent's `needs_analysis`/`action`
     so a harness driving both agents can always tell the calls apart."""
 
-    def __init__(self, plans=None, decisions=None):
+    def __init__(self, plans=None, decisions=None,
+                injection_model_plans=None, injection_model_decisions=None):
         self.plan_script = list(plans or [])
         self.decision_script = list(decisions or [])
+        # `InjectionModelAgent`'s own nested PLAN/DECIDE — `classify_injection`
+        # delegates to it now rather than calling the tool flat. Left
+        # unscripted, it falls back to an honest "nothing found" default
+        # rather than raising on an unrecognized shape.
+        self.injection_model_plan_script = list(injection_model_plans or [])
+        self.injection_model_decision_script = list(injection_model_decisions or [])
         self.plan_calls = 0
         self.decision_calls = 0
         self.seen_users: list[str] = []
@@ -66,6 +73,16 @@ class ScriptedInjectionLLM:
             if self.decision_script:
                 return self.decision_script.pop(0)
             return decision("ALLOW")
+        if "needs_local_classification" in props:
+            if self.injection_model_plan_script:
+                return self.injection_model_plan_script.pop(0)
+            return {"needs_local_classification": False, "tools": [],
+                    "more_evidence_needed": False, "rationale": "default stub — no script left"}
+        if "local_injection_verdict" in props:
+            if self.injection_model_decision_script:
+                return self.injection_model_decision_script.pop(0)
+            return {"local_injection_verdict": "ALLOW", "confidence": 1.0,
+                    "rationale": "default stub — no script left", "findings": []}
         raise AssertionError(f"unexpected schema shape: {sorted(props)}")
 
 

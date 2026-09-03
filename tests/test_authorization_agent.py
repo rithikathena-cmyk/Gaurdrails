@@ -162,7 +162,7 @@ def test_a_prompt_asking_the_agent_to_ignore_rbac(engine):
 
 
 def test_unauthorized_escalation_attempt_via_capability_request(engine):
-    caps = AuthorizationCapabilities(engine.pii_rail, engine.vault)
+    caps = AuthorizationCapabilities(engine.entity_rail, engine.vault)
     with pytest.raises(CapabilityDenied):
         caps.request("grant_permission")
     with pytest.raises(CapabilityDenied):

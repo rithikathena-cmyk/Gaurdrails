@@ -90,6 +90,13 @@ def arrow(label=None, length=GAP, cx=CX):
 
 
 def fanout(nid, items, w, h, gap=14, agent_tag=False):
+    """`items` entries are `(title, sub, kind)` or `(title, sub, kind, sub2)`
+    — `sub2`, when given and non-empty, renders as a third line at a fixed
+    16px step below `sub` rather than a fraction of `h`, so a taller box
+    (passed via `h`) never has to guess where the extra line lands; the
+    caller is responsible for passing an `h` tall enough for however many
+    lines the tallest item in this fanout actually has (2 lines fit in the
+    same `h=64` this diagram always used before; 3 lines need `h=80`+)."""
     global y
     total = len(items) * w + (len(items) - 1) * gap
     x0 = CX - total / 2
@@ -97,15 +104,19 @@ def fanout(nid, items, w, h, gap=14, agent_tag=False):
     out.append(f'<path class="edge" d="M{CX} {y:.0f} L{CX} {bus_y:.0f}"/>')
     out.append(f'<path class="edge" d="M{x0 + w / 2:.0f} {bus_y:.0f} L{x0 + total - w / 2:.0f} {bus_y:.0f}"/>')
     top = bus_y + 26
-    for i, (title, sub, kind) in enumerate(items):
+    for i, item in enumerate(items):
+        title, sub, kind = item[0], item[1], item[2]
+        sub2 = item[3] if len(item) > 3 else ""
         cx = x0 + i * (w + gap) + w / 2
         out.append(f'<path class="edge" d="M{cx:.0f} {bus_y:.0f} L{cx:.0f} {top - 9:.0f}" marker-end="url(#arrow)"/>')
         out.append(f'<g class="node {kind}">')
         out.append(f'  <rect x="{cx - w / 2:.0f}" y="{top:.0f}" width="{w}" height="{h}" rx="10"/>')
         if agent_tag:
             out.append(f'  <text class="agent-tag small" x="{cx + w / 2 - 10:.0f}" y="{top + 14:.0f}">AGENT</text>')
-        out.append(f'  <text class="title small" x="{cx:.0f}" y="{top + h * 0.4:.0f}">{esc(title)}</text>')
-        out.append(f'  <text class="mono small" x="{cx:.0f}" y="{top + h * 0.66:.0f}">{esc(sub)}</text>')
+        out.append(f'  <text class="title small" x="{cx:.0f}" y="{top + 26:.0f}">{esc(title)}</text>')
+        out.append(f'  <text class="mono small" x="{cx:.0f}" y="{top + 42:.0f}">{esc(sub)}</text>')
+        if sub2:
+            out.append(f'  <text class="mono small nested" x="{cx:.0f}" y="{top + 58:.0f}">{esc(sub2)}</text>')
         out.append("</g>")
     bottom = top + h
     join_y = bottom + 24
@@ -132,18 +143,19 @@ arrow("handed to the Supervisor Agent", 44)
 
 sup = node("supervisor-agent", "gate", "Plan / Route / Delegate / Decide", [
     "PLAN — one judge call: which specialist agents are relevant — agents/supervisor.py",
-    "DECIDE — one agent's own decision carries alone; more than one, a second judge call weighs them",
-], 600, 96, gate_label="SUPERVISOR AGENT", tag=("AGENTIC", "agentic"))
+    "DECIDE — one agent's own decision carries alone; more than one specialist,",
+    "a second judge call weighs them",
+], 600, 113, gate_label="SUPERVISOR AGENT", tag=("AGENTIC", "agentic"))
 arrow("delegates to whichever specialists PLAN actually named", 46)
 
 fanout("multi-agents", [
-    ("PII", "own PLAN + DECIDE", "solid"),
-    ("Security", "own PLAN + DECIDE", "solid"),
+    ("PII", "own PLAN + DECIDE", "solid", "+ nested NER agent"),
+    ("Security", "own PLAN + DECIDE", "solid", "+ nested DeBERTa agent"),
     ("Scope", "own PLAN + DECIDE", "solid"),
     ("Authorization", "own PLAN + DECIDE", "solid"),
-    ("Content Safety", "own PLAN + DECIDE", "solid"),
-    ("Grounding", "own PLAN + DECIDE", "solid"),
-], 165, 64, gap=12, agent_tag=True)
+    ("Content Safety", "own PLAN + DECIDE", "solid", "+ nested Toxic-BERT agent"),
+    ("Grounding", "own PLAN + DECIDE", "solid", "+ nested NLI agent"),
+], 180, 90, gap=12, agent_tag=True)
 arrow("PolicyEngine combines every verdict — floor can only rise, never fall", 48)
 
 node("tools", "solid", "TOOLS", [

@@ -59,11 +59,11 @@ def test_injection_detail_does_not_grow_with_disclosure():
 # The ladder
 # ═══════════════════════════════════════════════════════════════════
 def test_none_explains_nothing():
-    assert explain([rail("pii.detect", Verdict.MASK, [("US_SSN", "x")])], "none") == []
+    assert explain([rail("pii.entities", Verdict.MASK, [("US_SSN", "x")])], "none") == []
 
 
 def test_detailed_names_the_entity_types():
-    v = explain([rail("pii.detect", Verdict.MASK,
+    v = explain([rail("pii.entities", Verdict.MASK,
                       [("US_SSN", "x"), ("CREDIT_CARD", "y")])], "detailed")[0]
     assert "Social Security number" in v.detail
     assert "payment card number" in v.detail
@@ -71,20 +71,20 @@ def test_detailed_names_the_entity_types():
 
 
 def test_category_counts_without_naming_specifics():
-    v = explain([rail("pii.detect", Verdict.MASK,
+    v = explain([rail("pii.entities", Verdict.MASK,
                       [("US_SSN", "x"), ("CREDIT_CARD", "y")])], "category")[0]
     assert "2 sensitive value" in v.detail
 
 
 def test_minimal_says_almost_nothing():
-    v = explain([rail("pii.detect", Verdict.MASK, [("US_SSN", "x")])], "minimal")[0]
+    v = explain([rail("pii.entities", Verdict.MASK, [("US_SSN", "x")])], "minimal")[0]
     assert "Social Security" not in v.detail
     assert v.items == []
 
 
 def test_raw_matched_value_is_never_disclosed():
     """Echoing the value back would defeat the point of masking it."""
-    r = rail("pii.detect", Verdict.MASK, [("US_SSN", "796-33-9021")])
+    r = rail("pii.entities", Verdict.MASK, [("US_SSN", "796-33-9021")])
     for level in LEVELS:
         for v in explain([r], level):
             assert "796-33-9021" not in v.detail
@@ -95,13 +95,13 @@ def test_raw_matched_value_is_never_disclosed():
 # Message quality
 # ═══════════════════════════════════════════════════════════════════
 def test_masking_reads_as_informational_not_as_a_telling_off():
-    v = explain([rail("pii.detect", Verdict.MASK, [("US_SSN", "x")])], "detailed")[0]
+    v = explain([rail("pii.entities", Verdict.MASK, [("US_SSN", "x")])], "detailed")[0]
     assert v.action_required is False          # nothing for the user to fix
     assert "don't need to resend" in v.detail
 
 
 def test_pii_block_asks_the_user_to_act():
-    v = explain([rail("pii.detect", Verdict.BLOCK, [("US_SSN", "x")])], "detailed")[0]
+    v = explain([rail("pii.entities", Verdict.BLOCK, [("US_SSN", "x")])], "detailed")[0]
     assert v.action_required is True
 
 
@@ -126,13 +126,13 @@ def test_self_harm_support_shows_at_every_disclosure_level():
 
 
 def test_passing_rails_produce_nothing():
-    assert explain([rail("pii.detect", Verdict.PASS), rail("words.lexicon", Verdict.PASS)],
+    assert explain([rail("pii.entities", Verdict.PASS), rail("words.lexicon", Verdict.PASS)],
                    "detailed") == []
 
 
 def test_most_restrictive_violation_is_listed_first():
     out = explain([
-        rail("pii.detect", Verdict.MASK, [("US_SSN", "x")]),
+        rail("pii.entities", Verdict.MASK, [("US_SSN", "x")]),
         rail("words.lexicon", Verdict.BLOCK, [("blocked_term", "widget")]),
     ], "detailed")
     assert out[0].verdict == "block"
@@ -164,8 +164,11 @@ def test_delivered_reply_still_reports_masking():
     # with no relevant chunk the turn no longer reaches generation at all
     # (see the retrieval-relevance gate in `engine.py`) — this test is about
     # violation reporting on a delivered reply, so it needs a real hit first.
-    e = engine_with(StubClaude(reply="ok"), corpus=_corpus(),
-                    **{"policy.disclosure": "detailed"})
+    # US_SSN is judge-only now — no deterministic layer exists — so the
+    # stub is scripted to report it the same way a real judge call would.
+    e = engine_with(StubClaude(reply="ok", entities=[
+        {"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.95},
+    ]), corpus=_corpus(), **{"policy.disclosure": "detailed"})
     res = e.converse(f"{SSN}. {Q}")
     assert res.blocked is False
     families = {v["family"] for v in res.violations}

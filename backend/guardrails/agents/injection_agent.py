@@ -38,6 +38,7 @@ from ..llm import LLMError
 from ..prompts import judge_prompt
 from ..types import Surface
 from .capabilities import PIICapabilities
+from .injection_model_agent import InjectionModelAgent
 from .injection_tools import INJECTION_TOOL_NAMES, ToolNotAllowed, call as call_tool
 from .policy_engine import PolicyEngine
 from .types import (
@@ -210,7 +211,7 @@ class PromptInjectionAgent:
                  timeout_s: float = 30.0) -> None:
         self.llm = llm
         self.engine = engine
-        self.capabilities = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+        self.capabilities = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
         self.policy_engine = PolicyEngine()
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
@@ -273,7 +274,8 @@ class PromptInjectionAgent:
                         "EXECUTE", f"tool call budget ({self.max_tool_calls}) exhausted",
                         trace, calls, began, request_id, plan)
 
-                round_calls, truncated = self._execute(plan.tools, text, budget_left, note)
+                round_calls, truncated = self._execute(
+                    plan.tools, text, surface, owner, budget_left, note)
                 calls.extend(round_calls)
 
                 if truncated:
@@ -338,8 +340,8 @@ class PromptInjectionAgent:
         note("PLAN", plan.rationale or f"tools={list(plan.tools)}")
         return plan
 
-    def _execute(self, tool_names: list[str], text: str, budget_left: int,
-                note: Any) -> tuple[list[ToolResult], bool]:
+    def _execute(self, tool_names: list[str], text: str, surface: Surface, owner: str,
+                budget_left: int, note: Any) -> tuple[list[ToolResult], bool]:
         results: list[ToolResult] = []
         truncated = False
 
@@ -350,6 +352,16 @@ class PromptInjectionAgent:
                 break
             if name not in INJECTION_TOOL_NAMES:
                 raise ToolNotAllowed(name)
+
+            if name == "classify_injection":
+                call_id = _call_id()
+                nested = InjectionModelAgent(self.llm, self.engine).run(
+                    text, surface=surface, owner=owner, request_id=f"{call_id}_injection_model")
+                res = _wrap_nested(nested, name, call_id)
+                results.append(res)
+                note("EXECUTE", f"{name} -> nested injection_model_agent: {nested.decision.action} "
+                                f"({len(nested.decision.findings)} finding(s))")
+                continue
 
             args = {"text": text}
             res = call_tool(name, args, self.engine, _call_id())
@@ -422,6 +434,25 @@ def _summarise(name: str, result: dict) -> str:
     if name == "get_injection_policy":
         return f"action={result.get('action')} threshold={result.get('threshold')}"
     return str(result)
+
+
+def _wrap_nested(result: AgentResult, tool_name: str, call_id: str) -> ToolResult:
+    """A nested agent's own `AgentResult`, folded into the shape `_decide()`'s
+    evidence trail already expects — see `ner_agent.py`'s identical helper
+    for the rationale; duplicated here rather than imported so each agent
+    file stays self-contained, the same convention every other piece of this
+    skeleton already follows."""
+    d = result.decision
+    return ToolResult(
+        call_id=call_id, tool=tool_name,
+        status="ok" if result.status != "failed" else "error",
+        duration_ms=result.duration_ms,
+        result={
+            "nested_agent": result.agent, "nested_status": result.status,
+            "action": d.action, "confidence": d.confidence, "rationale": d.rationale,
+            "findings": [f.model_dump() for f in d.findings],
+        },
+    )
 
 
 _call_counter = 0

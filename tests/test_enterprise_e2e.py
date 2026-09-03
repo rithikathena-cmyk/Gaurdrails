@@ -33,6 +33,8 @@ existing in the knowledge base.
 
 from __future__ import annotations
 
+import re
+
 import pytest
 import yaml
 
@@ -41,8 +43,36 @@ from backend.guardrails.config import save_overrides
 from backend.guardrails.tracing import Tracer
 from backend.guardrails.types import Surface, Verdict
 from tests.conftest import REPO
+from tests.test_parameters import StubClaude
 
 POLICY = REPO / "config" / "policy.yaml"
+
+_EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+_PHONE_RE = re.compile(r"\b\d{4}[\s-]?\d{3}[\s-]?\d{4}\b|\b\d{10}\b")
+_CLAIM_RE = re.compile(r"CLM-\d{8}")
+
+
+class _EntityFindingJudge(StubClaude):
+    """`StubClaude` with real, text-driven detection instead of one fixed
+    scripted list — this file's whole design ("no model configured, fast
+    and deterministic") depended on the regex/checksum rail that used to
+    make that true for PII specifically; `EntityRail` is judge-only now, so
+    something has to answer the entity schema, and scripting each of this
+    file's many different contact details individually would be more
+    maintenance than it is worth. Everything else this engine's other rails
+    might ask for keeps `StubClaude`'s own safe defaults untouched."""
+
+    def judge(self, system, user, schema, *, max_tokens=2048, label=""):
+        props = set(schema.get("properties", {}))
+        if "entities" in props:
+            found = [{"text": m.group(0), "kind": "EMAIL_ADDRESS", "confidence": 0.95}
+                    for m in _EMAIL_RE.finditer(user)]
+            found += [{"text": m.group(0), "kind": "PHONE_NUMBER", "confidence": 0.95}
+                     for m in _PHONE_RE.finditer(user)]
+            found += [{"text": m.group(0), "kind": "OTHER_PII", "confidence": 0.95}
+                     for m in _CLAIM_RE.finditer(user)]
+            return {"entities": found}
+        return super().judge(system, user, schema, max_tokens=max_tokens, label=label)
 
 # Read once, from the file, before any test writes an override. `load()` returns
 # the policy with overrides applied, so asking it for a baseline after a test has
@@ -65,7 +95,7 @@ HELPLINE = "1800 425 1969"
 @pytest.fixture
 def engine(tmp_path):
     """A fresh engine on whatever the config currently says — `state.reload()`."""
-    return Engine(load(POLICY), None, AuditLog(tmp_path / "audit.log"), Corpus(seed=True))
+    return Engine(load(POLICY), _EntityFindingJudge(), AuditLog(tmp_path / "audit.log"), Corpus(seed=True))
 
 
 @pytest.fixture
@@ -113,7 +143,7 @@ LOOKALIKE_CONTACTS = [
 @pytest.mark.parametrize("address", LOOKALIKE_CONTACTS)
 def test_a_lookalike_domain_is_not_treated_as_a_published_contact(engine, address):
     r = engine.evaluate(f"write to {address}", Surface.RETRIEVAL, Tracer(), "s")
-    pii = rail(r, "pii.detect")
+    pii = rail(r, "pii.entities")
     assert pii.meta["allowlisted"] == 0, f"wrongly exempted: {pii.meta['allowlisted_values']}"
     assert address not in r.text
     assert r.verdict is Verdict.MASK
@@ -129,7 +159,7 @@ def test_a_real_departmental_address_is_still_exempt(engine, address):
     """Anchoring the pattern must not cost the desk the addresses it exists to give out."""
     r = engine.evaluate(f"write to {address}", Surface.RETRIEVAL, Tracer(), "s")
     assert address in r.text
-    assert rail(r, "pii.detect").meta["allowlisted"] == 1
+    assert rail(r, "pii.entities").meta["allowlisted"] == 1
 
 def test_a_published_address_at_the_end_of_a_sentence_is_still_exempt(engine):
     """A full stop is not another domain label.
@@ -145,7 +175,7 @@ def test_a_published_address_at_the_end_of_a_sentence_is_still_exempt(engine):
         Surface.RETRIEVAL, Tracer(), "s")
     assert OFFICIAL_EMAIL in r.text
     assert "housing@municipal.gov.in" in r.text
-    assert rail(r, "pii.detect").meta["allowlisted"] == 2
+    assert rail(r, "pii.entities").meta["allowlisted"] == 2
 
 
 def test_a_citizens_own_contact_is_still_masked(engine):
@@ -168,7 +198,7 @@ def test_an_exempt_contact_is_still_detected_and_recorded(engine):
     """An allowlist that hid the match would be indistinguishable from a
     recognizer that failed, and would leave nothing in the audit entry."""
     r = engine.evaluate(f"write to {OFFICIAL_EMAIL}", Surface.RETRIEVAL, Tracer(), "s")
-    pii = rail(r, "pii.detect")
+    pii = rail(r, "pii.entities")
     assert pii.meta["allowlisted"] == 1
     assert OFFICIAL_EMAIL in pii.meta["allowlisted_values"]
     assert any(d.value == OFFICIAL_EMAIL for d in pii.detections), \
@@ -178,7 +208,7 @@ def test_an_exempt_contact_is_still_detected_and_recorded(engine):
 def test_the_allowlist_is_configuration_not_code(restore):
     """Emptying it on the control surface must mask the departmental address."""
     save_overrides(load(POLICY), {"pii.allowlist": []}, None)
-    engine = Engine(load(POLICY), None, AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
+    engine = Engine(load(POLICY), _EntityFindingJudge(), AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
     r = engine.evaluate(f"write to {OFFICIAL_EMAIL}", Surface.RETRIEVAL, Tracer(), "s")
     assert OFFICIAL_EMAIL not in r.text
     assert r.verdict is Verdict.MASK
@@ -191,7 +221,7 @@ def test_the_allowlist_is_configuration_not_code(restore):
 ])
 def test_the_mask_strategy_changes_the_output_shape(strategy, marker, restore):
     save_overrides(load(POLICY), {"pii.mask_strategy": strategy}, None)
-    engine = Engine(load(POLICY), None, AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
+    engine = Engine(load(POLICY), _EntityFindingJudge(), AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
     r = engine.evaluate(f"my email is {CITIZEN_EMAIL}", Surface.USER_PROMPT, Tracer(), "s")
     assert marker in r.text
     assert CITIZEN_EMAIL not in r.text
@@ -208,7 +238,7 @@ def test_the_action_changes_the_verdict_and_whether_text_is_rewritten(
     """`flag` and `pass` record the detection without rewriting — that is the
     difference between an audit trail and a redaction, and it is one setting."""
     save_overrides(load(POLICY), {"pii.action.user_prompt": action}, None)
-    engine = Engine(load(POLICY), None, AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
+    engine = Engine(load(POLICY), _EntityFindingJudge(), AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
     r = engine.evaluate(f"my email is {CITIZEN_EMAIL}", Surface.USER_PROMPT, Tracer(), "s")
     assert r.verdict is verdict
     assert (CITIZEN_EMAIL not in r.text) is rewrites
@@ -217,11 +247,11 @@ def test_the_action_changes_the_verdict_and_whether_text_is_rewritten(
 def test_a_threshold_change_moves_the_line_in_the_trace(restore):
     """The trace reports the threshold it judged against, so this is the cheapest
     honest proof that the engine read the new value rather than a cached one."""
-    engine = Engine(load(POLICY), None, AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
-    before = rail(engine.evaluate("hello", Surface.USER_PROMPT, Tracer(), "s"), "pii.detect")
+    engine = Engine(load(POLICY), _EntityFindingJudge(), AuditLog(REPO / ".audit-e2e.log"), Corpus(seed=True))
+    before = rail(engine.evaluate("hello", Surface.USER_PROMPT, Tracer(), "s"), "pii.entities")
 
     save_overrides(load(POLICY), {"content.insults.threshold": 0.10}, None)
-    after_engine = Engine(load(POLICY), None, AuditLog(REPO / ".audit-e2e.log"),
+    after_engine = Engine(load(POLICY), _EntityFindingJudge(), AuditLog(REPO / ".audit-e2e.log"),
                           Corpus(seed=True))
     assert after_engine.policy.get("content.insults.threshold") == 0.10
     assert before is not None  # the rail ran at all
@@ -238,7 +268,7 @@ def test_the_baseline_is_intact_after_every_test_above():
     assert policy.get("pii.mask_strategy") == BASELINE["pii.mask_strategy"]
     assert policy.get("pii.action.user_prompt") == BASELINE["pii.action.user_prompt"]
     assert list(policy.get("pii.allowlist")) == BASELINE["pii.allowlist"]
-    assert "EMAIL_ADDRESS" in policy.get("pii.entities")
+    assert "EMAIL_ADDRESS" in policy.get("pii.entity_kinds")
 
 
 # ── 4 · the full path, with a model ────────────────────────────────
@@ -247,7 +277,7 @@ def test_a_retrieved_chunk_with_a_citizens_details_is_masked_before_the_model(tm
     protects what comes back. This asserts the second one, which is the layer
     that catches anything indexed before a policy tightened."""
     corpus = Corpus(seed=True)
-    engine = Engine(load(POLICY), None, AuditLog(tmp_path / "a.log"), corpus)
+    engine = Engine(load(POLICY), _EntityFindingJudge(), AuditLog(tmp_path / "a.log"), corpus)
     chunk = f"Case CLM-40028811 was filed by Meera at {CITIZEN_EMAIL}, mobile {CITIZEN_MOBILE}."
     r = engine.evaluate(chunk, Surface.RETRIEVAL, Tracer(), "s")
     assert CITIZEN_EMAIL not in r.text

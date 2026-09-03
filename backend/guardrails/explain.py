@@ -41,6 +41,9 @@ ENTITY_LABELS = {
     "IBAN": "bank account number",
     "IP_ADDRESS": "IP address",
     "DATE_OF_BIRTH": "date of birth",
+    "VEHICLE_PLATE": "vehicle registration number",
+    "PASSPORT_NUMBER": "passport number",
+    "NATIONAL_ID": "national ID number",
 }
 
 CATEGORY_LABELS = {
@@ -346,7 +349,7 @@ def _scope(r: RailResult, level: int) -> Violation | None:
 
 
 _BUILDERS = {
-    "pii.detect": _pii,
+    "pii.entities": _pii,
     "words.lexicon": _words,
     "content.safety": _content,
     "prompt_attack": _injection,

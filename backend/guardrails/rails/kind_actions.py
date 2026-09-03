@@ -34,7 +34,7 @@ STRATEGIES = {"redact", "replace", "hash", "partial", "vault-token"}
 _SPLIT = re.compile(r"\s*=>\s*")
 
 #: Everything that changes what a chunk's *masked text* should look like
-#: today — not just what `pii.entities`/`pii.detect` would *find*.
+#: today — not just what `EntityRail`, the only detector left, would *find*.
 #: `pii.kind_actions` belongs here even though it never changes a
 #: classification: a chunk masked while `GOVERNMENT => pass` was in effect is
 #: no longer a correct rendering of the current policy the moment an admin
@@ -48,12 +48,11 @@ _SPLIT = re.compile(r"\s*=>\s*")
 #: next time it is actually re-ingested. `pii.allowlist` is the one exception
 #: genuinely left out — an allowlisted value is still cleartext in the chunk
 #: either way, so a change there only ever needs the same cheap deterministic
-#: re-check `pii.detect` and `EntityRail`'s own `_allowed_spans` already do
-#: on every call, classification or not.
+#: re-check `EntityRail`'s own `_allowed_spans` already does on every call,
+#: classification or not.
 _CLASSIFICATION_KEYS = (
     "pii.entity_kinds", "pii.entity_engine", "pii.entity_confidence",
-    "pii.entities", "pii.confidence_threshold", "pii.custom_regex",
-    "pii.kind_actions",
+    "pii.custom_patterns", "pii.kind_actions",
     # A masked span's *rendering* is baked into the chunk too — a document
     # ingested under vault-token no longer matches today's policy the moment
     # an admin flips `pii.mask_strategy` (or a per-kind override) to redact,

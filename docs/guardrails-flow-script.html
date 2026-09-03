@@ -1,0 +1,380 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>GuardRails — The Pipeline, At a Glance</title>
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<style>
+:root {
+  --bg:          #FAF9F5;
+  --surface:     #FFFFFF;
+  --surface-2:   #F5F3ED;
+  --border:      #E4E1D7;
+  --border-2:    #D3CFC2;
+  --ink:         #1A1A18;
+  --ink-2:       #57564F;
+  --ink-3:       #8A887E;
+
+  --accent:      #C15F3C;
+  --accent-ink:  #A2482A;
+  --accent-soft: #F8EBE4;
+
+  --pass:        #3F7D58;  --pass-soft:  #E7F0EA;
+  --flag:        #8A6A18;  --flag-soft:  #F6EEDA;
+  --mask:        #2F6C78;  --mask-soft:  #E2EEF1;
+  --block:       #A63A29;  --block-soft: #F9E7E3;
+
+  --sans:  -apple-system, BlinkMacSystemFont, "Segoe UI", ui-sans-serif, system-ui, sans-serif;
+  --serif: ui-serif, "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --mono:  ui-monospace, "Cascadia Code", "SF Mono", Menlo, Consolas, monospace;
+  --r: 10px; --r-lg: 16px;
+  color-scheme: light;
+}
+* { box-sizing: border-box; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--sans);
+       font-size: 15px; line-height: 1.6; -webkit-font-smoothing: antialiased; }
+.wrap { max-width: 1180px; margin: 0 auto; padding: 30px 26px 60px; }
+
+header.hero { padding: 4px 0 22px; border-bottom: 1px solid var(--border); margin-bottom: 22px; }
+.eyebrow { font-family: var(--mono); font-size: 11.5px; letter-spacing: .09em; text-transform: uppercase;
+           color: var(--accent-ink); margin-bottom: 10px; }
+h1 { font-family: var(--serif); font-size: clamp(24px, 4vw, 32px); font-weight: 600;
+     margin: 0 0 8px; letter-spacing: -.01em; line-height: 1.15; }
+header.hero p { margin: 0; max-width: 76ch; font-size: 14.5px; color: var(--ink-2); }
+
+h2 { font-family: var(--serif); font-size: 20px; font-weight: 600; margin: 34px 0 4px; color: var(--ink); }
+.section-note { margin: 0 0 12px; font-size: 13.5px; color: var(--ink-2); max-width: 80ch; }
+code { font-family: var(--mono); font-size: .87em; background: var(--surface-2);
+       padding: 1px 5px; border-radius: 4px; color: var(--accent-ink); }
+
+.sheet { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+         padding: 14px 16px 8px; overflow-x: auto; }
+svg.flow { width: 100%; height: auto; min-width: 560px; display: block; margin: 0 auto; }
+.flow .node rect { fill: var(--surface-2); stroke: var(--border-2); stroke-width: 1.4; }
+.flow .terminal rect { fill: var(--surface); stroke: var(--border-2); }
+.flow .model rect { fill: transparent; stroke: var(--border-2); stroke-dasharray: 6 5; }
+.flow .gate rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 2; }
+.flow text { font-family: var(--sans); fill: var(--ink); text-anchor: middle; }
+.flow .title { font-size: 15.5px; font-weight: 600; }
+.flow .title.small { font-size: 13px; }
+.flow .title.left { text-anchor: start; }
+.flow .mono { font-family: var(--mono); font-size: 11.5px; fill: var(--ink-2); }
+.flow .mono.small { font-size: 10.5px; }
+.flow .mono.small.nested { font-style: italic; fill: var(--accent-ink); font-size: 9.5px; }
+.flow .mono.left { text-anchor: start; }
+.flow .gate-label { font-family: var(--mono); font-size: 11px; fill: var(--accent-ink);
+                     letter-spacing: .08em; text-anchor: start; }
+.flow .edge-label { font-family: var(--mono); font-size: 11px; fill: var(--ink-3); text-anchor: start; }
+.flow .deny-label { font-family: var(--mono); font-size: 11px; fill: var(--block); text-anchor: start; }
+.flow .agent-tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .09em;
+                    fill: var(--accent-ink); text-anchor: end; }
+.flow .agent-tag.small { font-size: 9px; }
+.flow .gate-tag { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .09em;
+                   text-anchor: end; }
+.flow .gate-tag.agentic { fill: var(--accent-ink); }
+.flow .edge { stroke: var(--border-2); stroke-width: 1.4; fill: none; }
+.flow .deny { stroke: var(--block); stroke-width: 1.4; fill: none; stroke-dasharray: 6 5; }
+.flow .arrowhead { fill: var(--border-2); }
+.flow .arrowhead.deny-head { fill: var(--block); }
+
+.legend { display: flex; flex-wrap: wrap; gap: 18px; align-items: center; justify-content: center;
+          background: var(--surface-2); border: 1px solid var(--border); border-radius: var(--r-lg);
+          padding: 11px 16px; margin-top: 14px; }
+.legend span { display: inline-flex; align-items: center; gap: 7px; font-family: var(--mono);
+               font-size: 11px; color: var(--ink-2); }
+.legend i { width: 24px; height: 0; border-top-width: 2px; border-top-style: solid; display: block; }
+.legend i.solid { border-color: var(--border-2); }
+.legend i.dashed { border-color: var(--border-2); border-top-style: dashed; }
+.legend i.clay { border-color: var(--accent); }
+.legend i.red { border-color: var(--block); border-top-style: dashed; }
+.legend b { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: .09em;
+            font-style: normal; color: var(--accent-ink); }
+.legend b.nested-mark { font-style: italic; }
+
+.box { border: 1px solid var(--border); border-left: 3px solid var(--accent);
+       background: var(--accent-soft); border-radius: var(--r); padding: 12px 16px; margin: 14px 0; font-size: 13.5px; }
+.box b { color: var(--accent-ink); }
+
+table.today { width: 100%; border-collapse: collapse; margin: 8px 0 4px; font-size: 13px;
+              background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+              overflow: hidden; }
+table.today th, table.today td { padding: 9px 14px; text-align: left; border-top: 1px solid var(--border); }
+table.today thead th { border-top: none; font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+                        color: var(--ink-3); font-weight: 600; background: var(--surface-2); }
+.route { font-family: var(--mono); font-size: 12.5px; }
+.on { display: inline-block; font-family: var(--mono); font-size: 10.5px; font-weight: 600;
+      color: var(--pass); background: var(--pass-soft); border-radius: 999px; padding: 2px 9px; }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 12px; margin: 10px 0 4px; }
+.card { background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-lg);
+        padding: 14px 16px; }
+.card.spec { border-left: 3px solid var(--accent); }
+.card.sup { border-left: 3px solid var(--mask); }
+.card b { display: block; font-size: 14.5px; font-weight: 600; margin-bottom: 4px; }
+.card b .kind { font-family: var(--mono); font-size: 9.5px; font-weight: 600; letter-spacing: .07em;
+                text-transform: uppercase; color: var(--ink-3); margin-left: 8px; }
+.card p { margin: 0; font-size: 13px; color: var(--ink-2); line-height: 1.5; }
+
+footer { margin-top: 34px; padding-top: 14px; border-top: 1px solid var(--border);
+         color: var(--ink-3); font-size: 11.5px; font-family: var(--mono); }
+
+@media print {
+  body { background: #FAF9F5 !important; }
+  .sheet, .card, table.today, .legend, .box { break-inside: avoid; }
+  h2 { break-after: avoid; }
+}
+@page { size: A4 portrait; margin: 14mm 13mm; }
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="eyebrow">GuardRails — how a request moves through the stack</div>
+    <h1>The Guardrail Pipeline, At a Glance</h1>
+    <p>One diagram, top to bottom: a question comes in, a Supervisor Agent decides which
+    specialist checks it actually needs, the model answers, and a second Output Supervisor
+    Agent checks the reply before it ever reaches the person who asked. This is the same
+    diagram the product's own home page shows — not a simplified stand-in for it.</p>
+  </header>
+
+  <div class="sheet">
+<svg viewBox="0 0 1400 1362" class="flow" role="img" aria-label="The guardrail pipeline: Supervisor Agent, multi-agents, tools, RAG, LLM, Output Supervisor Agent">
+<defs>
+  <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="arrowhead" d="M0 0 L10 5 L0 10 Z"/>
+  </marker>
+  <marker id="arrow-deny" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+    <path class="arrowhead deny-head" d="M0 0 L10 5 L0 10 Z"/>
+  </marker>
+</defs>
+<g class="node terminal" data-node="user-in">
+  <rect x="420" y="54" width="440" height="70" rx="11"/>
+  <text class="title" x="640" y="84">Citizen or operator</text>
+  <text class="mono" x="640" y="106">asks a question — USER</text>
+</g>
+<path class="edge" d="M640 124 L640 155" marker-end="url(#arrow)"/>
+<g class="node solid" data-node="input">
+  <rect x="340" y="164" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="194">INPUT — normalize</text>
+  <text class="mono" x="640" y="216">NFKC + homoglyph fold, locked — the same first step every surface uses</text>
+</g>
+<path class="edge" d="M640 230 L640 265" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="256">handed to the Supervisor Agent</text>
+<g class="node gate" data-node="supervisor-agent">
+  <rect x="340" y="274" width="600" height="113" rx="11"/>
+  <text class="gate-tag agentic" x="924" y="292">AGENTIC</text>
+  <text class="gate-label" x="360" y="300">SUPERVISOR AGENT</text>
+  <text class="title left" x="360" y="325">Plan / Route / Delegate / Decide</text>
+  <text class="mono left" x="360" y="347">PLAN — one judge call: which specialist agents are relevant — agents/supervisor.py</text>
+  <text class="mono left" x="360" y="364">DECIDE — one agent's own decision carries alone; more than one specialist,</text>
+  <text class="mono left" x="360" y="381">a second judge call weighs them</text>
+</g>
+<path class="edge" d="M640 387 L640 424" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="414">delegates to whichever specialists PLAN actually named</text>
+<path class="edge" d="M640 433 L640 453"/>
+<path class="edge" d="M160 453 L1120 453"/>
+<path class="edge" d="M160 453 L160 470" marker-end="url(#arrow)"/>
+<g class="node solid">
+  <rect x="70" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="240" y="493">AGENT</text>
+  <text class="title small" x="160" y="505">PII</text>
+  <text class="mono small" x="160" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="160" y="537">+ nested NER agent</text>
+</g>
+<path class="edge" d="M352 453 L352 470" marker-end="url(#arrow)"/>
+<g class="node solid">
+  <rect x="262" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="432" y="493">AGENT</text>
+  <text class="title small" x="352" y="505">Security</text>
+  <text class="mono small" x="352" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="352" y="537">+ nested DeBERTa agent</text>
+</g>
+<path class="edge" d="M544 453 L544 470" marker-end="url(#arrow)"/>
+<g class="node solid">
+  <rect x="454" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="624" y="493">AGENT</text>
+  <text class="title small" x="544" y="505">Scope</text>
+  <text class="mono small" x="544" y="521">own PLAN + DECIDE</text>
+</g>
+<path class="edge" d="M736 453 L736 470" marker-end="url(#arrow)"/>
+<g class="node solid">
+  <rect x="646" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="816" y="493">AGENT</text>
+  <text class="title small" x="736" y="505">Authorization</text>
+  <text class="mono small" x="736" y="521">own PLAN + DECIDE</text>
+</g>
+<path class="edge" d="M928 453 L928 470" marker-end="url(#arrow)"/>
+<g class="node solid">
+  <rect x="838" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="1008" y="493">AGENT</text>
+  <text class="title small" x="928" y="505">Content Safety</text>
+  <text class="mono small" x="928" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="928" y="537">+ nested Toxic-BERT agent</text>
+</g>
+<path class="edge" d="M1120 453 L1120 470" marker-end="url(#arrow)"/>
+<g class="node solid">
+  <rect x="1030" y="479" width="180" height="90" rx="10"/>
+  <text class="agent-tag small" x="1200" y="493">AGENT</text>
+  <text class="title small" x="1120" y="505">Grounding</text>
+  <text class="mono small" x="1120" y="521">own PLAN + DECIDE</text>
+  <text class="mono small nested" x="1120" y="537">+ nested NLI agent</text>
+</g>
+<path class="edge" d="M160 569 L160 593"/>
+<path class="edge" d="M1120 569 L1120 593"/>
+<path class="edge" d="M352 569 L352 593"/>
+<path class="edge" d="M544 569 L544 593"/>
+<path class="edge" d="M736 569 L736 593"/>
+<path class="edge" d="M928 569 L928 593"/>
+<path class="edge" d="M160 593 L1120 593"/>
+<path class="edge" d="M640 593 L640 632" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="621">PolicyEngine combines every verdict — floor can only rise, never fall</text>
+<g class="node solid" data-node="tools">
+  <rect x="340" y="641" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="671">TOOLS</text>
+  <text class="mono" x="640" y="693">agent/tools.py — search_documents · lookup_fee · case/grievance</text>
+</g>
+<path class="edge" d="M640 707 L640 738" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="731">search_documents is the retrieval tool</text>
+<g class="node solid" data-node="rag">
+  <rect x="340" y="747" width="600" height="66" rx="11"/>
+  <text class="title" x="640" y="777">RAG</text>
+  <text class="mono" x="640" y="799">BM25 lexical search, optional local rerank — knowledge/ingest.py</text>
+</g>
+<path class="edge" d="M640 813 L640 848" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="839">candidate chunks join this turn's context</text>
+<g class="node model" data-node="llm">
+  <rect x="340" y="857" width="600" height="80" rx="11"/>
+  <text class="gate-label" x="360" y="883">LLM</text>
+  <text class="title left" x="360" y="908">Generate Response</text>
+  <text class="mono left" x="360" y="930">the next Agent step reads tool results + RAG chunks, drafts the reply</text>
+</g>
+<path class="edge" d="M640 937 L640 974" marker-end="url(#arrow)"/>
+<text class="edge-label" x="654" y="964">the drafted reply, before it reaches anyone</text>
+<g class="node gate" data-node="output-supervisor">
+  <rect x="340" y="983" width="600" height="96" rx="11"/>
+  <text class="gate-tag agentic" x="924" y="1001">AGENTIC</text>
+  <text class="gate-label" x="360" y="1009">OUTPUT SUPERVISOR AGENT</text>
+  <text class="title left" x="360" y="1034">Plan / Check the reply</text>
+  <text class="mono left" x="360" y="1056">PII · Safety · Policy · Grounding · Citations — every claim against</text>
+  <text class="mono left" x="360" y="1073">what was actually retrieved, engine.py's evaluate() + grounding_rail</text>
+</g>
+<path class="edge" d="M640 1079 L640 1110" marker-end="url(#arrow)"/>
+<path class="edge" d="M640 1119 L640 1139"/>
+<path class="edge" d="M420 1139 L860 1139"/>
+<path class="deny" d="M420 1139 L420 1166" marker-end="url(#arrow-deny)"/>
+<path class="edge" d="M860 1139 L860 1166" marker-end="url(#arrow)"/>
+<text class="deny-label" x="420" y="1131" text-anchor="middle">REJECT</text>
+<text class="edge-label" x="860" y="1131" text-anchor="middle">ALLOW</text>
+<g class="node solid" data-node="human">
+  <rect x="240" y="1166" width="360" height="66" rx="10"/>
+  <text class="title" x="420" y="1195">HUMAN</text>
+  <text class="mono" x="420" y="1216">a person reviews — never reaches the user unmoderated</text>
+</g>
+<g class="node terminal" data-node="response">
+  <rect x="680" y="1166" width="360" height="66" rx="10"/>
+  <text class="title" x="860" y="1195">RESPONSE</text>
+  <text class="mono" x="860" y="1216">only what both supervisors let through</text>
+</g>
+<path class="edge" d="M860 1232 L860 1253 L640 1253" marker-end="url(#arrow)"/>
+<g class="node terminal" data-node="user-out">
+  <rect x="490" y="1262" width="300" height="60" rx="11"/>
+  <text class="title" x="640" y="1292">USER</text>
+  <text class="mono" x="640" y="1314">receives the response</text>
+</g>
+</svg>
+  </div>
+
+  <div class="legend">
+    <span><i class="solid"></i> solid — deterministic code</span>
+    <span><i class="dashed"></i> dashed — a one-shot model call</span>
+    <span><i class="clay"></i> clay — a guardrail gate</span>
+    <span><i class="red"></i> red — where a request can stop short</span>
+    <span><b>AGENT</b> its own PLAN + DECIDE, calling the judge itself</span>
+    <span><b>AGENTIC</b> a judge plans this gate's own checklist</span>
+    <span><b class="nested-mark">+ nested …</b> a local model, in its own PLAN+DECIDE agent</span>
+  </div>
+
+  <p class="section-note" style="margin-top:14px">Two symmetric supervisor agents, not one gate
+  at the front and a checklist at the back. The Supervisor Agent's own PLAN call decides which of
+  the six specialists even run — an unrelated question never pays for a scope or authorization
+  check it doesn't need. Each specialist is a full agent with its own nested PLAN/DECIDE loop
+  before its own detector. The Output Supervisor Agent afterward is the same shape, applied to the
+  reply instead of the request — including citations, which checks every claim against what
+  <code>search_documents</code> actually returned. Only <b>REJECT</b> ever routes to a person;
+  everything <b>ALLOW</b> reaches becomes the response. Four specialists — PII, Security, Content
+  Safety, Grounding — go one level deeper still: their one local model (Presidio, DeBERTa,
+  Toxic-BERT, an NLI model) is itself wrapped in a small nested agent with its own PLAN+DECIDE,
+  rather than called as a flat, un-reasoned function. That nested agent's own decision carries no
+  deterministic floor by default (<code>agent.nested_model_floor</code>, off by default) — the
+  parent specialist's own floor, unchanged, still governs the request either way.</p>
+
+  <!-- ============================================================ -->
+  <h2>Where this runs today</h2>
+  <p class="section-note">One shared chain — <code>GuardrailSupervisor</code> →
+  <code>Supervisor</code> → <code>PolicyEngine</code> — reachable from three doors in.</p>
+  <table class="today">
+    <thead><tr><th>Entry point</th><th>Runs the Supervisor Agent stage above?</th><th>Then walks</th></tr></thead>
+    <tbody>
+      <tr><td class="route">POST /api/pipeline/run</td><td><span class="on">always on</span></td>
+        <td>Supervisor Agent → tools/RAG → LLM → Output Supervisor Agent — this diagram, in
+        full. This is the live demo behind it.</td></tr>
+      <tr><td class="route">POST /api/chat</td><td><span class="on">on by default</span> <code>supervisor.chat_prefilter_mode</code></td>
+        <td>Supervisor Agent and the Output Supervisor Agent, then the ordinary retrieval →
+        reply pipeline — ordinary chat has no tool loop, so Tools/RAG above don't apply there.</td></tr>
+      <tr><td class="route">POST /api/agent/chat</td><td><span class="on">on by default</span> <code>agent.prefilter_mode</code></td>
+        <td>the full walk above, from inside the tool-using agent loop.</td></tr>
+    </tbody>
+  </table>
+  <div class="box"><p><b>Both prefilters default ON today.</b> Every ordinary chat turn and
+  every agent turn already runs the Supervisor Agent stage before anything else — this isn't a
+  demo-only path reserved for <code>/api/pipeline/run</code>, it's the current default
+  behaviour of the whole app.</p></div>
+
+  <!-- ============================================================ -->
+  <h2>Meet the agents</h2>
+  <p class="section-note">Nine agents in total: one that talks to the user and can act for
+  them, six specialists that each judge one kind of risk, and two orchestrators that decide
+  which specialists to run and reconcile what they find.</p>
+
+  <div class="cards">
+    <div class="card sup"><b>Task Agent <span class="kind">chat + tools</span></b>
+      <p>Answers the citizen's question and can act for them — check a claim, file a
+      grievance. Every write it does pauses for a person to approve first.</p></div>
+    <div class="card sup"><b>Supervisor Agent <span class="kind">front gate</span></b>
+      <p>Plans which of the six specialists below are worth running, delegates to them, then
+      weighs what they found into one verdict.</p></div>
+    <div class="card"><b>PII <span class="kind">specialist</span></b>
+      <p>Finds personal identifiers — names, emails, SSNs, cards — and decides whether to
+      mask, redact, or let them through. Its local model (Presidio) runs inside a nested
+      agent with its own PLAN+DECIDE, not a flat lookup.</p></div>
+    <div class="card"><b>Security <span class="kind">specialist</span></b>
+      <p>Watches for prompt injection — attempts to override or extract the assistant's own
+      instructions, direct or hidden in retrieved text. Its local model (DeBERTa) runs
+      inside a nested agent the same way.</p></div>
+    <div class="card"><b>Scope <span class="kind">specialist</span></b>
+      <p>Checks whether the request is even something this assistant is meant to handle.</p></div>
+    <div class="card"><b>Authorization <span class="kind">specialist</span></b>
+      <p>Checks whether the request reaches for something that may belong to someone else, or
+      asks to bypass access rules outright.</p></div>
+    <div class="card"><b>Content Safety <span class="kind">specialist</span></b>
+      <p>Screens for hate, violence, self-harm intent, and out-of-place content — while
+      treating ordinary distress or frustration as normal traffic, not a signal. Its local
+      model (Toxic-BERT) runs inside a nested agent the same way.</p></div>
+    <div class="card"><b>Grounding <span class="kind">specialist</span></b>
+      <p>Checks the drafted reply's own claims against what was actually retrieved — an
+      unsupported claim is not delivered as fact. Its local model (an NLI entailment model)
+      runs inside a nested agent the same way.</p></div>
+    <div class="card sup"><b>Output Supervisor Agent <span class="kind">back gate</span></b>
+      <p>The same plan-then-check pass as the front gate, applied to the reply instead of the
+      request: PII, safety, policy, grounding, and citations — before the user ever sees it.</p></div>
+  </div>
+
+  <footer>
+    GuardRails — one-page pipeline reference · diagram matches the live product's own home
+    page, including the four nested local-model agents · generated from the code on disk,
+    2026-09-03 · see <code>guardrails-demo-script.html</code> for a full presenter walkthrough.
+  </footer>
+</div>
+</body>
+</html>

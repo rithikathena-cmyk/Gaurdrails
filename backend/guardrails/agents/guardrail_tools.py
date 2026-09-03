@@ -28,7 +28,7 @@ from ..engine import PII_ACTION_KEY, Engine
 from ..types import RailResult, Surface, Verdict
 from . import content_tools, injection_tools, scope_tools
 from .tools import ToolNotAllowed
-from .tools import _detect_pii_presidio, _detect_pii_regex
+from .tools import _detect_pii_entities, _detect_pii_presidio
 from .types import ToolResult
 
 
@@ -44,13 +44,15 @@ class GuardrailTool:
 # over, never a raw matched value and never a decision.
 # ---------------------------------------------------------------------------
 def _detect_pii(args: dict, engine: Engine) -> dict:
-    """Checksum-gated regex (`PIIRail._detect`) + local NER (Presidio),
-    merged — the same two deterministic layers `PIIAgent` calls separately,
-    combined here into one flat result."""
+    """Local NER (Presidio) + the free-form judge, merged — the same two
+    layers `PIIAgent` calls separately, combined here into one flat result.
+    No deterministic regex/checksum layer exists any more; every kind,
+    including what used to have a fixed shape (an email, a phone number, a
+    national ID), is judge-only now."""
     text = str(args.get("text", ""))
-    regex = _detect_pii_regex({"text": text}, engine)
     presidio = _detect_pii_presidio({"text": text}, engine)
-    findings = regex["findings"] + presidio["findings"]
+    entities = _detect_pii_entities({"text": text}, engine)
+    findings = presidio["findings"] + entities["findings"]
     types = sorted({f["kind"] for f in findings})
     confidence = max((f["confidence"] for f in findings), default=0.0)
     return {
@@ -157,7 +159,7 @@ def _policy_pii(entity: str, surface: Surface, engine: Engine) -> dict:
     exposes to the PII agent — read here for a `surface`-aware, optionally
     entity-scoped lookup rather than a single required `kind`."""
     action = str(engine.policy.get(PII_ACTION_KEY[surface]))
-    entities = set(engine.policy.get("pii.entities") or [])
+    entities = set(engine.policy.get("pii.entity_kinds") or [])
     out: dict = {
         "tool": "get_policy", "policy": f"pii.{entity}" if entity else "pii", "valid": True,
         "surface": surface.value, "action": action,

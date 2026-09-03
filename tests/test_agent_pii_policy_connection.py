@@ -3,7 +3,7 @@ system every rail already reads — not a second policy system alongside it.
 
     PARAMETERS
         v
-    DETERMINISTIC GUARDRAILS   (PIIRail, Vault — unchanged, reused whole)
+    ENTITY DETECTION           (EntityRail, Vault — unchanged, reused whole)
         v
     AUTONOMOUS AGENT           (PLAN/DECIDE — genuine judge calls, untouched
         v                       by anything in this file)
@@ -44,10 +44,27 @@ from tests.conftest import REPO
 SSN = "796-33-9021"
 
 
+class _EntityJudge:
+    """`PIICapabilities._mask()` calls `entity_rail.evaluate()`, which is
+    judge-only for US_SSN now — with no deterministic layer left, an
+    `entity_rail.llm` of `None` means nothing can ever be found or masked,
+    not even when the PII agent's own (separate) scripted decision says
+    MASK. Every test in this file masks the same `SSN`, so one scripted
+    judge, wired as the engine's own `llm` (which only `entity_rail` here
+    ever actually calls — these tests exercise agents directly, never
+    `Engine.evaluate()`/`converse()`), covers all of them."""
+
+    def judge(self, system, user, schema, **kwargs):
+        props = set(schema.get("properties", {}))
+        if "entities" in props:
+            return {"entities": [{"text": SSN, "kind": "US_SSN", "confidence": 0.95}]}
+        raise AssertionError(f"unexpected schema shape: {sorted(props)}")
+
+
 @pytest.fixture
 def engine(tmp_path):
     policy = load(REPO / "config" / "policy.yaml")
-    return Engine(policy, None, AuditLog(tmp_path / "audit.log"))
+    return Engine(policy, _EntityJudge(), AuditLog(tmp_path / "audit.log"))
 
 
 class ScriptedPIILLM:
@@ -85,7 +102,7 @@ def decision(action, confidence=0.95, rationale="stub decision", findings=None):
 
 def run_pii_mask(engine, *, surface=Surface.AGENT_DATA, owner="citizen", text=None):
     text = text or f"On file: SSN {SSN}."
-    llm = ScriptedPIILLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedPIILLM(plans=[full_plan(["detect_pii_entities"])],
                         decisions=[decision("MASK")])
     return PIIAgent(llm, engine).run(text, surface=surface, owner=owner)
 
@@ -149,7 +166,7 @@ def test_preserve_masked_tokens_false_destroys_reversibility(engine):
 def test_unauthorized_reader_never_receives_the_original_value(engine):
     """(6)"""
     result = run_pii_mask(engine, owner="citizen-A")
-    caps = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
     resolved, revealed = caps.resolve_for_reader(result.outcome.text_out, "citizen-B")
     assert revealed == 0
     assert SSN not in resolved
@@ -159,7 +176,7 @@ def test_unauthorized_reader_never_receives_the_original_value(engine):
 def test_authorized_reader_receives_the_original_value(engine):
     """(7)"""
     result = run_pii_mask(engine, owner="citizen-A")
-    caps = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
     resolved, revealed = caps.resolve_for_reader(result.outcome.text_out, "citizen-A")
     assert revealed == 1
     assert SSN in resolved
@@ -173,7 +190,7 @@ def test_vault_resolution_never_blocks_resolution_for_everyone(engine):
     still calls it directly (the ordinary chat egress) is unaffected."""
     engine.policy.values["pii.vault.resolution"] = "never"
     result = run_pii_mask(engine, owner="citizen-A")
-    caps = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+    caps = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
     resolved, revealed = caps.resolve_for_reader(result.outcome.text_out, "citizen-A")
     assert revealed == 0
     assert SSN not in resolved
@@ -197,7 +214,7 @@ def test_agent_tool_action_reaches_the_autonomous_agent_too(engine, action, expe
     the deterministic floor alone — proving the parameter, not the model,
     decides the final action."""
     engine.policy.values["pii.action.agent_tool"] = action
-    llm = ScriptedPIILLM(plans=[full_plan(["detect_pii_regex"])],
+    llm = ScriptedPIILLM(plans=[full_plan(["detect_pii_entities"])],
                         decisions=[decision("ALLOW", rationale="misjudged as harmless")])
     result = PIIAgent(llm, engine).run(
         f"tool argument carrying SSN {SSN}", surface=Surface.AGENT_TOOL, owner="citizen")
@@ -238,7 +255,7 @@ def test_agent_recommend_allow_but_policy_floor_produces_at_least_mask(engine):
     action is MASK — never ALLOW, because more caution never needs the
     agent's permission."""
     result = PIIAgent(
-        ScriptedPIILLM(plans=[full_plan(["detect_pii_regex"])],
+        ScriptedPIILLM(plans=[full_plan(["detect_pii_entities"])],
                       decisions=[decision("ALLOW", rationale="misjudged as not sensitive")]),
         engine,
     ).run(f"SSN on file: {SSN}", owner="citizen")
@@ -264,7 +281,7 @@ def test_block_always_remains_block_regardless_of_the_new_gates(engine):
     engine.policy.values["pii.agent.preserve_masked_tokens"] = True
     engine.policy.values["pii.vault.resolution"] = "owner_only"
     result = PIIAgent(
-        ScriptedPIILLM(plans=[full_plan(["detect_pii_regex"])],
+        ScriptedPIILLM(plans=[full_plan(["detect_pii_entities"])],
                       decisions=[decision("BLOCK")]),
         engine,
     ).run(f"SSN on file: {SSN}", owner="citizen")

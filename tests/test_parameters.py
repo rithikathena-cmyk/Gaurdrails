@@ -203,21 +203,35 @@ def test_case_sensitivity_is_honoured():
 SSN = "my ssn is 796-33-9021"
 
 
+#: US_SSN is judge-only now — no deterministic layer exists — so every test
+#: below that needs it detected scripts a judge to report it, the same
+#: substring a real judge call would report (not the whole SSN sentence).
+_SSN_ENTITY = [{"text": "796-33-9021", "kind": "US_SSN", "confidence": 0.95}]
+
+
 def test_entities_list_gates_detection():
-    on = evaluate(engine_with(**{"pii.entities": ["US_SSN"]}), SSN)
+    on = evaluate(engine_with(StubClaude(entities=_SSN_ENTITY),
+                              **{"pii.entity_kinds": ["US_SSN"]}), SSN)
     assert on.verdict is Verdict.MASK
-    off = evaluate(engine_with(**{"pii.entities": ["EMAIL_ADDRESS"]}), SSN)
+    off = evaluate(engine_with(StubClaude(entities=_SSN_ENTITY),
+                               **{"pii.entity_kinds": ["EMAIL_ADDRESS"]}), SSN)
     assert off.verdict is Verdict.PASS
 
 
 def test_confidence_threshold_gates_low_confidence_recognizers():
-    """IP_ADDRESS is 0.75 confidence — a threshold above it disables the rail."""
+    """No fixed per-kind confidence exists without Presidio's own recognizer
+    — IP_ADDRESS has none (judge-only, see presidio_ner.KIND_MAP) — so the
+    judge is scripted at 0.75, preserving the original threshold split this
+    test demonstrates."""
     text = "the server is 192.168.1.44"
-    low = evaluate(engine_with(**{"pii.entities": ["IP_ADDRESS"],
-                                  "pii.confidence_threshold": 0.5}), text)
+    entities = [{"text": "192.168.1.44", "kind": "IP_ADDRESS", "confidence": 0.75}]
+    low = evaluate(engine_with(StubClaude(entities=entities),
+                               **{"pii.entity_kinds": ["IP_ADDRESS"],
+                                  "pii.entity_confidence": 0.5}), text)
     assert low.verdict is Verdict.MASK
-    high = evaluate(engine_with(**{"pii.entities": ["IP_ADDRESS"],
-                                   "pii.confidence_threshold": 0.9}), text)
+    high = evaluate(engine_with(StubClaude(entities=entities),
+                                **{"pii.entity_kinds": ["IP_ADDRESS"],
+                                   "pii.entity_confidence": 0.9}), text)
     assert high.verdict is Verdict.PASS
 
 
@@ -227,25 +241,34 @@ def test_confidence_threshold_gates_low_confidence_recognizers():
     ("partial", "796-33-9021", "9021"),
 ])
 def test_mask_strategy_changes_the_output(strategy, expect_absent, expect_present):
-    out = evaluate(engine_with(**{"pii.mask_strategy": strategy}), SSN).text
+    out = evaluate(engine_with(StubClaude(entities=_SSN_ENTITY),
+                               **{"pii.mask_strategy": strategy}), SSN).text
     assert expect_absent not in out
     assert expect_present in out
 
 
 def test_partial_reveal_controls_how_much_shows():
-    four = evaluate(engine_with(**{"pii.mask_strategy": "partial",
+    four = evaluate(engine_with(StubClaude(entities=_SSN_ENTITY),
+                                **{"pii.mask_strategy": "partial",
                                    "pii.partial_reveal": 4}), SSN).text
-    zero = evaluate(engine_with(**{"pii.mask_strategy": "partial",
+    zero = evaluate(engine_with(StubClaude(entities=_SSN_ENTITY),
+                                **{"pii.mask_strategy": "partial",
                                    "pii.partial_reveal": 0}), SSN).text
     assert "9021" in four
     assert "9021" not in zero
 
 
-def test_custom_regex_is_applied():
-    plain = evaluate(engine_with(**{"pii.custom_regex": []}), "claim REF-99001122")
-    assert plain.verdict is Verdict.PASS
-    custom = evaluate(engine_with(**{"pii.custom_regex": [r"REF-\d{8}"]}), "claim REF-99001122")
-    assert custom.verdict is Verdict.MASK
+def test_custom_patterns_reach_the_judge_prompt():
+    """`pii.custom_regex` (compiled, deterministically matched) was replaced
+    by `pii.custom_patterns` — a descriptive hint folded into the judge's own
+    prompt, not a pattern this rail executes. There is no live judge to prove
+    an actual match against in this file (see `StubClaude`); what stays
+    provable deterministically is that a configured pattern really reaches
+    the prompt the judge is given."""
+    plain = engine_with(**{"pii.custom_patterns": []})
+    assert "REF-" not in plain.entity_rail.system_prompt
+    custom = engine_with(**{"pii.custom_patterns": ["a claim code, REF- followed by 8 digits"]})
+    assert "a claim code, REF- followed by 8 digits" in custom.entity_rail.system_prompt
 
 
 @pytest.mark.parametrize("action,expected", [
@@ -253,7 +276,7 @@ def test_custom_regex_is_applied():
     ("pass", Verdict.PASS),
 ])
 def test_pii_action_on_the_inbound_surface(action, expected):
-    e = engine_with(**{"pii.action.user_prompt": action})
+    e = engine_with(StubClaude(entities=_SSN_ENTITY), **{"pii.action.user_prompt": action})
     assert evaluate(e, SSN).verdict is expected
 
 
@@ -263,13 +286,15 @@ def test_pii_action_on_the_inbound_surface(action, expected):
 def test_pii_action_on_the_outbound_surface(action, expected):
     """Regression: the key was built as `pii.action.response`, which does not
     exist, so this silently used the inbound action instead."""
-    e = engine_with(**{"pii.action.llm_response": action,
+    e = engine_with(StubClaude(entities=_SSN_ENTITY),
+                    **{"pii.action.llm_response": action,
                        "pii.action.user_prompt": "pass"})
     assert evaluate(e, SSN, Surface.LLM_RESPONSE).verdict is expected
 
 
 def test_pii_action_on_retrieval_is_independent():
-    e = engine_with(**{"pii.action.retrieval": "block", "pii.action.user_prompt": "mask"})
+    e = engine_with(StubClaude(entities=_SSN_ENTITY),
+                    **{"pii.action.retrieval": "block", "pii.action.user_prompt": "mask"})
     assert evaluate(e, SSN, Surface.RETRIEVAL).verdict is Verdict.BLOCK
     assert evaluate(e, SSN, Surface.USER_PROMPT).verdict is Verdict.MASK
 
@@ -514,8 +539,12 @@ def test_latency_budget_fails_closed_even_when_fail_mode_is_open():
     ("any mask", SSN, True),
 ])
 def test_human_review_trigger(trigger, text, expected):
-    """Regression: the trigger was declared and never consulted."""
-    e = engine_with(StubClaude(), **{"policy.human_review.trigger": trigger})
+    """Regression: the trigger was declared and never consulted.
+
+    `_SSN_ENTITY` is scripted unconditionally — harmless for the INJECTION
+    cases above, since the judge's claimed span is verified against the
+    actual text (`_spans_of`) and silently dropped when it is not there."""
+    e = engine_with(StubClaude(entities=_SSN_ENTITY), **{"policy.human_review.trigger": trigger})
     assert e.converse(text).human_review is expected
 
 

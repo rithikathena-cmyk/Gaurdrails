@@ -200,7 +200,7 @@ class GuardrailSupervisor:
                  timeout_s: float = 30.0) -> None:
         self.llm = llm
         self.engine = engine
-        self.capabilities = PIICapabilities(engine.pii_rail, engine.vault, engine.policy)
+        self.capabilities = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
         self.policy_engine = PolicyEngine()
         self.max_iterations = max_iterations
         self.max_tool_calls = max_tool_calls
