@@ -86,11 +86,6 @@ def _get_resource_classification(args: dict, ctx: AuthorizationContext) -> dict:
            "classification": _RESOURCE_CLASSIFICATION.get(kind, "unclassified")}
 
 
-def _check_permission(args: dict, ctx: AuthorizationContext) -> dict:
-    permission = str(args.get("permission", "")).strip()
-    return {"permission": permission, "held": permission in ctx.permissions}
-
-
 def _check_ownership(args: dict, ctx: AuthorizationContext) -> dict:
     return {"principal": ctx.principal, "resource_owner": ctx.resource_owner,
            "is_owner": ctx.is_owner, "entitled": ctx.entitled}
@@ -100,9 +95,18 @@ AUTHORIZATION_AGENT_TOOLS: dict[str, GuardrailTool] = {
     "get_user_role": GuardrailTool("get_user_role", _get_user_role),
     "get_user_permissions": GuardrailTool("get_user_permissions", _get_user_permissions),
     "get_resource_classification": GuardrailTool("get_resource_classification", _get_resource_classification),
-    "check_permission": GuardrailTool("check_permission", _check_permission),
     "check_ownership": GuardrailTool("check_ownership", _check_ownership),
 }
+#: `check_permission` used to live here — removed, not fixed. Nothing in the
+#: PLAN -> EXECUTE flow lets the model supply a tool argument (`tools` is a
+#: bare list of names in `PLAN_SCHEMA`; `_execute()` calls every tool with
+#: `{}`), so `check_permission` could never receive an actual permission name
+#: to check. It always returned `{"permission": "", "held": False}` — a
+#: vacuous result DECIDE went on to misread as genuine evidence of a denied
+#: permission. `get_user_permissions` already gives the model the caller's
+#: whole permission set to reason over directly; a tool that can only ever
+#: return a meaningless default is worse than no tool, the same reasoning
+#: that removed `detect_pii_regex`/`classify_pii_type` from the PII agent.
 
 AUTHORIZATION_TOOL_NAMES: tuple[str, ...] = tuple(AUTHORIZATION_AGENT_TOOLS)
 

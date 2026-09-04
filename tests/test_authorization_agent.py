@@ -151,7 +151,7 @@ def test_a_prompt_asking_the_agent_to_ignore_rbac(engine):
     even if it tried, because 'grant access' is not one of the six things
     this agent's decision can be."""
     c = ctx(principal="citizen", resource_kind="policy_config")
-    llm = ScriptedAuthzLLM(plans=[full_plan(["get_user_permissions", "check_permission"])],
+    llm = ScriptedAuthzLLM(plans=[full_plan(["get_user_role", "get_user_permissions"])],
                            decisions=[decision("BLOCK", evidence_summary=
                                                "the request asks to bypass RBAC and act "
                                                "as an administrator — refused")])
@@ -200,8 +200,15 @@ def test_malicious_tool_names_are_rejected(engine, hostile):
 
 
 def test_the_registry_has_no_dynamic_dispatch():
-    assert set(AUTHORIZATION_AGENT_TOOLS) == set(AUTHORIZATION_TOOL_NAMES)
-    assert "check_ownership" in AUTHORIZATION_TOOL_NAMES
+    """`check_permission` is gone — the PLAN -> EXECUTE flow never lets the
+    model supply a tool argument, so it could never receive a real
+    permission name to check and always returned a vacuous
+    `{"permission": "", "held": False}`. See `authorization_tools.py`'s
+    comment where it used to be registered."""
+    assert set(AUTHORIZATION_AGENT_TOOLS) == set(AUTHORIZATION_TOOL_NAMES) == {
+        "get_user_role", "get_user_permissions", "get_resource_classification",
+        "check_ownership",
+    }
 
 
 # ── malformed output, bounded loop ──────────────────────────────────
@@ -391,3 +398,53 @@ def test_d_live_regression_model_allow_still_hits_the_entitlement_floor(engine):
     assert result.outcome is not None
     assert result.outcome.action == "BLOCK", "the capability layer refuses to execute it"
     assert result.outcome.capability == "entitlement_denied"
+
+
+def test_e_live_regression_decision_system_explains_no_resource_and_scopes_out_pii():
+    """Live-verified 2026-09-04: a plain "check my claim status" request with
+    no resource named — `resource_owner=""`, so `is_owner=False`,
+    `entitled=True` by `AuthorizationContext`'s own documented design (see
+    its docstring: "nothing to be entitled to yet") — reached DECIDE, which
+    misread that exact, correct combination as "authorization state
+    inconsistencies... a spoofed admin claim or a misconfigured authorization
+    state" and BLOCKed. The same DECIDE call separately flagged the raw SSN
+    and card number visible in the request text as "should have been masked
+    by earlier rails" and treated that too as grounds for BLOCK — even
+    though PII masking is a different agent's job, running independently,
+    and this agent was never told that.
+
+    `DECISION_SYSTEM` gave the model raw tool JSON with no explanation of
+    what `is_owner`/`entitled`/`resource_owner` actually mean together, and
+    no statement that PII in the request text is out of scope for this
+    decision. Both gaps are closed by the same prompt edit; this asserts the
+    prompt no longer has either gap, the same way the PII-agent prompt
+    regressions in `test_pii_agent.py` are guarded."""
+    from backend.guardrails.agents.authorization_agent import DECISION_SYSTEM
+
+    lowered = DECISION_SYSTEM.lower()
+    assert "resource_owner" in lowered and "empty" in lowered
+    assert "normal, designed state" in lowered or "not a sign of a spoofed" in lowered
+    assert "personal identifier" in lowered and "not your concern" in lowered
+
+
+def test_f_live_regression_plan_does_not_over_trigger_on_pii_or_broken_check_permission():
+    """Live-verified 2026-09-04, a third distinct failure on the *same*
+    request as the two regressions above: PLAN itself (not just DECIDE)
+    treated "the presence of actual sensitive data in plain text" as a
+    reason `needs_authorization_review` should be true for a plain
+    "check my claim status" message naming no resource, then selected
+    `check_permission` — which, as `test_the_registry_has_no_dynamic_dispatch`
+    documents, could never receive a real permission name and always
+    returned `{"permission": "", "held": False}`. DECIDE then read that
+    vacuous result as "the caller claims an admin role but check_permission
+    returned empty permission... indicating no actual authorization" and
+    blocked. `check_permission` is now removed entirely rather than fixed —
+    there was no way to give the model an argument-passing path for it
+    without inventing evidence it doesn't have; `PLAN_SYSTEM` gets the same
+    PII-is-out-of-scope guidance `DECISION_SYSTEM` already has, above."""
+    from backend.guardrails.agents.authorization_agent import PLAN_SYSTEM
+
+    assert "check_permission" not in PLAN_SYSTEM
+    lowered = PLAN_SYSTEM.lower()
+    assert "personal identifier" in lowered
+    assert "not a reason to plan an authorization review" in lowered

@@ -73,12 +73,13 @@ def _detect_pii_presidio(args: dict, engine: Engine) -> dict:
 def _detect_pii_entities(args: dict, engine: Engine) -> dict:
     """The free-form judge layer — `EntityRail._judge_entities`, unchanged.
 
-    Unlike `detect_pii_regex`/`detect_pii_presidio`, this one is not gated on
-    a shape or a trained label matching — it is asked to name every personal
-    identifier in the text, whether or not any pattern here would recognise
-    it. This is the tool worth reaching for when the other two found nothing
-    but the text still reads like it could be identifying someone: a name,
-    an address, an internal ID with no known format.
+    Unlike `detect_pii_presidio`, this one is not gated on a shape or a
+    trained label matching — it is asked to name every personal identifier
+    in the text, whether or not any pattern here would recognise it. There is
+    no deterministic regex/checksum layer any more, so this is the only tool
+    that finds a structured identifier at all (an SSN, a card number, an
+    email) as well as anything with no known format: an internal ID, a case
+    reference, a name a trained NER model was never built to catch.
 
     `EntityRail.evaluate()`'s own cheap capitalized-word gate does not run
     here — reaching this tool at all is the PII agent's own PLAN-time

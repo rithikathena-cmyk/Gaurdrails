@@ -20,6 +20,10 @@ from .authorization_tools import (
 from .capabilities import CapabilityDenied, PIICapabilities
 from .content_safety_agent import ContentSafetyAgent
 from .content_tools import CONTENT_AGENT_TOOLS, CONTENT_TOOL_NAMES
+from .document_security_agent import DocumentSecurityAgent
+from .document_security_tools import (
+    DOCUMENT_SECURITY_AGENT_TOOLS, DOCUMENT_SECURITY_TOOL_NAMES, cheap_risk_score,
+)
 from .grounding_agent import GroundingAgent
 from .grounding_tools import GROUNDING_AGENT_TOOLS, GROUNDING_TOOL_NAMES
 from .guardrail_capabilities import FORBIDDEN_CAPABILITIES, deny_if_forbidden
@@ -43,8 +47,9 @@ __all__ = [
     "ActionOutcome", "AgentDecision", "AgentNotRegistered", "AgentPlan",
     "AgentResult", "AgentState", "ALLOWED_GUARDRAIL_TOOLS", "AuthorizationAgent",
     "AuthorizationCapabilities", "AuthorizationContext", "AUTHORIZATION_AGENT_TOOLS",
-    "AUTHORIZATION_TOOL_NAMES", "CapabilityDenied", "CONTENT_AGENT_TOOLS",
-    "CONTENT_TOOL_NAMES", "ContentSafetyAgent", "deny_if_forbidden",
+    "AUTHORIZATION_TOOL_NAMES", "CapabilityDenied", "cheap_risk_score",
+    "CONTENT_AGENT_TOOLS", "CONTENT_TOOL_NAMES", "ContentSafetyAgent", "deny_if_forbidden",
+    "DocumentSecurityAgent", "DOCUMENT_SECURITY_AGENT_TOOLS", "DOCUMENT_SECURITY_TOOL_NAMES",
     "FORBIDDEN_CAPABILITIES", "GroundingAgent", "GROUNDING_AGENT_TOOLS",
     "GROUNDING_TOOL_NAMES", "GuardrailAction", "GuardrailDecision", "GuardrailPlan",
     "GUARDRAIL_TOOLS", "GuardrailSupervisor", "GuardrailSupervisorResult",

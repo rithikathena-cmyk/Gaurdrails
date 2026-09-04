@@ -131,6 +131,15 @@ INJECTION_BY_MATRIX = (Surface.USER_PROMPT, Surface.USER_FEEDBACK)
 # different question and not this rail's job.
 SCOPE_SURFACES = (Surface.USER_PROMPT, Surface.USER_FEEDBACK)
 
+# DocumentSecurityAgent's GuardrailAction vocabulary (ALLOW/FLAG/BLOCK, plus
+# ESCALATE from a bounded-loop failure) mapped onto the rail-layer Verdict —
+# ESCALATE fails closed to BLOCK, the same direction `agent/runner.py`'s
+# `_AGENTIC_TO_VERDICT` already resolves it for the agent.data surface.
+_SECURITY_VERDICT: dict[str, Verdict] = {
+    "ALLOW": Verdict.PASS, "FLAG": Verdict.FLAG,
+    "BLOCK": Verdict.BLOCK, "ESCALATE": Verdict.BLOCK,
+}
+
 REFUSAL_FALLBACK = (
     "That request was stopped before it reached the model. If this was unintended, "
     "rephrase it and try again — reference {rid}."
@@ -522,23 +531,122 @@ class Engine:
         return redo.text_out if redo.text_out is not None else current
 
     # -----------------------------------------------------------------
+    def _document_security_verdict(self, text: str, *, stage: str,
+                                   doc_id: str = "") -> tuple[str, dict[str, Any]]:
+        """CLEAN/SUSPICIOUS/MALICIOUS adjudication for one span of ingested
+        text (the whole document, or one chunk) -> a GuardrailAction
+        ('ALLOW'/'FLAG'/'BLOCK'/'ESCALATE'), plus the trace meta describing
+        how the answer was reached.
+
+        The cheap deterministic/local-model pass (`cheap_risk_score`) always
+        runs first and costs no judge call. `DocumentSecurityAgent` — a real
+        judge call — is constructed only when that score clears
+        `ingest.security_agent.risk_threshold`; see that function's own
+        docstring for why the threshold is a floor for escalation, never a
+        ceiling for blocking on its own. Imports are local to avoid a
+        circular import: `agents/document_security_agent.py` imports `Engine`
+        from this module.
+        """
+        from .agents.document_security_tools import cheap_risk_score
+
+        p = self.policy
+        mode = str(p.get("ingest.security_agent.engine"))
+        if mode == "off" or not text.strip():
+            return "ALLOW", {"stage": stage, "document_id": doc_id,
+                             "agent_invoked": False, "engine": mode}
+
+        score, signals = cheap_risk_score(text, self)
+        threshold = float(p.get("ingest.security_agent.risk_threshold"))
+        meta = {"stage": stage, "document_id": doc_id, "cheap_risk_score": round(score, 3),
+                "risk_threshold": threshold, **signals}
+
+        if score < threshold or self.llm is None:
+            meta["agent_invoked"] = False
+            return "ALLOW", meta
+
+        from .agents.document_security_agent import DocumentSecurityAgent
+
+        # `request_id` is left to the agent's own default (a fresh uuid per
+        # call) rather than derived from `tracer.trace.request_id` — this
+        # runs once for the whole document and, from `_chunk_security_verdict`,
+        # once per escalated chunk, so a shared id would collide across calls.
+        agent = DocumentSecurityAgent(self.llm, self)
+        result = agent.run(text, surface=Surface.INGEST, owner=CORPUS_OWNER)
+        action = (result.policy_decision.final_action if result.policy_decision
+                 else result.decision.action)
+        meta.update({
+            "agent_invoked": True,
+            "action": action,
+            "confidence": result.decision.confidence,
+            "rationale": result.decision.rationale,
+            "agent_status": result.status,
+        })
+        return action, meta
+
+    def _chunk_security_verdict(self, chunks: list[str],
+                                *, doc_id: str) -> tuple[str, dict[str, Any]]:
+        """Same adjudication as `_document_security_verdict`, run per chunk —
+        catches malicious content localized to one chunk of an otherwise
+        clean document. Escalation to the agent is capped by
+        `ingest.security_agent.max_chunks_escalated`: a document that is
+        mostly suspicious must not silently rack up one judge call per chunk.
+        """
+        from .agents.policy_engine import ACTION_RANK
+
+        def rank(action: str) -> int:
+            return ACTION_RANK.get(action, ACTION_RANK["BLOCK"])
+
+        p = self.policy
+        mode = str(p.get("ingest.security_agent.engine"))
+        if mode == "off":
+            return "ALLOW", {"stage": "chunk", "document_id": doc_id,
+                             "chunks_scanned": 0, "chunks_escalated": 0, "engine": mode}
+
+        max_escalated = int(p.get("ingest.security_agent.max_chunks_escalated"))
+        escalated = 0
+        worst_action = "ALLOW"
+        flagged: list[dict[str, Any]] = []
+
+        for i, chunk in enumerate(chunks):
+            if escalated >= max_escalated:
+                # A chunk the cap prevents from being scanned is not trusted
+                # unscanned — flagged, not allowed, the same fail-closed
+                # direction every other budget exhaustion in this stack takes.
+                worst_action = max([worst_action, "FLAG"], key=rank)
+                flagged.append({"chunk": i, "skipped": "max_chunks_escalated reached"})
+                continue
+            action, meta = self._document_security_verdict(
+                chunk, stage="chunk", doc_id=doc_id)
+            if meta.get("agent_invoked"):
+                escalated += 1
+            worst_action = max([worst_action, action], key=rank)
+            if action != "ALLOW":
+                flagged.append({"chunk": i, "action": action,
+                                "rationale": meta.get("rationale", "")})
+
+        return worst_action, {"stage": "chunk", "document_id": doc_id,
+                              "chunks_scanned": len(chunks), "chunks_escalated": escalated,
+                              "flagged_chunks": flagged}
+
+    # -----------------------------------------------------------------
     def ingest(self, title: str, text: str, *, source: str = "upload",
                kind: str = "txt", session_id: str = "",
                method: str = "text", doc_id: str = "") -> IngestResult:
         """Take one document into the knowledge base.
 
-            extract → normalize → chunk → index
+            extract → normalize → document security (whole doc) → chunk →
+            document security (per suspicious chunk) → index
 
-        No guardrail rail runs on a document at ingest time — it is chunked
-        and indexed exactly as uploaded, once normalized. This is deliberate,
-        not a gap: PII, injected content, or anything else a rail would have
-        caught here is still caught the first time a chunk is actually
-        retrieved (`Surface.RETRIEVAL`, in `converse()`, unchanged by this) —
-        later than before, not never. `pii_policy_version` is never stamped
-        here as a result, so `_doc_pii_is_fresh()` always reads a freshly
-        ingested document as unclassified and retrieval always scans it in
-        full, the same fail-closed default it already falls back to for any
-        document it cannot prove was classified.
+        PII detection still runs only at retrieval (`Surface.RETRIEVAL`, in
+        `converse()`, unchanged by this) and at tool-result time
+        (`Surface.AGENT_DATA`) — this method does not scan for PII. What it
+        now does scan for is injected/malicious *content*:
+        `_document_security_verdict()`/`_chunk_security_verdict()` run a
+        cheap deterministic pass on the whole document and then on each
+        chunk, escalating only what that pass flags to a real judge call
+        (`DocumentSecurityAgent`). `ingest.security_agent.engine: off`
+        restores the prior behaviour of this method exactly: no guardrail
+        rail runs on a document at ingest at all.
 
         `doc_id`, when given, replaces whatever entry already holds that id
         instead of minting a fresh one — the one caller that needs this is
@@ -548,6 +656,7 @@ class Engine:
         p = self.policy
         tracer = Tracer(session_id=session_id)
         title = (title or "Untitled document").strip()[:160]
+        resolved_doc_id = doc_id or new_document_id(title)
 
         with tracer.stage("Ingest ingress", "accept the document", kind="rail"):
             with tracer.rail("document.accept", "in-process") as r:
@@ -574,6 +683,14 @@ class Engine:
                 r.unit = "count"
                 r.meta = {"characters_changed": changed, "can_be_disabled": False}
 
+        with tracer.stage("Document security · document-level", "cheap checks + agent",
+                          kind="rail"):
+            with tracer.rail("ingest.security_agent", "document") as r:
+                doc_action, doc_meta = self._document_security_verdict(
+                    normalized, stage="document", doc_id=resolved_doc_id)
+                r.verdict = _SECURITY_VERDICT[doc_action]
+                r.meta = doc_meta
+
         with tracer.stage("Chunk", "paragraph packing with overlap", kind="rail"):
             with tracer.rail("document.chunk", f"{p.get('ingest.chunk_size')} chars") as r:
                 chunks = chunk_text(
@@ -588,18 +705,46 @@ class Engine:
                           "chunk_size": int(p.get("ingest.chunk_size")),
                           "overlap": int(p.get("ingest.chunk_overlap"))}
 
-        quarantined = oversized or not chunks
+        with tracer.stage("Document security · chunk-level",
+                          "cheap checks + agent, suspicious chunks only", kind="rail"):
+            with tracer.rail("ingest.security_agent", "chunk") as r:
+                chunk_action, chunk_meta = self._chunk_security_verdict(
+                    chunks, doc_id=resolved_doc_id)
+                r.verdict = _SECURITY_VERDICT[chunk_action]
+                r.meta = chunk_meta
+
+        from .agents.policy_engine import ACTION_RANK  # local: see the security methods above
+
+        security_action = max([doc_action, chunk_action],
+                              key=lambda a: ACTION_RANK.get(a, ACTION_RANK["BLOCK"]))
+        security_flagged = security_action in ("FLAG", "BLOCK", "ESCALATE")
+        security_rationale = doc_meta.get("rationale") or next(
+            (f.get("rationale") for f in chunk_meta.get("flagged_chunks", []) if f.get("rationale")),
+            "")
+
+        quarantined = oversized or not chunks or security_action in ("BLOCK", "ESCALATE")
         reason = ""
         if oversized:
             reason = "document exceeds ingest.max_document_chars"
         elif not chunks:
             reason = "no text to index"
+        elif security_flagged:
+            reason = (f"document_security_agent ({security_action}): {security_rationale}"
+                      if security_rationale else f"document_security_agent: {security_action}")
+
+        doc_verdict = Verdict.BLOCK if quarantined else (
+            Verdict.FLAG if security_action == "FLAG" else Verdict.PASS)
+        doc_findings: list[dict[str, Any]] = []
+        if doc_meta.get("agent_invoked"):
+            doc_findings.append({"stage": "document", **doc_meta})
+        doc_findings += [{"stage": "chunk", **f} for f in chunk_meta.get("flagged_chunks", [])]
 
         doc = Document(
-            id=doc_id or new_document_id(title), title=title, source=source, kind=kind,
+            id=resolved_doc_id, title=title, source=source, kind=kind,
             chars=len(text), chunks=chunks,
             status="quarantined" if quarantined else "indexed",
-            verdict=(Verdict.BLOCK if quarantined else Verdict.PASS).value,
+            verdict=doc_verdict.value,
+            findings=doc_findings,
             reason=reason, request_id=tracer.trace.request_id, method=method,
         )
 
@@ -618,7 +763,7 @@ class Engine:
                     r.error = f"quarantined — {reason}"
                     tracer.note("quarantined: stored for review, never returned by search")
 
-        trace = tracer.finish(Verdict.BLOCK if quarantined else Verdict.PASS)
+        trace = tracer.finish(doc_verdict)
         self.audit.write(trace, [])
         return IngestResult(
             document=doc, trace=trace, detections=[],

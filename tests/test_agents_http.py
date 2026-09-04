@@ -408,7 +408,15 @@ def test_invalid_parameter_value_is_rejected_over_http(admin):
 class StubGuardrailLLM:
     """Answers the flat `GuardrailSupervisor`'s own PLAN/DECIDE schema shapes
     — distinct from `StubAgentLLM` above, which answers the six *specialist
-    agents'* schemas. Raises if asked anything else, the same
+    agents'* schemas.
+
+    The hard-block precheck also runs a real `PromptInjectionAgent` (and,
+    if that agent's own PLAN reaches for it, a nested `InjectionModelAgent`)
+    on every request a pattern doesn't already catch — see
+    `guardrail_supervisor.py:_hard_block_check`. Those schemas are answered
+    here too, with an immediate "nothing to see" ALLOW, so every existing
+    HTTP test's `checks=[...]` scripting for `GuardrailSupervisor`'s own
+    PLAN stays exactly what it was. Raises on anything else, the same
     fail-loud-on-an-unscripted-shape idiom every stub in this suite uses."""
 
     def __init__(self, *, checks=(), decide_action="ALLOW"):
@@ -418,6 +426,22 @@ class StubGuardrailLLM:
 
     def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
+        if "possible_injection" in props:
+            self.calls.append("injection_plan")
+            return {"possible_injection": False, "tools": [],
+                    "more_evidence_needed": False, "rationale": "stubbed: nothing to see"}
+        if "verdict" in props:
+            self.calls.append("injection_decide")
+            return {"verdict": "ALLOW", "confidence": 1.0,
+                    "evidence_summary": "stubbed: nothing to see", "findings": []}
+        if "needs_local_classification" in props:
+            self.calls.append("injection_model_plan")
+            return {"needs_local_classification": False, "tools": [],
+                    "more_evidence_needed": False, "rationale": "stubbed: nothing to see"}
+        if "local_injection_verdict" in props:
+            self.calls.append("injection_model_decide")
+            return {"local_injection_verdict": "ALLOW", "confidence": 1.0,
+                    "rationale": "stubbed: nothing to see", "findings": []}
         if "checks" in props:
             self.calls.append("plan")
             return {"risk_categories": [], "checks": self.checks,

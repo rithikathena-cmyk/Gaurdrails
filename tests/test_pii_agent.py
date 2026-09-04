@@ -312,6 +312,56 @@ def test_the_tool_registry_has_no_dynamic_dispatch(engine):
             call_tool(hostile, {}, engine, "call_x")
 
 
+def test_plan_system_never_names_a_tool_outside_the_allowlist():
+    """Regression: `PLAN_SYSTEM` once still described `detect_pii_regex` and
+    `classify_pii_type` — both removed from `PII_AGENT_TOOLS` along with the
+    regex/checksum rail they wrapped, per the test above — including the
+    load-bearing line "most requests need detect_pii_regex and
+    detect_pii_presidio together". The judge cannot ever select a tool name
+    outside `PII_TOOL_NAMES` (the PLAN schema's own enum excludes it), so
+    that line pointed every checksummed-identifier request (an SSN, a card
+    number) at a tool that could never run, leaving `detect_pii_presidio`
+    (people/addresses only) as the only detector PLAN actually reached for —
+    which finds nothing for an SSN, produces a "no findings despite plain
+    text" mismatch, and escalates past MASK to REDACT. Live-verified against
+    the real judge on 2026-09-04, before this fix: the SSN+card test
+    question came back REDACT and refused instead of the documented MASK.
+
+    A live judge call is what actually proves PLAN's tool choice changed;
+    this test guards the narrower, still load-bearing regression — the
+    prompt naming a tool that does not exist — deterministically."""
+    from backend.guardrails.agents.pii_agent import PLAN_SYSTEM
+
+    assert "detect_pii_regex" not in PLAN_SYSTEM
+    assert "classify_pii_type" not in PLAN_SYSTEM
+    for name in PII_TOOL_NAMES:
+        assert name in PLAN_SYSTEM
+    assert "no deterministic regex" in PLAN_SYSTEM.lower()
+
+
+def test_decision_system_does_not_let_confidence_alone_justify_redact():
+    """Regression, found live-verifying the fix above: with PLAN correctly
+    reaching `detect_pii_entities`, an ordinary SSN+card message still came
+    back REDACT (irreversible, and this app's own pipeline treats REDACT as
+    a stop-the-request tier same as BLOCK) instead of the documented MASK.
+    `DECISION_SYSTEM` gave no criterion for REDACT vs. MASK beyond "how
+    confident is the detection" — and a checksum-valid SSN is, correctly,
+    always high-confidence, so confidence alone pushed every real hit past
+    MASK. Live-verified against the real judge on 2026-09-04: before this
+    fix, `policy_decision` showed `floor_action: MASK,
+    recommended_action: REDACT, final_action: REDACT` for exactly this
+    message — the agent's own recommendation, not a floor, drove it there."""
+    from backend.guardrails.agents.pii_agent import DECISION_SYSTEM
+
+    lowered = DECISION_SYSTEM.lower()
+    assert "default" in lowered and "mask" in lowered
+    assert "confidence" in lowered and "redact" in lowered
+    # The old text called this a "checksum-verified regex hit" — a tool that
+    # no longer exists (see the PLAN regression above); make sure that
+    # phrasing didn't just move to this prompt instead of being fixed here.
+    assert "regex hit" not in lowered
+
+
 # ── 13-15: capability-layer hard boundaries ────────────────────────────
 def test_capability_layer_denies_policy_modification(engine):
     caps = PIICapabilities(engine.entity_rail, engine.vault)

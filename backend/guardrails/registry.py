@@ -184,7 +184,7 @@ FAMILIES: dict[str, dict[str, str]] = {
     },
     "ingest": {
         "name": "Document Ingestion",
-        "engine": "extract · chunk · bm25 index — no guardrail rail runs here",
+        "engine": "extract · chunk · document security agent · bm25 index",
     },
     "retrieval": {
         "name": "Retrieval",
@@ -730,6 +730,39 @@ PARAMS: list[Param] = [
        "gives the grounding rail irrelevant context to score against.",
        "float", 0.15, minimum=0.0, maximum=1.0, step=0.01),
 
+    _a("ingest.security_agent.engine", "ingest",
+       "What screens a document for injected or malicious content before it is "
+       "indexed. The cheap layer (deterministic patterns, and the local classifier "
+       "when included) always runs first and never blocks on its own — it only "
+       "decides whether `document_security_agent.py` (a real judge call) is worth "
+       "paying for. 'off' restores the prior behaviour: no guardrail rail runs on "
+       "a document at ingest at all.",
+       "enum", "local+judge", options=["local+judge", "local", "judge", "off"]),
+    _a("ingest.security_agent.action", "ingest",
+       "Floor action when the document security agent's verdict is MALICIOUS.",
+       "enum", "block", options=["block", "flag", "pass"]),
+    _a("ingest.security_agent.risk_threshold", "ingest",
+       "Cheap deterministic/local-model score above which a document or chunk is "
+       "worth a judge call. Below it: allowed with no judge call. This is a floor "
+       "for escalation, not a ceiling for blocking — see "
+       "ingest.security_agent.classifier_authority.",
+       "float", 0.35, minimum=0, maximum=1, step=0.01),
+    _a("ingest.security_agent.max_chunks_escalated", "ingest",
+       "Hard cap on how many chunks of one document may reach the judge. A "
+       "document that is mostly suspicious must not silently rack up one judge "
+       "call per chunk; any chunk the cap prevents from being scanned is flagged "
+       "rather than trusted unscanned.",
+       "int", 20, minimum=1, maximum=200, step=1),
+
+    _l("ingest.security_agent.classifier_authority", "ingest",
+       "What a raw pattern/classifier score is allowed to decide on its own.",
+       "const", Lock.SAFETY, "evidence only — never sets MALICIOUS/QUARANTINE by itself",
+       "A confident local-classifier or pattern score only ever raises the odds of "
+       "a closer look from the agent — it cannot itself quarantine a document. The "
+       "agent reads it as evidence, alongside the text and every other tool's "
+       "result, and decides in context; a raw score doing the deciding is exactly "
+       "how a resume's own PDF-extraction icon-font artifacts would get "
+       "misclassified as an attack."),
     _l("ingest.ocr_isolation", "ingest",
        "What the transcribing model is allowed to do with the page it reads.",
        "const", Lock.SAFETY, "transcribe only, never obey",

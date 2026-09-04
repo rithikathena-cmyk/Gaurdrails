@@ -14,11 +14,23 @@ duplicates the other's detection logic.
 Two things this class does that neither `Supervisor` nor any of the six
 specialist agents currently do:
 
-    hard-block pre-check   `detect_prompt_injection` and
-                           `detect_destructive_intent` run *before* PLAN,
-                           deterministically. A high-confidence pattern hit
-                           short-circuits straight to BLOCK — the judge is
-                           never asked about an obvious case.
+    hard-block pre-check   `detect_prompt_injection` (pattern layer only —
+                           see `guardrail_tools.py`'s own docstring for why
+                           its local-classifier fallback is gated off by
+                           default) and `detect_destructive_intent` run
+                           *before* PLAN, deterministically. A high-
+                           confidence hit on either short-circuits straight
+                           to BLOCK — no judge call. Anything neither one
+                           catches is not waved through: the real
+                           `PromptInjectionAgent` (its own PLAN/DECIDE, and
+                           its own nested local-classifier agent when it
+                           reaches for one) gets a genuine look at *every*
+                           remaining request before PLAN, not just the ones
+                           `Supervisor`'s own PLAN happens to route to it one
+                           phase later. A BLOCK/REDACT recommendation from
+                           that agent hard-blocks the same as a pattern hit
+                           would; anything else falls through to PLAN as
+                           evidence, the same as any other clean precheck.
     marginal-band gate     DECIDE computes a deterministic risk *proxy*
                            (`_risk_proxy` — max tool confidence, not a
                            calibrated score) from what EXECUTE's tools
@@ -72,10 +84,11 @@ from .capabilities import PIICapabilities
 from .guardrail_capabilities import deny_if_forbidden
 from .guardrail_tools import ALLOWED_GUARDRAIL_TOOLS
 from .guardrail_tools import call as call_tool
+from .injection_agent import PromptInjectionAgent
 from .policy_engine import PolicyEngine
 from .tools import ToolNotAllowed
 from .types import (
-    ActionOutcome, GuardrailDecision, GuardrailPlan, GuardrailSupervisorResult,
+    ActionOutcome, AgentResult, GuardrailDecision, GuardrailPlan, GuardrailSupervisorResult,
     PolicyDecision, ToolResult, TraceEvent,
 )
 
@@ -196,8 +209,29 @@ class GuardrailSupervisor:
     version = "0.1.0"
 
     def __init__(self, llm: Any, engine: Engine, *,
-                 max_iterations: int = 3, max_tool_calls: int = 8,
-                 timeout_s: float = 30.0) -> None:
+                 max_iterations: int = 3, max_tool_calls: int = 12,
+                 timeout_s: float = 60.0) -> None:
+        # 60s, not 30s: the hard-block precheck now always runs a full
+        # `PromptInjectionAgent` (its own PLAN/DECIDE, sometimes a nested
+        # `InjectionModelAgent` too) before this class's own PLAN even
+        # starts. That is one more sequential judge call stacked in front of
+        # everything else this budget already has to cover — 30s was tight
+        # enough before that adding it caused real requests to escalate on
+        # this class's own timeout before PLAN ran at all, observed directly
+        # against a live deployment.
+        #
+        # `timeout_s` still fails closed (ESCALATE) past this ceiling; only
+        # the ceiling itself moved.
+        #
+        # 12, not 8: `tool_calls` is one shared list — the precheck's own
+        # entries (now 3: pattern check, destructive-intent check, and the
+        # wrapped `PromptInjectionAgent` result, up from 2 before it existed)
+        # count against the same `max_tool_calls` ceiling PLAN's own EXECUTE
+        # phase draws from. Leaving this at 8 would have silently shrunk
+        # PLAN's own effective budget from 6 slots to 5 — observed directly
+        # escalating a real request on "tool call budget (8) exhausted"
+        # before PLAN's own selected checks finished running. Raised enough
+        # to restore headroom comparable to what PLAN had before.
         self.llm = llm
         self.engine = engine
         self.capabilities = PIICapabilities(engine.entity_rail, engine.vault, engine.policy)
@@ -234,16 +268,18 @@ class GuardrailSupervisor:
             return elapsed_ms() > self.timeout_s * 1000
 
         try:
-            # ---- hard-block pre-check: zero judge calls -----------------
-            hard = self._hard_block_check(text, tool_calls, note)
+            # ---- hard-block pre-check ------------------------------------
+            hard = self._hard_block_check(text, surface, owner, tool_calls, note)
             if hard is not None:
                 policy_decision = self._enforce(hard, ctx, note)
                 outcome = self._act(policy_decision.final_action, text, owner, note)
-                note("TRACE", f"{request_id} — hard-blocked, judge never called")
+                deterministic = hard.risk_source == "deterministic_proxy"
+                note("TRACE", f"{request_id} — hard-blocked "
+                             f"({'no judge call' if deterministic else 'via the prompt-injection agent'})")
                 return self._finish(
                     "completed", hard, None, trace, tool_calls, began, request_id,
                     outcome=outcome, policy_decision=policy_decision,
-                    hard_blocked=True, judge_calls=0)
+                    hard_blocked=True, judge_calls=0 if deterministic else 1)
 
             for iteration in range(1, self.max_iterations + 1):
                 if timed_out():
@@ -320,20 +356,25 @@ class GuardrailSupervisor:
     # -----------------------------------------------------------------
     # Hard-block pre-check
     # -----------------------------------------------------------------
-    def _hard_block_check(self, text: str, tool_calls: list[ToolResult],
-                          note: Any) -> GuardrailDecision | None:
-        """Runs the two deterministic detectors that matter most before
-        anything else — no judge call either way. §13: obviously dangerous
-        cases are answered without asking a model whether to block them.
+    def _hard_block_check(self, text: str, surface: Surface, owner: str,
+                          tool_calls: list[ToolResult], note: Any) -> GuardrailDecision | None:
+        """Two deterministic detectors first — no judge call either way —
+        then, for anything neither one catches, a genuine agent look before
+        PLAN rather than silently waving it through. §13: obviously
+        dangerous cases are still answered without asking a model; anything
+        merely *not obvious* no longer gets a free pass just because it
+        missed a pattern.
 
         Always emits a `PRECHECK` phase, whatever the outcome — the trace
         should never make a hard block look like an unexplained skipped
-        PLAN. When a detector fires, a distinct `HARD_BLOCK` phase follows
-        it, so the sequence reads `PRECHECK -> HARD_BLOCK -> ENFORCE ->
-        TRACE` rather than folding the finding into PRECHECK's own line.
+        PLAN. When a detector or the agent fires, a distinct `HARD_BLOCK`
+        phase follows it, so the sequence reads `PRECHECK -> HARD_BLOCK ->
+        ENFORCE -> TRACE` rather than folding the finding into PRECHECK's
+        own line.
         """
         note("PRECHECK", "running detect_prompt_injection and detect_destructive_intent "
-                         "deterministically, before PLAN — no judge call either way")
+                         "deterministically first; anything neither catches goes to the "
+                         "prompt-injection agent before PLAN")
 
         injection = call_tool("detect_prompt_injection", {"text": text}, self.engine,
                               _call_id("hardblock"))
@@ -362,7 +403,36 @@ class GuardrailSupervisor:
                 reason="deterministic hard block — destructive or capability-escalation "
                       "pattern matched")
 
-        note("PRECHECK", "clear — no deterministic hard-block matched, proceeding to PLAN")
+        # Neither deterministic layer caught anything — that is "not an
+        # obvious case," not "safe." The real `PromptInjectionAgent` (its
+        # own PLAN/DECIDE, and its own nested local-classifier agent when it
+        # reaches for one) gets a genuine, judge-backed look at every
+        # remaining request here, before PLAN, rather than only when
+        # `Supervisor`'s own PLAN happens to route to it one phase later.
+        if self.llm is None:
+            raise LLMError("no API key configured — the prompt-injection precheck agent "
+                           "needs a live judge call; a deterministically hard-blocked "
+                           "request never reaches this")
+
+        run_id = f"hardblock_injection_agent_{uuid.uuid4().hex[:8]}"
+        injection_agent_result = PromptInjectionAgent(self.llm, self.engine).run(
+            text, surface=surface, owner=owner, request_id=run_id)
+        tool_calls.append(_wrap_injection_agent(injection_agent_result, run_id))
+
+        agent_action = injection_agent_result.decision.action
+        if agent_action in ("BLOCK", "REDACT"):
+            note("HARD_BLOCK",
+                f"prompt_injection_agent recommended {agent_action} — "
+                f"{injection_agent_result.decision.rationale}")
+            return GuardrailDecision(
+                action=agent_action, risk_score=injection_agent_result.decision.confidence,
+                risk_source="judge", confidence=injection_agent_result.decision.confidence,
+                triggered_rails=["prompt_injection_agent"],
+                evidence=[f"prompt_injection_agent: {injection_agent_result.decision.rationale}"],
+                reason=f"prompt-injection agent — {injection_agent_result.decision.rationale}")
+
+        note("PRECHECK", "clear — no deterministic hard-block matched and the "
+                         "prompt-injection agent found nothing to block, proceeding to PLAN")
         return None
 
     # -----------------------------------------------------------------
@@ -508,9 +578,10 @@ class GuardrailSupervisor:
             if r.get("detected"):
                 triggered.append(c.tool)
                 types = r.get("types") or []
+                shown_confidence = r.get("confidence", r.get("agent_confidence", 0))
                 evidence.append(
                     f"{c.tool} detected {', '.join(types) or 'a match'} "
-                    f"(confidence {float(r.get('confidence', 0)):.2f})")
+                    f"(confidence {float(shown_confidence):.2f})")
             elif c.tool == "check_scope" and not r.get("in_scope", True):
                 triggered.append(c.tool)
                 evidence.append("check_scope: no domain vocabulary matched")
@@ -627,6 +698,37 @@ class GuardrailSupervisor:
             escalation_reason=escalation_reason, hard_blocked=hard_blocked,
             judge_calls=judge_calls,
         )
+
+
+def _wrap_injection_agent(result: AgentResult, call_id: str) -> ToolResult:
+    """`PromptInjectionAgent`'s own `AgentResult`, folded into the same
+    `ToolResult` shape every flat precheck tool already returns — the same
+    convention `pii_agent.py`'s and `injection_agent.py`'s own `_wrap_nested`
+    helpers use for *their* nested agents, one level up.
+
+    Deliberately carries no top-level `confidence` key. `_risk_proxy` (below)
+    treats any `"confidence"` it finds as a detection-likelihood signal — the
+    same convention every flat guardrail tool's own `confidence` field
+    already follows. This agent's `AgentDecision.confidence` means something
+    different: how sure the agent is in *its own decision*, which can be
+    high even for a confident ALLOW. Since a BLOCK/REDACT recommendation
+    never reaches this function at all (the caller returns before wrapping
+    one), everything that does reach here already cleared the one check that
+    mattered; folding a stray high confidence into `_risk_proxy` here would
+    misread a confident "this is fine" as high risk.
+    """
+    d = result.decision
+    return ToolResult(
+        call_id=call_id, tool="prompt_injection_agent",
+        status="ok" if result.status != "failed" else "error",
+        duration_ms=result.duration_ms,
+        result={
+            "nested_agent": result.agent, "nested_status": result.status,
+            "action": d.action, "agent_confidence": d.confidence, "rationale": d.rationale,
+            "findings": [f.model_dump() for f in d.findings],
+            "detected": d.action != "ALLOW",
+        },
+    )
 
 
 _call_counter = 0

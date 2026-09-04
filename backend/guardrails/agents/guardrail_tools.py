@@ -64,9 +64,19 @@ def _detect_pii(args: dict, engine: Engine) -> dict:
 def _detect_prompt_injection(args: dict, engine: Engine) -> dict:
     """The deterministic pattern layer first (`content.INJECTION_PATTERNS`,
     via `injection_tools._detect_injection_patterns`) — free, and what
-    catches the common case outright. Only if it finds nothing does this
-    fall back to the local classifier's score, exactly the precedence the
-    production `PromptAttackRail` already applies."""
+    catches the common case outright. Only if it finds nothing, and only
+    when `prompt_attack.engine` actually asks for the local layer
+    (`local` or `local+judge`), does this fall back to the local
+    classifier's score — the same `engine_mode` gate, `local_block_threshold`
+    bar, and meta-question guard `PromptAttackRail.evaluate()` already
+    applies, not a looser copy of it.
+
+    The default `prompt_attack.engine: judge` means this hard-block
+    precheck never calls the local classifier at all: it is measured
+    scoring a legitimate PII question at 0.991 and a real attack at 1.000
+    (`rails/deberta_injection_check.py`'s own module docstring) — no local
+    score can be trusted to end a request here, before a judge ever sees
+    it, which is the entire reason that precheck is a *pattern* check."""
     text = str(args.get("text", ""))
     patterns = injection_tools._detect_injection_patterns({"text": text}, engine)  # noqa: SLF001
     matches = patterns["matches"]
@@ -77,14 +87,26 @@ def _detect_prompt_injection(args: dict, engine: Engine) -> dict:
             "tool": "detect_prompt_injection", "detected": True,
             "types": techniques, "confidence": round(confidence, 3),
         }
+
+    engine_mode = str(engine.policy.get("prompt_attack.engine"))
+    if engine_mode not in ("local", "local+judge"):
+        return {"tool": "detect_prompt_injection", "detected": False,
+                "types": [], "confidence": 0.0}
+
     local = injection_tools._classify_injection({"text": text}, engine)  # noqa: SLF001
     score = local.get("local_score")
+    if score is None or local.get("looks_like_meta_question"):
+        return {"tool": "detect_prompt_injection", "detected": False, "types": [],
+                "confidence": round(score, 3) if score is not None else 0.0}
+
     threshold = float(engine.policy.get("prompt_attack.threshold"))
-    detected = score is not None and score >= threshold
+    local_block_threshold = float(engine.policy.get("prompt_attack.local_block_threshold"))
+    bar = max(threshold, local_block_threshold)
+    detected = score >= bar
     return {
         "tool": "detect_prompt_injection", "detected": bool(detected),
         "types": ["local_classifier"] if detected else [],
-        "confidence": round(score, 3) if score is not None else 0.0,
+        "confidence": round(score, 3),
     }
 
 

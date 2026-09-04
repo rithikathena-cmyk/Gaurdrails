@@ -119,27 +119,27 @@ DECISION_SCHEMA = {
 PLAN_SYSTEM = judge_prompt("""\
 You are the planning step of a PII guardrail agent. You are given one piece of \
 text and a fixed list of tools you may ask to run — you do not run them yourself, \
-you only choose which ones are worth running.
+you only choose which ones are worth running. There is no deterministic regex or \
+checksum layer any more — these two tools are the only detection there is.
 
-- detect_pii_regex     structured identifiers with a checksum: SSN, card, IBAN, ...
-- detect_pii_presidio  named entities a trained model recognises: people, addresses
-- detect_pii_entities  free-form: reads the whole text and names anything that \
-looks like a personal identifier, whether or not it matches a known shape or a \
-trained label. Reach for this one when the other two found nothing but the text \
-still reads like it could be identifying someone — an internal ID with no \
-familiar format, a name a trained NER model was never built to catch, anything \
-you cannot rule out just because no detector recognised it. Costs a real judge \
-call every time; do not plan it as a first move on ordinary text.
-- classify_pii_type    what a kind of identifier actually is, once one is found
+- detect_pii_presidio  named entities a trained local model recognises: people, \
+addresses. Nothing else — it was never trained on SSNs, card numbers, emails, \
+phone numbers, or any other structured identifier, so its silence on one of \
+those means nothing at all about whether one is present.
+- detect_pii_entities  the tool for everything else: a real judge call that \
+reads the whole text and names any personal identifier in it, whether or not \
+it has a familiar shape — an SSN, a card number, an email, a phone number, a \
+government ID, an internal reference with no known format, anything. This is \
+the only tool that can find a structured identifier now, so plan it whenever \
+the text might hold one, not only as a fallback once the other tools already \
+came back empty.
 - get_pii_policy       what the configured action is for a kind, once one is found
 
-Most requests need detect_pii_regex and detect_pii_presidio together — you do \
-not know in advance whether the text holds a structured identifier, a name, \
-both, or neither. classify_pii_type and get_pii_policy are only useful once \
-something has been found, so plan them when you expect a detector to return \
-something, not as a first move. detect_pii_entities is worth a second round \
-when the first round found nothing but you are not confident that means \
-nothing is there.
+Most requests worth a look need detect_pii_presidio and detect_pii_entities \
+together — the first catches names and addresses for free, the second catches \
+everything else and is the only tool that can. get_pii_policy is only useful \
+once something has been found, so plan it when you expect a detector to \
+return something, not as a first move.
 
 Say plainly when nothing here needs a tool at all — a request about opening \
 hours or a fee schedule does not.""")
@@ -150,18 +150,29 @@ text and exactly what the tools you asked for actually returned — nothing more
 Decide the one action that should happen to this text.
 
 - ALLOW     nothing sensitive, or already safely masked
-- MASK      a reversible identifier should be replaced with a vault token
-- REDACT    it should be removed without being recoverable
+- MASK      the default for a real personal identifier — replace it with a \
+reversible vault token. This is the right call for the ordinary case: someone \
+volunteers their own SSN, card number, or other identifier as part of a \
+legitimate request, such as asking about their own claim. A vault token still \
+lets an authorized reader resolve it later; nothing about MASK throws the \
+value away.
+- REDACT    reserved for when the value itself should never be recoverable \
+again, by anyone — not simply "detected with high confidence". A confident \
+detection is a reason to mask, not a reason to make irreversible: detection \
+confidence is never, on its own, evidence for REDACT over MASK. Choose it \
+only when something about the situation — not the identifier's shape, and \
+not how sure you are it is real — makes recoverability itself the problem.
 - BLOCK     the content itself should not proceed at all
 - FLAG      it may proceed, but a person should see it
 - ESCALATE  the evidence does not clearly support any of the above
 
-Weigh the tools against each other rather than trusting one by default. A \
-checksum-verified regex hit is strong evidence on its own; a NER tool finding \
-nothing about an identifier it was never built to find is not evidence against \
-it — Presidio finds names and addresses, not SSNs, so its silence on an SSN \
-means nothing. Cite only call_id values you were actually shown as evidence; \
-never invent one and never claim a tool said something it did not return.
+Weigh the tools against each other rather than trusting one by default. \
+`detect_pii_entities` is a real judge call, and its own confident finding is \
+strong evidence on its own; a NER tool finding nothing about an identifier it \
+was never built to find is not evidence against it — Presidio finds names and \
+addresses, not SSNs, so its silence on an SSN means nothing. Cite only \
+call_id values you were actually shown as evidence; never invent one and \
+never claim a tool said something it did not return.
 
 If nothing was found, or the tools disagree in a way you cannot resolve with \
 what you were given, say so and choose ESCALATE rather than guessing.""")
@@ -336,17 +347,19 @@ class PIIAgent:
                                 if res.status == "ok" else f"{name} -> error: {res.error}")
                 continue
 
-            # classify_pii_type / get_pii_policy fan out over kinds discovered
-            # this run — the model asks for the capability, the arguments
-            # (which kind) come from what was actually found, never guessed.
+            # get_pii_policy — the only remaining tool name that reaches this
+            # branch — fans out over kinds discovered this run: the model asks
+            # for the capability, the arguments (which kind) come from what
+            # was actually found, never guessed. `classify_pii_type` used to
+            # share this branch; it was removed along with the regex/checksum
+            # layer it classified for (see `PLAN_SYSTEM` above).
             kinds_here = sorted(known_kinds | found_kinds)
             ran = 0
             for kind in kinds_here:
                 if calls_made >= budget_left:
                     truncated = True
                     break
-                args = {"kind": kind} if name == "classify_pii_type" \
-                    else {"kind": kind, "surface": surface.value}
+                args = {"kind": kind, "surface": surface.value}
                 res = call_tool(name, args, self.engine, _call_id())
                 results.append(res)
                 calls_made += 1

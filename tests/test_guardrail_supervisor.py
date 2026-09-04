@@ -53,16 +53,49 @@ def engine(tmp_path):
 # ---------------------------------------------------------------------------
 class ScriptedLLM:
     """Answers PLAN and DECIDE, keyed by schema shape — `"checks" in props`
-    is PLAN, `"risk_score" in props` is DECIDE. Nothing else calls
-    `.judge()` in this file."""
+    is `GuardrailSupervisor`'s own PLAN, `"risk_score" in props` its own
+    DECIDE.
 
-    def __init__(self, plans=None, decisions=None):
+    The hard-block precheck now also runs a real `PromptInjectionAgent` (and,
+    if that agent's own PLAN reaches for it, a nested `InjectionModelAgent`)
+    on every request a pattern doesn't already catch — see
+    `guardrail_supervisor.py:_hard_block_check`. Those two agents' schemas
+    are handled here too, defaulting to "nothing to see" (immediate ALLOW,
+    no tool call) unless a test explicitly scripts one via
+    `injection_plans`/`injection_decisions` — every test in this file
+    written before the precheck became agentic stays unaffected, since the
+    default resolves in one extra judge call that changes nothing."""
+
+    def __init__(self, plans=None, decisions=None, injection_plans=None,
+                injection_decisions=None):
         self.plan_script = list(plans or [])
         self.decision_script = list(decisions or [])
+        self.injection_plan_script = list(injection_plans or [])
+        self.injection_decision_script = list(injection_decisions or [])
         self.calls: list[str] = []
 
     def judge(self, system, user, schema, *, max_tokens=2048, label=""):
         props = set(schema.get("properties", {}))
+        if "possible_injection" in props:
+            self.calls.append("injection_plan")
+            if self.injection_plan_script:
+                return self.injection_plan_script.pop(0)
+            return {"possible_injection": False, "tools": [],
+                    "more_evidence_needed": False, "rationale": "scripted: nothing to see"}
+        if "verdict" in props:
+            self.calls.append("injection_decide")
+            if self.injection_decision_script:
+                return self.injection_decision_script.pop(0)
+            return {"verdict": "ALLOW", "confidence": 1.0,
+                    "evidence_summary": "scripted: nothing to see", "findings": []}
+        if "needs_local_classification" in props:
+            self.calls.append("injection_model_plan")
+            return {"needs_local_classification": False, "tools": [],
+                    "more_evidence_needed": False, "rationale": "scripted: nothing to see"}
+        if "local_injection_verdict" in props:
+            self.calls.append("injection_model_decide")
+            return {"local_injection_verdict": "ALLOW", "confidence": 1.0,
+                    "rationale": "scripted: nothing to see", "findings": []}
         if "checks" in props:
             self.calls.append("plan")
             if self.plan_script:
@@ -557,11 +590,12 @@ def test_the_supervisor_is_actually_making_the_routing_decision(engine):
 
     declining = ScriptedLLM(plans=[plan([], reason="scripted: nothing to check")])
     r2 = GuardrailSupervisor(declining, engine).run("some text with an ssn", owner="citizen")
-    # Only the mandatory hard-block pre-check tools ran — PLAN declined
-    # everything else, so `detect_pii` (and every other flat tool) must not
-    # appear here.
+    # Only the mandatory hard-block pre-check ran — the two deterministic
+    # detectors, then the prompt-injection agent since neither one caught
+    # anything — PLAN declined everything else, so `detect_pii` (and every
+    # other flat tool) must not appear here.
     assert {c.tool for c in r2.tool_calls} == {
-        "detect_prompt_injection", "detect_destructive_intent"}
+        "detect_prompt_injection", "detect_destructive_intent", "prompt_injection_agent"}
 
 
 # ── 10: bounded limits ───────────────────────────────────────────────────
